@@ -32,6 +32,8 @@ services:
       - WAHA_URL=http://waha:3000
       - WAHA_API_KEY=${WAHA_API_KEY}
       - DB_PATH=/app/data/bot.db
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data
