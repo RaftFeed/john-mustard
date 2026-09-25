@@ -6,15 +6,15 @@
 
 ## 📖 About
 
-**John Mustard** adalah asisten eksekutif pribadi otonom berbasis WhatsApp yang dibangun dengan arsitektur *zero-dependency deep modules*. Bot ini mengintegrasikan penalaran ReAct multi-step (Google Gemini API), eksekusi kode terisolasi (Python sandbox), manipulasi dokumen (PyMuPDF), manajemen task/catatan berbasis SQLite, serta fallback command offline deterministik.
+**John Mustard** is an autonomous personal AI executive assistant for WhatsApp designed with a *zero-dependency deep modules* architecture. It integrates multi-step ReAct reasoning (Google Gemini API), isolated code execution (Python sandbox), document manipulation (PyMuPDF), SQLite-backed task and memory persistence, and deterministic offline fallback commands.
 
-### ✨ Fitur Utama
-- **WhatsApp Bridge (WAHA)**: Webhook streaming, message debouncing (1.0s buffer), split bubble message (`---`), multi-contact aware.
-- **ReAct Loop & Multi-Key Rotator**: Eksekusi multi-step agentik dengan rotasi otomatis API key Gemini saat rate-limit (429).
-- **Sandboxed Python & Doc Engine**: Eksekusi script komputasi, visualisasi, OCR, dan operasi PDF (merge, split, compress, image rendering) via isolated container.
-- **Deterministic Fast Commands**: Fallback cepat offline tanpa latency AI (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`).
-- **Memory & Storage**: SQLite WAL persistence untuk to-dos, reminders, chat history, document vault dengan access control list (ACL).
-- **Procedural Skills (Voyager Pattern)**: Auto-kristalisasi kebiasaan dan alur kerja baru dari percakapan berulang.
+### ✨ Key Features
+- **WhatsApp Bridge (WAHA)**: Webhook streaming, 1.0s burst debouncing, multi-bubble replies (`---`), and multi-contact context awareness.
+- **ReAct Loop & Multi-Key Rotator**: Multi-step agentic tool orchestration with automatic Gemini API key rotation on rate-limits (HTTP 429).
+- **Sandboxed Python & Document Engine**: Isolated script execution, data visualization, OCR, and PDF operations (merge, split, compress, render images) inside a dedicated container.
+- **Deterministic Fast Commands**: Zero-latency offline fallback shortcuts (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`).
+- **Memory & Storage**: SQLite WAL persistence for to-dos, reminders, chat history, and a document vault with access control lists (ACL).
+- **Procedural Skills (Voyager Pattern)**: Autonomous crystallization of new skills and workflows from recurring interactions.
 
 ---
 
