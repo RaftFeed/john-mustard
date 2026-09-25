@@ -1,8 +1,28 @@
+# Node
 node_modules/
+npm-debug.log*
+
+# Environment & Keys
 .env
 key-oracle/
 *.key
+
+# Database & Runtime State
+bot.db
+*.db
+*.sqlite
 data/
 vault/
 waha_sessions/
 qr.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
