@@ -69,7 +69,7 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
     // External Scheduler Container (Supercronic) Trigger
     if (req.method === "POST" && pathname === "/api/scheduler/tick") {
       try {
-        const result = await tickScheduler(store);
+        const result = await tickScheduler(store, { rotator });
         res.writeHead(200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify(result));
       } catch (err) {

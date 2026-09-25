@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, normalizePhone, OWNER_PHONE } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
 import { sendFile, sendText } from "./waha.js";
+import { scheduleNearHorizonReminder } from "./scheduler.js";
+import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 
 export const TOOLS = [
   {
@@ -268,6 +270,22 @@ export const TOOLS = [
           },
           required: ["key"]
         }
+      },
+      {
+        name: "checkServerHealth",
+        description: "Cek kesehatan & performa server bot Oracle / VPS (CPU, RAM, Disk, Uptime, load avg, database). Panggil saat user tanya kesehatan/kondisi server bot atau sistem. Khusus owner.",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
+        name: "checkMinecraftServer",
+        description: "Cek status server Minecraft / menkrep / mc mabar (Java & Bedrock port 25565/19132), MOTD, versi, dan daftar player yang sedang online. Panggil saat user tanya server Minecraft, mc, menkrep, mabar, atau player online. Khusus owner.",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
       }
     ]
   }
@@ -341,7 +359,7 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
 
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -409,7 +427,7 @@ export async function getEmbedding(rotator, text) {
   });
 }
 
-export async function executeTool(name, args, { store, chatId, rotator = null }) {
+export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null }) {
   let toolResult = {};
   let formattedList = null;
 
@@ -478,6 +496,14 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
     const timestamp = new Date(args.remindAtIso).getTime();
     if (isNaN(timestamp)) throw new Error("Format tanggal/jam ISO tidak valid");
     const id = store.addReminder(chatId, args.message, timestamp, args.recurrence || null, args.taskType || "reminder");
+    scheduleNearHorizonReminder(store, {
+      id,
+      chat_id: chatId,
+      message: args.message,
+      remind_at: timestamp,
+      recurrence: args.recurrence || null,
+      task_type: args.taskType || "reminder"
+    }, { rotator });
     toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso, recurrence: args.recurrence || null };
   } else if (name === "searchVault") {
     let queryEmbedding = null;
@@ -524,7 +550,7 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       const reqNum = normalizePhone(chatId);
       await sendText(
         file.owner_id,
-        `🔔 *[Permintaan Akses Dokumen]*\nPengguna *+${reqNum}* meminta akses ke file:\n📄 *${file.filename}* (ID: #${file.id})${args.reason ? `\n💬 *Alasan:* ${args.reason}` : ""}\n\nBalas:\n👉 *SETUJU ${reqId}*\n👉 *TOLAK ${reqId}*`
+        `*[Permintaan Akses Dokumen]*\nPengguna *+${reqNum}* meminta akses ke file:\n*${file.filename}* (ID: #${file.id})${args.reason ? `\nAlasan: ${args.reason}` : ""}\n\nBalas:\n*SETUJU ${reqId}*\n*TOLAK ${reqId}*`
       );
       toolResult = {
         success: true,
@@ -544,7 +570,7 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       store.grantFileAccess(file.id, targetNorm);
       await sendText(
         targetNorm,
-        `🎉 Anda telah diberikan izin akses ke dokumen:\n📄 *${file.filename}* (ID: #${file.id})\nOleh pemilik: +${callerNorm}`
+        `*[Akses Dokumen Diberikan]*\nAnda telah diberikan izin akses ke dokumen:\n*${file.filename}* (ID: #${file.id})\nOleh pemilik: +${callerNorm}`
       );
       toolResult = {
         success: true,
@@ -552,14 +578,14 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       };
     }
   } else if (name === "addBacklog") {
-    if (normalizePhone(chatId) !== OWNER_PHONE) {
+    if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
     } else {
       const id = store.addBacklog(chatId, args.idea);
       toolResult = { success: true, id, idea: args.idea, message: `Ide improvement #${id} disimpan ke backlog.` };
     }
   } else if (name === "listBacklogs") {
-    if (normalizePhone(chatId) !== OWNER_PHONE) {
+    if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
     } else {
       const items = store.getBacklogs(chatId);
@@ -567,7 +593,7 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       toolResult = { count: items.length, items, formatted: formattedList };
     }
   } else if (name === "completeBacklog") {
-    if (normalizePhone(chatId) !== OWNER_PHONE) {
+    if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
     } else {
       const changes = store.completeBacklog(args.backlogId, chatId);
@@ -691,6 +717,56 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       key: args.key,
       message: changes > 0 ? `Catatan '${args.key}' berhasil dihapus.` : `Catatan '${args.key}' tidak ditemukan.`
     };
+  } else if (name === "checkServerHealth") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: "Fitur checkServerHealth hanya khusus untuk nomor owner (+6281234567890)." };
+    } else {
+      const uptimeSec = os.uptime();
+      const nodeUptime = process.uptime();
+      const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(1);
+      const freeMem = (os.freemem() / 1024 / 1024 / 1024).toFixed(1);
+      const usedMem = (totalMem - freeMem).toFixed(1);
+      const memPct = Math.round(((totalMem - freeMem) / totalMem) * 100);
+
+      const procRss = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+      const procHeap = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      const cpus = os.cpus();
+      const cpuModel = cpus[0]?.model || "Unknown CPU";
+      const cpuCores = cpus.length;
+      const loadAvg = os.loadavg().map((l) => l.toFixed(2)).join(", ");
+
+      let diskInfo = "N/A";
+      try {
+        if (fs.statfsSync) {
+          const rootStat = fs.statfsSync("/");
+          const totalDisk = ((rootStat.bsize * rootStat.blocks) / (1024 * 1024 * 1024)).toFixed(1);
+          const freeDisk = ((rootStat.bsize * rootStat.bfree) / (1024 * 1024 * 1024)).toFixed(1);
+          const usedDisk = (totalDisk - freeDisk).toFixed(1);
+          const diskPct = Math.round((usedDisk / totalDisk) * 100);
+          diskInfo = `${usedDisk}/${totalDisk} GB (${diskPct}%) [Free: ${freeDisk} GB]`;
+        }
+      } catch {}
+
+      const dbStats = store?.getHealthStats ? store.getHealthStats() : null;
+      let dbInfo = "";
+      if (dbStats) {
+        dbInfo = `\nDatabase:\n• Todos: ${dbStats.pendingTodos} pending / ${dbStats.todos} total\n• Vault Files: ${dbStats.vault}\n• Usage Logs: ${dbStats.logs}`;
+      }
+
+      const report = `*[SERVER HEALTH REPORT]*\n\nHost & System:\n• Hostname: ${os.hostname()}\n• OS: ${os.type()} ${os.release()} (${os.arch()})\n• Node.js: ${process.version}\n• Server Uptime: ${Math.floor(uptimeSec / 3600)}h ${Math.floor((uptimeSec % 3600) / 60)}m\n• Bot Uptime: ${Math.floor(nodeUptime / 3600)}h ${Math.floor((nodeUptime % 3600) / 60)}m\n\nCPU & Load:\n• Model: ${cpuModel}\n• Cores: ${cpuCores} vCPU\n• Load Avg: ${loadAvg}\n\nRAM Usage:\n• Host RAM: ${usedMem}/${totalMem} GB (${memPct}%)\n• Bot RAM: RSS ${procRss} MB | Heap ${procHeap} MB\n\nStorage (Disk /):\n• Disk: ${diskInfo}${dbInfo}`;
+      formattedList = report;
+      toolResult = { success: true, formatted: report };
+    }
+  } else if (name === "checkMinecraftServer") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: "Fitur checkMinecraftServer hanya khusus untuk nomor owner (+6281234567890)." };
+    } else {
+      const status = await getMinecraftStatus();
+      const formatted = formatMinecraftStatus(status);
+      formattedList = formatted;
+      toolResult = { success: true, status, formatted };
+    }
   } else {
     toolResult = { error: "Unknown function" };
   }
@@ -698,14 +774,17 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
   return { toolResult, formattedList };
 }
 
-export async function processChat(rotator, userText, { store, chatId, onToolCall, onTrajectory = null, audio = null }) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null }) {
   const now = new Date();
   let basePrompt = "";
-  const promptPath = path.resolve("config/system-prompt.md");
-  if (fs.existsSync(promptPath)) {
-    try {
-      basePrompt = fs.readFileSync(promptPath, "utf-8");
-    } catch {}
+  const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
+  for (const p of promptPaths) {
+    if (fs.existsSync(p)) {
+      try {
+        basePrompt = fs.readFileSync(p, "utf-8");
+        if (basePrompt) break;
+      } catch {}
+    }
   }
   if (!basePrompt) {
     basePrompt = `Kamu adalah John Mustard, asisten pribadi eksekutif berbasis WhatsApp.\nWaktu sekarang: {{CURRENT_TIME}}.`;
@@ -723,7 +802,7 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
   const history = store ? store.getRecentChatHistory(chatId, 6) : [];
   const isGreeting = isGreetingIntent(userText) || history.length === 0;
   const greetingInstruction = isGreeting
-    ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya.`
+    ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
 
   const finalSystemPrompt = systemPrompt + skillsContext + greetingInstruction;
@@ -822,7 +901,7 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
 
     let resultObj = {};
     try {
-      resultObj = await executeTool(name, args, { store, chatId, rotator });
+      resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
     } catch (toolErr) {
       resultObj = { toolResult: { error: toolErr.message } };
     }
@@ -866,6 +945,9 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
     const chips = [...new Set(toolsCalled)].map((t) => `↳ ${t}`).join("  ");
     finalReply = `${finalReply}\n\n_${chips}_`;
   }
+
+  // Anti-slop: strip decorative emojis from reply except cowboy and wilted flower
+  finalReply = finalReply.replace(/(?!🤠|🥀)[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "").trim();
 
   // Hook meme awal chat: 🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀
   if (isGreeting && finalReply && finalReply !== "[NO_REPLY]") {
@@ -913,6 +995,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("baca url https://id.wikipedia.org"), true);
     assert.strictEqual(isActionIntent("catat nomor rekening bca 12345"), true);
     assert.strictEqual(isActionIntent("lihat catatan pribadi"), true);
+    assert.strictEqual(isActionIntent("gimana kondisi server bot"), true);
+    assert.strictEqual(isActionIntent("cek server menkrep"), true);
+    assert.strictEqual(isActionIntent("ada yang online mc gak"), true);
+    assert.ok(decls.includes("checkServerHealth"));
+    assert.ok(decls.includes("checkMinecraftServer"));
 
     // SSRF Safety Tests
     assert.strictEqual(isSafeUrl("http://localhost:3000/api"), false);
@@ -928,6 +1015,14 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
     assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
+
+    // Tool permission tests
+    executeTool("checkServerHealth", {}, { store: null, chatId: "628999999999" }).then((res) => {
+      assert.ok(res.toolResult.error?.includes("khusus untuk nomor owner"));
+    });
+    executeTool("checkServerHealth", {}, { store: null, chatId: "6281234567890" }).then((res) => {
+      assert.strictEqual(res.toolResult.success, true);
+    });
 
     console.log("LLM module self-test OK");
   });

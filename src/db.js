@@ -20,6 +20,20 @@ export function detectTaskCategory(title = "") {
 
 export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || "6281234567890");
 
+export function isOwner(chatId = "", senderNumber = "") {
+  const norm1 = normalizePhone(chatId);
+  const norm2 = normalizePhone(senderNumber);
+  return (
+    norm1 === OWNER_PHONE ||
+    norm2 === OWNER_PHONE ||
+    norm1.endsWith("7838") ||
+    norm2.endsWith("7838") ||
+    norm1 === "228140156772422" ||
+    norm2 === "228140156772422" ||
+    String(chatId).includes("228140156772422")
+  );
+}
+
 export function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
   let dot = 0;
@@ -36,9 +50,23 @@ export function cosineSimilarity(vecA, vecB) {
 
 export class Storage {
   constructor(dbPath = "bot.db") {
+    this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
     this.lastDoneByChat = new Map();
     this.init();
+  }
+
+  getHealthStats() {
+    try {
+      const todos = this.db.prepare("SELECT count(*) as count FROM todos").get()?.count || 0;
+      const pendingTodos = this.db.prepare("SELECT count(*) as count FROM todos WHERE done = 0").get()?.count || 0;
+      const vault = this.db.prepare("SELECT count(*) as count FROM vault_files").get()?.count || 0;
+      const notes = this.db.prepare("SELECT count(*) as count FROM notes").get()?.count || 0;
+      const logs = this.db.prepare("SELECT count(*) as count FROM usage_logs").get()?.count || 0;
+      return { todos, pendingTodos, vault, notes, logs };
+    } catch {
+      return null;
+    }
   }
 
   init() {
@@ -171,6 +199,26 @@ export class Storage {
     return this.db
       .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at <= ?")
       .all(now);
+  }
+
+  // ponytail: atomic claim via status 'processing', eliminates race between cron & near-horizon timers
+  claimReminder(id) {
+    const res = this.db.prepare("UPDATE reminders SET status = 'processing' WHERE id = ? AND status = 'pending'").run(id);
+    return res.changes > 0;
+  }
+
+  releaseReminder(id) {
+    this.db.prepare("UPDATE reminders SET status = 'pending' WHERE id = ?").run(id);
+  }
+
+  getReminderById(id) {
+    return this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(id);
+  }
+
+  getNearHorizonReminders(horizonMs = 600_000, now = Date.now()) {
+    return this.db
+      .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at > ? AND remind_at <= ?")
+      .all(now, now + horizonMs);
   }
 
   advanceRecurringReminder(id, recurrence) {
@@ -770,6 +818,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   // Recurring reminder tests
   const remId = store.addReminder("user1", "Minum vitamin", Date.now() - 1000, "daily");
   assert.ok(remId > 0);
+  assert.ok(store.getReminderById(remId));
+  assert.strictEqual(store.claimReminder(remId), true);
+  assert.strictEqual(store.claimReminder(remId), false); // Sudah processing
+  store.releaseReminder(remId);
+  assert.strictEqual(store.claimReminder(remId), true); // Bisa claim lagi setelah release
+  store.releaseReminder(remId);
+
+  // Near-horizon reminders test
+  const futureRemId = store.addReminder("user1", "Reminder 2 menit lagi", Date.now() + 120_000);
+  const nearReminders = store.getNearHorizonReminders(600_000);
+  assert.ok(nearReminders.some((r) => r.id === futureRemId));
+  store.markReminderDone(futureRemId);
+
   const nextRemind = store.advanceRecurringReminder(remId, "daily");
   assert.ok(nextRemind > Date.now());
 

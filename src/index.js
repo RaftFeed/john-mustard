@@ -1,6 +1,6 @@
 import { createServer } from "./server.js";
 import { KeyRotator } from "./rotator.js";
-import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE } from "./db.js";
+import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
 import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./waha.js";
@@ -28,49 +28,43 @@ startScheduler(store, { rotator });
 const SKILLS_DIR = process.env.SKILLS_DIR || "skills";
 initSkillsWatcher(store, SKILLS_DIR);
 
-const HELP_TEXT = `*[Halow aku Maarbot 👋]*
-_Ilkomerz61's Memory Augmented Academic Recollection BOT_
+const HELP_TEXT = `*[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀]*
+_Autonomous WhatsApp AI & Fast Command Engine_
 
-*USER GUIDE (TUTOR SETUP MARBOT)*
-https://ipb.link/marbot
+*Perintah Umum (Bypass AI):*
+- #ping — Cek status, latency, RAM & uptime
+- #dew — MY NAME IS JOHN MUSTARDDD 🤠
+- #help — Tampilkan menu panduan ini
 
-*Perintah Umum:*
-- #ping — cek bot hidup & latency
-- #tugas — lihat semua tugas (global)
-- #today — tugas deadline hari ini
-- #week — tugas 7 hari ke depan
-- #help — bantuan
+*Perintah To-Do & Tugas (Manual):*
+- #tugas / #todo — Lihat to-do list pending
+- #today — Tugas deadline hari ini
+- #week — Tugas 7 hari ke depan
+- #<id> — Cek detail tugas (misal: #1)
+- #add <tugas> — Tambah tugas (opsi: dl:YYYY-MM-DD #tag)
+- #update <id> <pesan> — Edit tugas (misal: #update 1 Pitching gameseed dl:2026-09-27)
+- #done <id> — Tandai tugas selesai
+- #undo — Batalkan #done terakhir
+- #del <id> — Hapus tugas (misal: #del 1)
 
-*Perintah Personal:*
-- #todo — lihat tugas pribadi kamu
-- #<id> — lihat detail tugas dari #todo
-- #done <id> — tandai selesai
-- #undo — batalkan #done terakhir
+*Perintah Otomasi & Pengaturan:*
+- #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
+- #skills — Lihat daftar skill & macro otomatis
 
-*Perintah Pengaturan:*
-- #setkelas paket<1-5> — atur kelas otomatis sesuai paket KRS (1-5)
-- #setkelas paket — lihat daftar detail isi paket 1-5
-- #setkelas <matkul> <kode1> <kode2> — atur kode pararel untuk matkul
-- #setkelas asah <track> — atur track Asah 2026 Dicoding (AI / FS / DS / NONE)
-- #mykelas — lihat settings kode parallel kamu
-- #daily <1/0> — aktifkan/matikan reminder #todo harian
+*Perintah Owner / Admin:*
+- #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
+- #mc / #minecraft — Cek status server Minecraft & player aktif
+- #backlog <ide> — Catat ide fitur/perbaikan
+- #backlog list — Lihat daftar backlog ide
+- #backlog done <id> — Tandai backlog selesai
 
-*Perintah Developer (Umum):*
-- #apikey new <nama> — buat API key baru
-- #apikey remove <nama> — hapus API key tertentu
-- #apikey list — lihat daftar nama API key
-- #apikey check <nama> — cek detail API key
-- #apidocs — dokumentasi REST API Marbot
+*Fitur Otomatis (Langsung Chat / VN):*
+- Voice Note: Kirim rekaman suara apa pun, langsung diproses sat-set.
+- Document Vault: Kirim foto/PDF/struk/KTP -> auto OCR & disimpan.
+- Web Search: Tanya info terkini, berita, cuaca, harga, atau skor bola.
+- Chat Bebas: Diskusi, riset, coding, kalkulasi matematika, dsb.
 
-*Perintah Admin:*
-- #delete <id> — hapus tugas (id dari #tugas)
-- #update <id> <pesan> — update tugas dengan AI
-- #announcement <pesan> — simpan pengumuman dengan deadline (grup akademik)
-
-*Penting:* #<id> dan #done selalu pakai nomor dari *#todo*. _Info tugas akan otomatis tersimpan via grup info akademik, tidak dari chat lain._
-
-*Want to Contribute?*
-github.com/gimigkk/marbot-academic-bot`;
+*Catatan:* Perintah dengan awalan *#* dieksekusi instan tanpa LLM (cepat, akurat, anti-halu).`;
 
 async function handleIncomingMessage(msg) {
   console.log(">> Processing message from:", msg.from, "text:", msg.body);
@@ -94,6 +88,7 @@ async function handleIncomingMessage(msg) {
         const reply = await processChat(rotator, msg.body, {
           store,
           chatId: msg.from,
+          senderNumber: msg.senderNumber,
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => audioTrajectory.push(...traj),
           audio: { buffer, mimetype: msg.mimetype, filename: msg.filename }
@@ -202,8 +197,8 @@ async function handleIncomingMessage(msg) {
     const fastCmd = parseFastCommand(trimmed);
     if (fastCmd) {
       console.log(`>> Fast command [${fastCmd.type}] from ${msg.from}`);
-      const isOwner = normalizePhone(msg.from) === OWNER_PHONE;
-      const cmdReply = executeFastCommand(fastCmd, { store, chatId: msg.from, isOwner });
+      const isOwnerUser = isOwner(msg.from, msg.senderNumber);
+      const cmdReply = await executeFastCommand(fastCmd, { store, chatId: msg.from, isOwner: isOwnerUser });
       if (cmdReply) {
         await sendText(msg.from, cmdReply);
         console.log(`>> Sent fast command reply to ${msg.from}: ${cmdReply.slice(0, 60).replace(/\n/g, " ")}`);
@@ -222,6 +217,7 @@ async function handleIncomingMessage(msg) {
     const reply = await processChat(rotator, msg.body, {
       store,
       chatId: msg.from,
+      senderNumber: msg.senderNumber,
       onToolCall: (name) => toolsCalled.push(name),
       onTrajectory: (traj) => textTrajectory.push(...traj)
     });
@@ -271,10 +267,10 @@ async function handleIncomingMessage(msg) {
 
 const app = createServer(handleIncomingMessage, { store, rotator });
 app.listen(PORT, () => {
-  console.log(`🚀 John Mustard Bot Server aktif di port ${PORT}`);
-  console.log(`🔑 Terpasang ${keys.length} Gemini API Key`);
-  console.log(`📱 Whitelist nomor WA: ${process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "SEMUA"}`);
-  console.log(`📦 Document Vault storage siap di folder ./vault`);
-  console.log(`🧠 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
-  console.log(`⚡ FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
+  console.log(`[Server] John Mustard Bot aktif di port ${PORT}`);
+  console.log(`[Auth] Terpasang ${keys.length} Gemini API Key`);
+  console.log(`[Whitelist] Nomor WA: ${process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "SEMUA"}`);
+  console.log(`[Vault] Document Vault siap di folder ./vault`);
+  console.log(`[Skills] 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
+  console.log(`[MCP] FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
 });

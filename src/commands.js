@@ -1,4 +1,7 @@
+import os from "node:os";
+import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatSkillList } from "./db.js";
+import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 
 function formatUptime(seconds) {
   const d = Math.floor(seconds / (3600 * 24));
@@ -89,6 +92,14 @@ export function parseFastCommand(text = "") {
     return { type: "backlogAdd", idea: sub };
   }
 
+  if (/^#(health|server|sys|system)\b/i.test(trimmed)) {
+    return { type: "health" };
+  }
+
+  if (/^#(mc|minecraft)\b/i.test(trimmed)) {
+    return { type: "minecraft" };
+  }
+
   if (
     trimmed === "?help" ||
     trimmed === "/help" ||
@@ -103,14 +114,14 @@ export function parseFastCommand(text = "") {
   return null;
 }
 
-export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
+export async function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
   if (!cmd) return null;
 
   switch (cmd.type) {
     case "ping": {
       const uptime = formatUptime(process.uptime());
       const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
-      const pendingTodos = store.getTodos(chatId, true).length;
+      const pendingTodos = store ? store.getTodos(chatId, true).length : 0;
       return `PONG!\n• Status: Online (Ready)\n• Uptime: ${uptime}\n• RAM: ${mem} MB\n• Tugas Pending: ${pendingTodos}`;
     }
 
@@ -248,50 +259,108 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
       return `*[Backlog]*\nDicatat.\n• ID: #${bId}\n• Ide: ${cmd.idea}`;
     }
 
+    case "health": {
+      if (!isOwner) return "[!] Fitur #health khusus owner (+6281234567890).";
+      const uptimeSec = os.uptime();
+      const nodeUptime = process.uptime();
+      const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(1);
+      const freeMem = (os.freemem() / 1024 / 1024 / 1024).toFixed(1);
+      const usedMem = (totalMem - freeMem).toFixed(1);
+      const memPct = Math.round(((totalMem - freeMem) / totalMem) * 100);
+
+      const procRss = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+      const procHeap = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      const cpus = os.cpus();
+      const cpuModel = cpus[0]?.model || "Unknown CPU";
+      const cpuCores = cpus.length;
+      const loadAvg = os.loadavg().map((l) => l.toFixed(2)).join(", ");
+
+      let diskInfo = "N/A";
+      try {
+        if (fs.statfsSync) {
+          const rootStat = fs.statfsSync("/");
+          const totalDisk = ((rootStat.bsize * rootStat.blocks) / (1024 * 1024 * 1024)).toFixed(1);
+          const freeDisk = ((rootStat.bsize * rootStat.bfree) / (1024 * 1024 * 1024)).toFixed(1);
+          const usedDisk = (totalDisk - freeDisk).toFixed(1);
+          const diskPct = Math.round((usedDisk / totalDisk) * 100);
+          diskInfo = `${usedDisk}/${totalDisk} GB (${diskPct}%) [Free: ${freeDisk} GB]`;
+        }
+      } catch {}
+
+      const dbStats = store?.getHealthStats ? store.getHealthStats() : null;
+      let dbInfo = "";
+      if (dbStats) {
+        dbInfo = `\nDatabase:\n• Todos: ${dbStats.pendingTodos} pending / ${dbStats.todos} total\n• Vault Files: ${dbStats.vault}\n• Usage Logs: ${dbStats.logs}`;
+      }
+
+      return `*[SERVER HEALTH REPORT]*
+_Khusus Owner (+6281234567890)_
+
+Host & System:
+• Hostname: ${os.hostname()}
+• OS: ${os.type()} ${os.release()} (${os.arch()})
+• Node.js: ${process.version}
+• Server Uptime: ${formatUptime(uptimeSec)}
+• Bot Uptime: ${formatUptime(nodeUptime)}
+
+CPU & Load:
+• Model: ${cpuModel}
+• Cores: ${cpuCores} vCPU
+• Load Average: ${loadAvg} (1m, 5m, 15m)
+
+RAM Usage:
+• Host RAM: ${usedMem} / ${totalMem} GB (${memPct}%)
+• Bot RAM: RSS ${procRss} MB | Heap ${procHeap} MB
+
+Storage (Disk /):
+• Disk: ${diskInfo}${dbInfo}`;
+    }
+
+    case "minecraft": {
+      if (!isOwner) return "[!] Fitur #mc khusus owner (+6281234567890).";
+      const status = await getMinecraftStatus();
+      return formatMinecraftStatus(status);
+    }
+
     case "help": {
-      return `*[Halow aku Maarbot 👋]*
-_Ilkomerz61's Memory Augmented Academic Recollection BOT_
+      return `*[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀]*
+_Autonomous WhatsApp AI & Fast Command Engine_
 
-*USER GUIDE (TUTOR SETUP MARBOT)*
-https://ipb.link/marbot
+*Perintah Umum (Bypass AI):*
+- #ping — Cek status, latency, RAM & uptime
+- #dew — MY NAME IS JOHN MUSTARDDD 🤠
+- #help — Tampilkan menu panduan ini
 
-*Perintah Umum:*
-- #ping — cek bot hidup & latency
-- #tugas — lihat semua tugas (global)
-- #today — tugas deadline hari ini
-- #week — tugas 7 hari ke depan
-- #help — bantuan
+*Perintah To-Do & Tugas (Manual):*
+- #tugas / #todo — Lihat to-do list pending
+- #today — Tugas deadline hari ini
+- #week — Tugas 7 hari ke depan
+- #<id> — Cek detail tugas (misal: #1)
+- #add <tugas> — Tambah tugas (opsi: dl:YYYY-MM-DD #tag)
+- #update <id> <pesan> — Edit tugas (misal: #update 1 Pitching gameseed dl:2026-09-27)
+- #done <id> — Tandai tugas selesai
+- #undo — Batalkan #done terakhir
+- #del <id> — Hapus tugas (misal: #del 1)
 
-*Perintah Personal:*
-- #todo — lihat tugas pribadi kamu
-- #<id> — lihat detail tugas dari #todo
-- #done <id> — tandai selesai
-- #undo — batalkan #done terakhir
+*Perintah Otomasi & Pengaturan:*
+- #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
+- #skills — Lihat daftar skill & macro otomatis
 
-*Perintah Pengaturan:*
-- #setkelas paket<1-5> — atur kelas otomatis sesuai paket KRS (1-5)
-- #setkelas paket — lihat daftar detail isi paket 1-5
-- #setkelas <matkul> <kode1> <kode2> — atur kode pararel untuk matkul
-- #setkelas asah <track> — atur track Asah 2026 Dicoding (AI / FS / DS / NONE)
-- #mykelas — lihat settings kode parallel kamu
-- #daily <1/0> — aktifkan/matikan reminder #todo harian
+*Perintah Owner / Admin:*
+- #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
+- #mc / #minecraft — Cek status server Minecraft & player aktif
+- #backlog <ide> — Catat ide fitur/perbaikan
+- #backlog list — Lihat daftar backlog ide
+- #backlog done <id> — Tandai backlog selesai
 
-*Perintah Developer (Umum):*
-- #apikey new <nama> — buat API key baru
-- #apikey remove <nama> — hapus API key tertentu
-- #apikey list — lihat daftar nama API key
-- #apikey check <nama> — cek detail API key
-- #apidocs — dokumentasi REST API Marbot
+*Fitur Otomatis (Langsung Chat / VN):*
+- Voice Note: Kirim rekaman suara apa pun, langsung diproses sat-set.
+- Document Vault: Kirim foto/PDF/struk/KTP -> auto OCR & disimpan.
+- Web Search: Tanya info terkini, berita, cuaca, harga, atau skor bola.
+- Chat Bebas: Diskusi, riset, coding, kalkulasi matematika, dsb.
 
-*Perintah Admin:*
-- #delete <id> — hapus tugas (id dari #tugas)
-- #update <id> <pesan> — update tugas dengan AI
-- #announcement <pesan> — simpan pengumuman dengan deadline (grup akademik)
-
-*Penting:* #<id> dan #done selalu pakai nomor dari *#todo*. _Info tugas akan otomatis tersimpan via grup info akademik, tidak dari chat lain._
-
-*Want to Contribute?*
-github.com/gimigkk/marbot-academic-bot`;
+*Catatan:* Perintah dengan awalan *#* dieksekusi instan tanpa LLM (cepat, akurat, anti-halu).`;
     }
 
     default:
@@ -301,7 +370,7 @@ github.com/gimigkk/marbot-academic-bot`;
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
   import("node:assert").then(async ({ default: assert }) => {
-    import("./db.js").then(({ Storage }) => {
+    import("./db.js").then(async ({ Storage }) => {
       const store = new Storage(":memory:");
       const chatId = "628999999999";
 
@@ -320,41 +389,49 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#daily 1").value, "1");
       assert.strictEqual(parseFastCommand("#dew").type, "dew");
       assert.strictEqual(parseFastCommand("#skills").type, "skills");
+      assert.strictEqual(parseFastCommand("#health").type, "health");
+      assert.strictEqual(parseFastCommand("#mc").type, "minecraft");
       assert.strictEqual(parseFastCommand("#help").type, "help");
       assert.strictEqual(parseFastCommand("halo john"), null);
 
       // Test execution
-      const dewRes = executeFastCommand(parseFastCommand("#dew"), { store, chatId });
+      const dewRes = await executeFastCommand(parseFastCommand("#dew"), { store, chatId });
       assert.ok(dewRes.includes("DEW DEW DEW"));
 
-      const skillsRes = executeFastCommand(parseFastCommand("#skills"), { store, chatId });
+      const skillsRes = await executeFastCommand(parseFastCommand("#skills"), { store, chatId });
       assert.ok(skillsRes.includes("Custom Skills"));
 
-      const pingRes = executeFastCommand(parseFastCommand("#ping"), { store, chatId });
+      const pingRes = await executeFastCommand(parseFastCommand("#ping"), { store, chatId });
       assert.ok(pingRes.includes("PONG!"));
 
-      const addRes = executeFastCommand(parseFastCommand("#add Belajar analgor #kuliah"), { store, chatId });
+      const healthDenied = await executeFastCommand(parseFastCommand("#health"), { store, chatId, isOwner: false });
+      assert.ok(healthDenied.includes("khusus owner"));
+
+      const healthAllowed = await executeFastCommand(parseFastCommand("#health"), { store, chatId, isOwner: true });
+      assert.ok(healthAllowed.includes("SERVER HEALTH REPORT"));
+
+      const addRes = await executeFastCommand(parseFastCommand("#add Belajar analgor #kuliah"), { store, chatId });
       assert.ok(addRes.includes("[OK] Tugas #1 dicatat"));
 
-      const detailRes = executeFastCommand(parseFastCommand("#1"), { store, chatId });
+      const detailRes = await executeFastCommand(parseFastCommand("#1"), { store, chatId });
       assert.ok(detailRes.includes("Belajar analgor"));
 
-      const listRes = executeFastCommand(parseFastCommand("#todo"), { store, chatId });
+      const listRes = await executeFastCommand(parseFastCommand("#todo"), { store, chatId });
       assert.ok(listRes.includes("Belajar analgor"));
 
-      const doneRes = executeFastCommand(parseFastCommand("#done 1"), { store, chatId });
+      const doneRes = await executeFastCommand(parseFastCommand("#done 1"), { store, chatId });
       assert.ok(doneRes.includes("[OK] Tugas #1 selesai"));
 
-      const undoRes = executeFastCommand(parseFastCommand("#undo"), { store, chatId });
+      const undoRes = await executeFastCommand(parseFastCommand("#undo"), { store, chatId });
       assert.ok(undoRes.includes("dibalikin jadi pending"));
 
-      const updateRes = executeFastCommand(parseFastCommand("#update 1 Belajar analgor rev2"), { store, chatId });
+      const updateRes = await executeFastCommand(parseFastCommand("#update 1 Belajar analgor rev2"), { store, chatId });
       assert.ok(updateRes.includes("[OK] Tugas #1 berhasil diupdate"));
 
-      const helpRes = executeFastCommand(parseFastCommand("#help"), { store, chatId });
-      assert.ok(helpRes.includes("Halow aku Maarbot"));
+      const helpRes = await executeFastCommand(parseFastCommand("#help"), { store, chatId });
+      assert.ok(helpRes.includes("JOHN MUSTARD"));
 
-      const delRes = executeFastCommand(parseFastCommand("#del 1"), { store, chatId });
+      const delRes = await executeFastCommand(parseFastCommand("#del 1"), { store, chatId });
       assert.ok(delRes.includes("[OK] Tugas #1 berhasil dihapus"));
 
       console.log("Commands module self-test OK");
