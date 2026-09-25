@@ -174,27 +174,29 @@ export class Storage {
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
 
-    // Seed default couple/principal directory if empty
+    // Seed default owner directory if empty and configured
     const contactCount = this.db.prepare("SELECT count(*) as count FROM contacts").get()?.count || 0;
     if (contactCount === 0) {
-      const pName = process.env.PRIMARY_USER_NAME || "Gilang";
-      const pPhone = process.env.PRIMARY_USER_PHONE || "6281234567890";
-      const sName = process.env.SECONDARY_USER_NAME || "Bunga";
-      const sPhone = process.env.SECONDARY_USER_PHONE || "6289876543210";
-      this.addPerson({
-        name: pName,
-        phone: pPhone,
-        role: "User / Principal",
-        notes: "Direct, prefers concise updates",
-        relationship: "Principal"
-      });
-      this.addPerson({
-        name: sName,
-        phone: sPhone,
-        role: "Co-Principal / Partner",
-        notes: "Co-principal",
-        relationship: "Partner"
-      });
+      const pName = process.env.PRIMARY_USER_NAME || "Owner";
+      const pPhone = process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "";
+      if (pPhone) {
+        this.addPerson({
+          name: pName,
+          phone: pPhone,
+          role: "Owner / Principal",
+          notes: "Primary user",
+          relationship: "Owner"
+        });
+      }
+      if (process.env.SECONDARY_USER_NAME && process.env.SECONDARY_USER_PHONE) {
+        this.addPerson({
+          name: process.env.SECONDARY_USER_NAME,
+          phone: process.env.SECONDARY_USER_PHONE,
+          role: "Partner",
+          notes: "Co-principal",
+          relationship: "Partner"
+        });
+      }
     }
   }
 
@@ -307,24 +309,42 @@ export class Storage {
   }
 
   getTodos(chatId, includeRoutine = false, assignee = null) {
+    const person = this.getPerson ? this.getPerson(chatId) : null;
     let sql = `
       SELECT id, task, deadline, tag, category, assignee 
       FROM todos 
-      WHERE chat_id = ? AND done = 0
+      WHERE done = 0
     `;
-    const params = [chatId];
-    if (!includeRoutine) {
-      sql += " AND (category != 'routine' OR category IS NULL)";
-    }
+    const params = [];
+
     if (assignee) {
       sql += " AND LOWER(assignee) = LOWER(?)";
       params.push(assignee.trim());
+    } else if (isOwner(chatId)) {
+      // Owner sees all household tasks
+    } else if (person) {
+      sql += " AND (chat_id = ? OR LOWER(assignee) = LOWER(?))";
+      params.push(chatId, person.name.trim());
+    } else {
+      sql += " AND chat_id = ?";
+      params.push(chatId);
+    }
+
+    if (!includeRoutine) {
+      sql += " AND (category != 'routine' OR category IS NULL)";
     }
     sql += " ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, id ASC";
     return this.db.prepare(sql).all(...params);
   }
 
   getTodoById(id, chatId) {
+    if (!chatId || isOwner(chatId)) {
+      return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(id);
+    }
+    const person = this.getPerson ? this.getPerson(chatId) : null;
+    if (person) {
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))").get(id, chatId, person.name.trim());
+    }
     return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
   }
 
@@ -498,9 +518,19 @@ export class Storage {
   }
 
   completeTodo(id, chatId) {
-    const changes = this.db
-      .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
-      .run(id, chatId).changes;
+    const person = this.getPerson ? this.getPerson(chatId) : null;
+    let changes = 0;
+    if (isOwner(chatId)) {
+      changes = this.db.prepare("UPDATE todos SET done = 1 WHERE id = ?").run(id).changes;
+    } else if (person) {
+      changes = this.db.prepare(
+        "UPDATE todos SET done = 1 WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))"
+      ).run(id, chatId, person.name.trim()).changes;
+    } else {
+      changes = this.db
+        .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
+        .run(id, chatId).changes;
+    }
     if (changes > 0) {
       this.lastDoneByChat.set(chatId, id);
     }
@@ -510,28 +540,38 @@ export class Storage {
   undoLastDone(chatId) {
     let lastId = this.lastDoneByChat.get(chatId);
     if (!lastId) {
-      const row = this.db
-        .prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1")
-        .get(chatId);
+      const row = isOwner(chatId)
+        ? this.db.prepare("SELECT id FROM todos WHERE done = 1 ORDER BY id DESC LIMIT 1").get()
+        : this.db.prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1").get(chatId);
       if (row) lastId = row.id;
     }
     if (!lastId) return null;
     const changes = this.db
-      .prepare("UPDATE todos SET done = 0 WHERE id = ? AND chat_id = ?")
-      .run(lastId, chatId).changes;
+      .prepare("UPDATE todos SET done = 0 WHERE id = ?")
+      .run(lastId).changes;
     if (changes === 0) return null;
     this.lastDoneByChat.delete(chatId);
     return this.getTodoById(lastId, chatId);
   }
 
   findTodo(chatId, query) {
+    const person = this.getPerson ? this.getPerson(chatId) : null;
+    if (isOwner(chatId)) {
+      return this.db
+        .prepare("SELECT * FROM todos WHERE done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
+        .get(`%${query}%`);
+    } else if (person) {
+      return this.db
+        .prepare("SELECT * FROM todos WHERE (chat_id = ? OR LOWER(assignee) = LOWER(?)) AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
+        .get(chatId, person.name.trim(), `%${query}%`);
+    }
     return this.db
       .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
       .get(chatId, `%${query}%`);
   }
 
   updateTodo(id, chatId, { task, deadline, tag, category, assignee }) {
-    const existing = this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
+    const existing = this.getTodoById(id, chatId);
     if (!existing) return 0;
     const newTask = task !== undefined && task !== null ? task : existing.task;
     const newDeadline = deadline !== undefined ? deadline : existing.deadline;
@@ -539,14 +579,16 @@ export class Storage {
     const newCategory = category !== undefined ? category : existing.category;
     const newAssignee = assignee !== undefined ? assignee : (existing.assignee || "");
     return this.db
-      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ? WHERE id = ? AND chat_id = ?")
-      .run(newTask, newDeadline, newTag, newCategory, newAssignee, id, chatId).changes;
+      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ? WHERE id = ?")
+      .run(newTask, newDeadline, newTag, newCategory, newAssignee, id).changes;
   }
 
   deleteTodo(id, chatId) {
+    const existing = this.getTodoById(id, chatId);
+    if (!existing) return 0;
     return this.db
-      .prepare("DELETE FROM todos WHERE id = ? AND chat_id = ?")
-      .run(id, chatId).changes;
+      .prepare("DELETE FROM todos WHERE id = ?")
+      .run(id).changes;
   }
 
   // --- Backlog (Owner Only) ---
