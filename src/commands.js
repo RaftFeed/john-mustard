@@ -42,9 +42,14 @@ export function parseFastCommand(text = "") {
     return { type: "undo" };
   }
 
-  const delMatch = trimmed.match(/^#(delete|del)\s+(\d+)$/i);
+  const delMatch = trimmed.match(/^#(delete|del|hapus)\s+(\d+)$/i);
   if (delMatch) {
     return { type: "delete", id: parseInt(delMatch[2], 10) };
+  }
+
+  const updateMatch = trimmed.match(/^#update\s+(\d+)\s+(.+)$/is);
+  if (updateMatch) {
+    return { type: "update", id: parseInt(updateMatch[1], 10), raw: updateMatch[2].trim() };
   }
 
   const idOnlyMatch = trimmed.match(/^#(\d+)$/);
@@ -52,7 +57,7 @@ export function parseFastCommand(text = "") {
     return { type: "detail", id: parseInt(idOnlyMatch[1], 10) };
   }
 
-  const addMatch = trimmed.match(/^#(add|catat)\s+(.+)$/is);
+  const addMatch = trimmed.match(/^#(add|catat|tambah)\s+(.+)$/is);
   if (addMatch) {
     return { type: "add", raw: addMatch[2].trim() };
   }
