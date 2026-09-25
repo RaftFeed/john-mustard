@@ -301,6 +301,11 @@ export function isActionIntent(text = "") {
   return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel)/i.test(text);
 }
 
+export function isGreetingIntent(text = "") {
+  if (!text) return false;
+  return /^(p|halo|hai|hey|hei|woi|oi|tes|test|assalamualaikum|pagi|siang|sore|malam|mustard|john)\b/i.test(text.trim());
+}
+
 // ponytail: direct fetch with two-model fallback, no heavy sdk
 async function callGemini(rotator, model, payload) {
   return rotator.execute(async (key) => {
@@ -636,7 +641,14 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
       customSkills.map((s) => `- [${s.name}]: ${s.description} -> Instruksi: ${s.prompt_template}`).join("\n")
     : "";
 
-  const finalSystemPrompt = systemPrompt + skillsContext;
+  // Multi-turn context: muat riwayat pesan terakhir
+  const history = store ? store.getRecentChatHistory(chatId, 6) : [];
+  const isGreeting = isGreetingIntent(userText) || history.length === 0;
+  const greetingInstruction = isGreeting
+    ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya.`
+    : "";
+
+  const finalSystemPrompt = systemPrompt + skillsContext + greetingInstruction;
 
   const userParts = [];
   if (audio) {
@@ -656,8 +668,6 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
     userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya." });
   }
 
-  // Multi-turn context: muat riwayat pesan terakhir
-  const history = store ? store.getRecentChatHistory(chatId, 6) : [];
   const contents = [];
   let lastRole = null;
 
@@ -772,6 +782,15 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
     finalReply = `${finalReply}\n\n_${chips}_`;
   }
 
+  // Hook meme awal chat: 🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀
+  if (isGreeting && finalReply && finalReply !== "[NO_REPLY]") {
+    if (!finalReply.includes("JOHN MUSTARDDD")) {
+      finalReply = `🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀\n\n${finalReply}`;
+    } else if (!finalReply.includes("🤠") && !finalReply.includes("🥀")) {
+      finalReply = finalReply.replace(/MY NAME IS JOHN MUSTARDDD DEW DEW DEW/i, "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀");
+    }
+  }
+
   return finalReply;
 }
 
@@ -783,6 +802,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("ingatkan besok jam 7"), true);
     assert.strictEqual(isActionIntent("hitung 25 * 40 pake python"), true);
     assert.strictEqual(isActionIntent("halo bro"), false);
+    assert.strictEqual(isGreetingIntent("halo"), true);
+    assert.strictEqual(isGreetingIntent("p"), true);
+    assert.strictEqual(isGreetingIntent("tambahkan tugas"), false);
     const decls = TOOLS[0].functionDeclarations.map((d) => d.name);
     assert.ok(decls.includes("addBacklog"));
     assert.ok(decls.includes("listBacklogs"));
