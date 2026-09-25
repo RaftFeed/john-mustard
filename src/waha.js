@@ -16,6 +16,36 @@ export function resolveLidToPhone(lid) {
   return null;
 }
 
+export async function startTyping(chatId) {
+  try {
+    const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
+    const apiKey = process.env.WAHA_API_KEY || "";
+    await fetch(`${wahaUrl}/api/startTyping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
+      body: JSON.stringify({
+        chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
+        session: "default"
+      })
+    });
+  } catch {}
+}
+
+export async function stopTyping(chatId) {
+  try {
+    const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
+    const apiKey = process.env.WAHA_API_KEY || "";
+    await fetch(`${wahaUrl}/api/stopTyping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
+      body: JSON.stringify({
+        chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
+        session: "default"
+      })
+    });
+  } catch {}
+}
+
 export async function sendSingleText(chatId, text, replyTo = null) {
   const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
   const payload = {
@@ -173,5 +203,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.strictEqual(parsed.body, "halo bot");
   assert.strictEqual(parsed.senderNumber, "6281234567890");
   assert.strictEqual(parseIncoming(samplePayload, "628999999999"), null);
+  assert.strictEqual(typeof startTyping, "function");
+  assert.strictEqual(typeof stopTyping, "function");
   console.log("WAHA parser self-test OK");
 }

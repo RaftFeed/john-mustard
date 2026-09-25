@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia } from "./waha.js";
+import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 
 const PORT = process.env.PORT || 4000;
@@ -67,6 +67,8 @@ Ketik *?help* kapan saja untuk membuka menu bantuan ini!`;
 async function handleIncomingMessage(msg) {
   console.log(">> Processing message from:", msg.from, "text:", msg.body);
   const toolsCalled = [];
+  startTyping(msg.from);
+  const typingTimer = setInterval(() => startTyping(msg.from), 6000);
 
   try {
     // 1. Tangani Incoming Media
@@ -249,6 +251,9 @@ async function handleIncomingMessage(msg) {
       status: "error",
       error: err.message
     });
+  } finally {
+    clearInterval(typingTimer);
+    stopTyping(msg.from);
   }
 }
 

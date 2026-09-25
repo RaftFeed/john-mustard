@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env src/index.js",
-    "test": "node src/rotator.js && node src/waha.js && node src/db.js && node src/llm.js",
+    "test": "node src/rotator.js && node src/waha.js && node src/queue.js && node src/db.js && node src/llm.js",
     "audit": "node scripts/audit.js"
   },
   "description": "Personal AI Assistant WhatsApp Bot"

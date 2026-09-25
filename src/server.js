@@ -1,5 +1,6 @@
 import http from "node:http";
 import { parseIncoming } from "./waha.js";
+import { createDebounceQueue } from "./queue.js";
 
 const seenMessages = new Map();
 const DEDUP_TTL_MS = 60_000;
@@ -18,6 +19,8 @@ function isDuplicate(messageId) {
 }
 
 export function createServer(handler) {
+  const debouncedHandler = createDebounceQueue(handler, 1000);
+
   return http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/webhook") {
       let data = "";
@@ -39,7 +42,7 @@ export function createServer(handler) {
         console.log(">> Webhook Event:", body.event, "from:", body.payload?.from, "body:", body.payload?.body);
         const incoming = parseIncoming(body, process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE);
         if (incoming) {
-          handler(incoming).catch((err) => console.error("Handler error:", err));
+          debouncedHandler(incoming);
         }
       } catch (err) {
         console.error("Webhook parse error:", err.message);

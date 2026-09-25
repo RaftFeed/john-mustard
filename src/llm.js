@@ -171,6 +171,11 @@ const TOOLS = [
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const FALLBACK_MODEL = "gemini-3-flash-preview";
 
+export function isActionIntent(text = "") {
+  if (!text) return false;
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil)/i.test(text);
+}
+
 // ponytail: direct fetch with two-model fallback, no heavy sdk
 async function callGemini(rotator, model, payload) {
   return rotator.execute(async (key) => {
@@ -195,8 +200,204 @@ async function generateContent(rotator, payload) {
     return await callGemini(rotator, DEFAULT_MODEL, payload);
   } catch (err) {
     console.warn(`[LLM] Model ${DEFAULT_MODEL} gagal (${err.message}). Fallback ke ${FALLBACK_MODEL}...`);
-    return await callGemini(rotator, FALLBACK_MODEL, payload);
+    try {
+      return await callGemini(rotator, FALLBACK_MODEL, payload);
+    } catch (fallbackErr) {
+      if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
+        console.warn(`[LLM] Mode ANY gagal (${fallbackErr.message}). Fallback ke mode AUTO...`);
+        const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
+        return await callGemini(rotator, DEFAULT_MODEL, autoPayload);
+      }
+      throw fallbackErr;
+    }
   }
+}
+
+export async function executeTool(name, args, { store, chatId }) {
+  let toolResult = {};
+  let formattedList = null;
+
+  if (name === "addTodo") {
+    const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
+    const id = store.addTodo(chatId, args.task, deadline, args.tag);
+    const allTodos = store.getTodos(chatId);
+    formattedList = formatTodoList(allTodos);
+    toolResult = {
+      success: true,
+      id,
+      task: args.task,
+      formattedList
+    };
+  } else if (name === "listTodos") {
+    const todos = store.getTodos(chatId);
+    formattedList = formatTodoList(todos);
+    toolResult = { raw: todos, formatted: formattedList };
+  } else if (name === "completeTodo") {
+    const changes = store.completeTodo(args.todoId, chatId);
+    const allTodos = store.getTodos(chatId);
+    formattedList = formatTodoList(allTodos);
+    toolResult = { success: changes > 0, formattedList };
+  } else if (name === "updateTodo") {
+    let targetId = args.todoId;
+    if (!targetId && args.taskQuery) {
+      const found = store.findTodo(chatId, args.taskQuery);
+      if (found) targetId = found.id;
+    }
+    if (!targetId) {
+      toolResult = { error: "Tugas tidak ditemukan untuk diubah." };
+    } else {
+      const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : undefined;
+      const changes = store.updateTodo(targetId, chatId, {
+        task: args.newTask,
+        deadline,
+        tag: args.tag
+      });
+      const allTodos = store.getTodos(chatId);
+      formattedList = formatTodoList(allTodos);
+      toolResult = {
+        success: changes > 0,
+        todoId: targetId,
+        formattedList
+      };
+    }
+  } else if (name === "deleteTodo") {
+    let targetId = args.todoId;
+    if (!targetId && args.taskQuery) {
+      const found = store.findTodo(chatId, args.taskQuery);
+      if (found) targetId = found.id;
+    }
+    if (!targetId) {
+      toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
+    } else {
+      const changes = store.deleteTodo(targetId, chatId);
+      const allTodos = store.getTodos(chatId);
+      formattedList = formatTodoList(allTodos);
+      toolResult = {
+        success: changes > 0,
+        formattedList
+      };
+    }
+  } else if (name === "addReminder") {
+    const timestamp = new Date(args.remindAtIso).getTime();
+    if (isNaN(timestamp)) throw new Error("Format tanggal/jam ISO tidak valid");
+    const id = store.addReminder(chatId, args.message, timestamp);
+    toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso };
+  } else if (name === "searchVault") {
+    const files = store.searchVaultFiles(args.query || "", args.category || null, chatId);
+    toolResult = {
+      count: files.length,
+      files: files.map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        category: f.category,
+        summary: f.summary
+      }))
+    };
+  } else if (name === "sendVaultFile") {
+    const file = store.getVaultFileById(args.fileId);
+    if (!file) {
+      toolResult = { error: "File tidak ditemukan di vault" };
+    } else if (!store.hasFileAccess(file.id, chatId)) {
+      toolResult = {
+        error: "Akses ditolak",
+        message: `Anda tidak memiliki izin mengakses file ini (Pemilik: +${normalizePhone(file.owner_id)}). Minta izin dengan perintah: 'Minta akses file ID ${file.id}'.`
+      };
+    } else {
+      await sendFile(chatId, file.filepath, file.filename, args.caption || file.summary);
+      toolResult = { success: true, filename: file.filename };
+    }
+  } else if (name === "requestFileAccess") {
+    const file = store.getVaultFileById(args.fileId);
+    if (!file) {
+      toolResult = { error: "File tidak ditemukan di vault" };
+    } else if (store.hasFileAccess(file.id, chatId)) {
+      toolResult = { success: true, message: "Anda sudah memiliki izin akses ke file ini." };
+    } else if (!file.owner_id) {
+      toolResult = { error: "File ini tidak memiliki pemilik terdaftar." };
+    } else {
+      const reqId = store.createFileRequest(file.id, chatId, file.owner_id);
+      const reqNum = normalizePhone(chatId);
+      await sendText(
+        file.owner_id,
+        `🔔 *[Permintaan Akses Dokumen]*\nPengguna *+${reqNum}* meminta akses ke file:\n📄 *${file.filename}* (ID: #${file.id})${args.reason ? `\n💬 *Alasan:* ${args.reason}` : ""}\n\nBalas:\n👉 *SETUJU ${reqId}*\n👉 *TOLAK ${reqId}*`
+      );
+      toolResult = {
+        success: true,
+        requestId: reqId,
+        message: `Permintaan akses file #${file.id} (${file.filename}) sudah dikirimkan ke pemilik (+${normalizePhone(file.owner_id)}). Menunggu persetujuan.`
+      };
+    }
+  } else if (name === "grantFileAccess") {
+    const file = store.getVaultFileById(args.fileId);
+    const callerNorm = normalizePhone(chatId);
+    if (!file) {
+      toolResult = { error: "File tidak ditemukan di vault" };
+    } else if (file.owner_id && normalizePhone(file.owner_id) !== callerNorm) {
+      toolResult = { error: "Hanya pemilik dokumen yang dapat memberikan izin akses kepada pengguna lain." };
+    } else {
+      const targetNorm = normalizePhone(args.targetPhone);
+      store.grantFileAccess(file.id, targetNorm);
+      await sendText(
+        targetNorm,
+        `🎉 Anda telah diberikan izin akses ke dokumen:\n📄 *${file.filename}* (ID: #${file.id})\nOleh pemilik: +${callerNorm}`
+      );
+      toolResult = {
+        success: true,
+        message: `Izin akses file #${file.id} (${file.filename}) berhasil diberikan kepada +${targetNorm}.`
+      };
+    }
+  } else if (name === "addBacklog") {
+    if (normalizePhone(chatId) !== OWNER_PHONE) {
+      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+    } else {
+      const id = store.addBacklog(chatId, args.idea);
+      toolResult = { success: true, id, idea: args.idea, message: `Ide improvement #${id} disimpan ke backlog.` };
+    }
+  } else if (name === "listBacklogs") {
+    if (normalizePhone(chatId) !== OWNER_PHONE) {
+      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+    } else {
+      const items = store.getBacklogs(chatId);
+      formattedList = formatBacklogList(items);
+      toolResult = { count: items.length, items, formatted: formattedList };
+    }
+  } else if (name === "completeBacklog") {
+    if (normalizePhone(chatId) !== OWNER_PHONE) {
+      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+    } else {
+      const changes = store.completeBacklog(args.backlogId, chatId);
+      toolResult = { success: changes > 0, backlogId: args.backlogId };
+    }
+  } else if (name === "searchWeb") {
+    const apiKey = process.env.TAVILY_API_KEY || "tvly-dummy-placeholder-key";
+    const searchRes = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query: args.query,
+        max_results: 5,
+        search_depth: "basic"
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!searchRes.ok) {
+      throw new Error(`Tavily search gagal (${searchRes.status}): ${await searchRes.text()}`);
+    }
+    const searchData = await searchRes.json();
+    toolResult = {
+      query: args.query,
+      results: (searchData.results || []).map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: r.content
+      }))
+    };
+  } else {
+    toolResult = { error: "Unknown function" };
+  }
+
+  return { toolResult, formattedList };
 }
 
 export async function processChat(rotator, userText, { store, chatId, onToolCall, audio = null }) {
@@ -216,7 +417,11 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
 - Jika user minta to-do list / daftar tugas, panggil listTodos dan kembalikan teks hasil fungsi listTodos secara persis tanpa mengubah layout pohon (tree branch) dan ikon badge.
 - Jika user minta koreksi/ubah to-do (misal "ganti A jadi B", "ubah jam jadi 09.30"), WAJIB panggil updateTodo!
 - Jika user minta hapus to-do, WAJIB panggil deleteTodo!
-- Jika user bertanya info terkini, berita, cuaca, riset, pencarian Google, atau fakta yang butuh data internet/real-time, WAJIB panggil tool searchWeb!
+- WAJIB SEARCH WEB (Kapan pun Perlu):
+  1) Fakta dunia nyata, berita, tokoh publik/pejabat, peristiwa, rilis teknologi/game/produk, atau kabar terkini.
+  2) Informasi dinamis yang bisa berubah seiring waktu (kurs, harga, regulasi, jadwal, skor, cuaca, statistik).
+  3) Topik apa pun yang kamu tidak 100% yakin atau memerlukan verifikasi data valid. Dilarang berhalusinasi dari ingatan lama jika menyangkut fakta.
+  4) Pertanyaan eksplisit yang meminta cek, googling, cari berita, atau riset internet.
 - Kamu bisa memisahkan pesan panjang dengan '---' di baris baru untuk mengirim bubble WhatsApp terpisah jika diperlukan.`;
 
   const userParts = [];
@@ -263,239 +468,74 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
     contents.push({ role: "user", parts: userParts });
   }
 
-  const responseData = await generateContent(rotator, {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    contents,
-    tools: TOOLS
-  });
+  const isAction = isActionIntent(userText);
+  let toolConfig = isAction ? { functionCallingConfig: { mode: "ANY" } } : undefined;
 
-  const candidate = responseData.candidates?.[0];
-  if (!candidate?.content) return "Tidak ada balasan dari model.";
+  let currentCandidate = null;
+  let lastFormattedList = null;
+  const MAX_STEPS = 5;
+  let turns = 0;
 
-  const fnCallPart = candidate.content.parts?.find((p) => p.functionCall);
+  while (turns < MAX_STEPS) {
+    const payload = {
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents,
+      tools: TOOLS,
+      ...(toolConfig ? { toolConfig } : {})
+    };
 
-  if (fnCallPart && fnCallPart.functionCall) {
+    const responseData = await generateContent(rotator, payload);
+    currentCandidate = responseData.candidates?.[0];
+    if (!currentCandidate?.content) break;
+
+    const fnCallPart = currentCandidate.content.parts?.find((p) => p.functionCall);
+    if (!fnCallPart?.functionCall) {
+      break;
+    }
+
+    turns++;
     const { name, args } = fnCallPart.functionCall;
     if (onToolCall) onToolCall(name);
 
-    let toolResult = {};
+    let resultObj = {};
     try {
-      if (name === "addTodo") {
-        const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
-        const id = store.addTodo(chatId, args.task, deadline, args.tag);
-        const allTodos = store.getTodos(chatId);
-        toolResult = {
-          success: true,
-          id,
-          task: args.task,
-          formattedList: formatTodoList(allTodos)
-        };
-      } else if (name === "listTodos") {
-        const todos = store.getTodos(chatId);
-        toolResult = {
-          raw: todos,
-          formatted: formatTodoList(todos)
-        };
-      } else if (name === "completeTodo") {
-        const changes = store.completeTodo(args.todoId, chatId);
-        const allTodos = store.getTodos(chatId);
-        toolResult = { success: changes > 0, formattedList: formatTodoList(allTodos) };
-      } else if (name === "updateTodo") {
-        let targetId = args.todoId;
-        if (!targetId && args.taskQuery) {
-          const found = store.findTodo(chatId, args.taskQuery);
-          if (found) targetId = found.id;
-        }
-        if (!targetId) {
-          toolResult = { error: "Tugas tidak ditemukan untuk diubah." };
-        } else {
-          const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : undefined;
-          const changes = store.updateTodo(targetId, chatId, {
-            task: args.newTask,
-            deadline,
-            tag: args.tag
-          });
-          const allTodos = store.getTodos(chatId);
-          toolResult = {
-            success: changes > 0,
-            todoId: targetId,
-            formattedList: formatTodoList(allTodos)
-          };
-        }
-      } else if (name === "deleteTodo") {
-        let targetId = args.todoId;
-        if (!targetId && args.taskQuery) {
-          const found = store.findTodo(chatId, args.taskQuery);
-          if (found) targetId = found.id;
-        }
-        if (!targetId) {
-          toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
-        } else {
-          const changes = store.deleteTodo(targetId, chatId);
-          const allTodos = store.getTodos(chatId);
-          toolResult = {
-            success: changes > 0,
-            formattedList: formatTodoList(allTodos)
-          };
-        }
-      } else if (name === "addReminder") {
-        const timestamp = new Date(args.remindAtIso).getTime();
-        if (isNaN(timestamp)) throw new Error("Format tanggal/jam ISO tidak valid");
-        const id = store.addReminder(chatId, args.message, timestamp);
-        toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso };
-      } else if (name === "searchVault") {
-        const files = store.searchVaultFiles(args.query || "", args.category || null, chatId);
-        toolResult = {
-          count: files.length,
-          files: files.map((f) => ({
-            id: f.id,
-            filename: f.filename,
-            category: f.category,
-            summary: f.summary
-          }))
-        };
-      } else if (name === "sendVaultFile") {
-        const file = store.getVaultFileById(args.fileId);
-        if (!file) {
-          toolResult = { error: "File tidak ditemukan di vault" };
-        } else if (!store.hasFileAccess(file.id, chatId)) {
-          toolResult = {
-            error: "Akses ditolak",
-            message: `Anda tidak memiliki izin mengakses file ini (Pemilik: +${normalizePhone(file.owner_id)}). Minta izin dengan perintah: 'Minta akses file ID ${file.id}'.`
-          };
-        } else {
-          await sendFile(chatId, file.filepath, file.filename, args.caption || file.summary);
-          toolResult = { success: true, filename: file.filename };
-        }
-      } else if (name === "requestFileAccess") {
-        const file = store.getVaultFileById(args.fileId);
-        if (!file) {
-          toolResult = { error: "File tidak ditemukan di vault" };
-        } else if (store.hasFileAccess(file.id, chatId)) {
-          toolResult = { success: true, message: "Anda sudah memiliki izin akses ke file ini." };
-        } else if (!file.owner_id) {
-          toolResult = { error: "File ini tidak memiliki pemilik terdaftar." };
-        } else {
-          const reqId = store.createFileRequest(file.id, chatId, file.owner_id);
-          const reqNum = normalizePhone(chatId);
-          await sendText(
-            file.owner_id,
-            `🔔 *[Permintaan Akses Dokumen]*\nPengguna *+${reqNum}* meminta akses ke file:\n📄 *${file.filename}* (ID: #${file.id})${args.reason ? `\n💬 *Alasan:* ${args.reason}` : ""}\n\nBalas:\n👉 *SETUJU ${reqId}*\n👉 *TOLAK ${reqId}*`
-          );
-          toolResult = {
-            success: true,
-            requestId: reqId,
-            message: `Permintaan akses file #${file.id} (${file.filename}) sudah dikirimkan ke pemilik (+${normalizePhone(file.owner_id)}). Menunggu persetujuan.`
-          };
-        }
-      } else if (name === "grantFileAccess") {
-        const file = store.getVaultFileById(args.fileId);
-        const callerNorm = normalizePhone(chatId);
-        if (!file) {
-          toolResult = { error: "File tidak ditemukan di vault" };
-        } else if (file.owner_id && normalizePhone(file.owner_id) !== callerNorm) {
-          toolResult = { error: "Hanya pemilik dokumen yang dapat memberikan izin akses kepada pengguna lain." };
-        } else {
-          const targetNorm = normalizePhone(args.targetPhone);
-          store.grantFileAccess(file.id, targetNorm);
-          await sendText(
-            targetNorm,
-            `🎉 Anda telah diberikan izin akses ke dokumen:\n📄 *${file.filename}* (ID: #${file.id})\nOleh pemilik: +${callerNorm}`
-          );
-          toolResult = {
-            success: true,
-            message: `Izin akses file #${file.id} (${file.filename}) berhasil diberikan kepada +${targetNorm}.`
-          };
-        }
-      } else if (name === "addBacklog") {
-        if (normalizePhone(chatId) !== OWNER_PHONE) {
-          toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
-        } else {
-          const id = store.addBacklog(chatId, args.idea);
-          toolResult = { success: true, id, idea: args.idea, message: `Ide improvement #${id} disimpan ke backlog.` };
-        }
-      } else if (name === "listBacklogs") {
-        if (normalizePhone(chatId) !== OWNER_PHONE) {
-          toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
-        } else {
-          const items = store.getBacklogs(chatId);
-          toolResult = { count: items.length, items, formatted: formatBacklogList(items) };
-        }
-      } else if (name === "completeBacklog") {
-        if (normalizePhone(chatId) !== OWNER_PHONE) {
-          toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
-        } else {
-          const changes = store.completeBacklog(args.backlogId, chatId);
-          toolResult = { success: changes > 0, backlogId: args.backlogId };
-        }
-      } else if (name === "searchWeb") {
-        const apiKey = process.env.TAVILY_API_KEY || "tvly-dummy-placeholder-key";
-        const searchRes = await fetch("https://api.tavily.com/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            api_key: apiKey,
-            query: args.query,
-            max_results: 5,
-            search_depth: "basic"
-          }),
-          signal: AbortSignal.timeout(10000)
-        });
-        if (!searchRes.ok) {
-          throw new Error(`Tavily search gagal (${searchRes.status}): ${await searchRes.text()}`);
-        }
-        const searchData = await searchRes.json();
-        toolResult = {
-          query: args.query,
-          results: (searchData.results || []).map((r) => ({
-            title: r.title,
-            url: r.url,
-            content: r.content
-          }))
-        };
-      } else {
-        toolResult = { error: "Unknown function" };
-      }
+      resultObj = await executeTool(name, args, { store, chatId });
     } catch (toolErr) {
-      toolResult = { error: toolErr.message };
+      resultObj = { toolResult: { error: toolErr.message } };
     }
 
-    if (name === "listTodos" && toolResult.formatted) {
-      return toolResult.formatted;
-    }
-    if (name === "listBacklogs" && toolResult.formatted) {
-      return toolResult.formatted;
+    if (resultObj.formattedList) {
+      lastFormattedList = resultObj.formattedList;
     }
 
-    contents.push(candidate.content);
+    contents.push(currentCandidate.content);
     contents.push({
       role: "user",
-      parts: [{ functionResponse: { name, response: { result: toolResult } } }]
+      parts: [{ functionResponse: { name, response: { result: resultObj.toolResult } } }]
     });
 
-    const finalData = await generateContent(rotator, {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents
-    });
-
-    const replyPart = finalData.candidates?.[0]?.content?.parts?.find((p) => p.text);
-    const text = replyPart?.text?.trim();
-    if (text) {
-      if (toolResult.formattedList && !text.includes("─") && !text.includes("[")) {
-        return `${text}\n\n${toolResult.formattedList}`;
-      }
-      return text;
-    }
-    return toolResult.formattedList || "Aksi berhasil diselesaikan.";
+    // Revert toolConfig to AUTO for subsequent steps in the ReAct loop
+    toolConfig = { functionCallingConfig: { mode: "AUTO" } };
   }
 
-  const directText = candidate.content.parts?.find((p) => p.text)?.text;
-  return directText || "Siap.";
+  const directText = currentCandidate?.content?.parts?.find((p) => p.text)?.text;
+  const text = directText?.trim();
+  if (text) {
+    if (lastFormattedList && !text.includes("─") && !text.includes("[")) {
+      return `${text}\n\n${lastFormattedList}`;
+    }
+    return text;
+  }
+  return lastFormattedList || "Aksi berhasil diselesaikan.";
 }
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
   import("node:assert").then(({ default: assert }) => {
     assert.strictEqual(typeof processChat, "function");
+    assert.strictEqual(typeof executeTool, "function");
+    assert.strictEqual(isActionIntent("tambahkan tugas"), true);
+    assert.strictEqual(isActionIntent("ingatkan besok jam 7"), true);
+    assert.strictEqual(isActionIntent("halo bro"), false);
     const decls = TOOLS[0].functionDeclarations.map((d) => d.name);
     assert.ok(decls.includes("addBacklog"));
     assert.ok(decls.includes("listBacklogs"));
