@@ -159,6 +159,32 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
       return `[!] Tugas #${cmd.id} gak ketemu.`;
     }
 
+    case "update": {
+      let task = cmd.raw;
+      let tag = undefined;
+      const tagMatch = task.match(/#(\w+)/);
+      if (tagMatch) {
+        tag = tagMatch[1];
+        task = task.replace(tagMatch[0], "").trim();
+      }
+      let deadline = undefined;
+      const dlMatch = task.match(/dl:(\S+)/i);
+      if (dlMatch) {
+        const parsed = new Date(dlMatch[1]).getTime();
+        if (!isNaN(parsed)) deadline = parsed;
+        task = task.replace(dlMatch[0], "").trim();
+      }
+      const changed = store.updateTodo(cmd.id, chatId, {
+        task: task || undefined,
+        deadline,
+        tag
+      });
+      if (changed > 0) {
+        return `[OK] Tugas #${cmd.id} berhasil diupdate jadi: "${task}"`;
+      }
+      return `[!] Tugas #${cmd.id} gak ketemu.`;
+    }
+
     case "detail": {
       const todo = store.getTodoById(cmd.id, chatId);
       if (!todo) return `[!] Tugas #${cmd.id} gak ketemu.`;
@@ -223,7 +249,49 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
     }
 
     case "help": {
-      return `*[JOHN MUSTARD — FAST COMMANDS]*\n(Bypass AI, instant & anti-lemot)\n\n• #ping — Cek status & latency bot\n• #todo / #tugas — Lihat to-do list pending\n• #today — Tugas deadline hari ini\n• #week — Tugas 7 hari ke depan\n• #<id> — Cek detail tugas (contoh: #1)\n• #done <id> — Tandai selesai (contoh: #done 1)\n• #undo — Batalkan selesai terakhir\n• #del <id> — Hapus tugas (contoh: #del 1)\n• #add <tugas> — Tambah tugas tanpa AI (opsi dl:YYYY-MM-DD #tag)\n• #daily <1/0> — On/off reminder harian jam 07:00 WIB\n• #skills — Lihat daftar skill & macro otomatis\n• #help — Tampilkan menu ini\n\nUntuk chat bebas atau riset, langsung ketik pesan atau kirim VN kaya biasa.`;
+      return `*[Halow aku Maarbot 👋]*
+_Ilkomerz61's Memory Augmented Academic Recollection BOT_
+
+*USER GUIDE (TUTOR SETUP MARBOT)*
+https://ipb.link/marbot
+
+*Perintah Umum:*
+- #ping — cek bot hidup & latency
+- #tugas — lihat semua tugas (global)
+- #today — tugas deadline hari ini
+- #week — tugas 7 hari ke depan
+- #help — bantuan
+
+*Perintah Personal:*
+- #todo — lihat tugas pribadi kamu
+- #<id> — lihat detail tugas dari #todo
+- #done <id> — tandai selesai
+- #undo — batalkan #done terakhir
+
+*Perintah Pengaturan:*
+- #setkelas paket<1-5> — atur kelas otomatis sesuai paket KRS (1-5)
+- #setkelas paket — lihat daftar detail isi paket 1-5
+- #setkelas <matkul> <kode1> <kode2> — atur kode pararel untuk matkul
+- #setkelas asah <track> — atur track Asah 2026 Dicoding (AI / FS / DS / NONE)
+- #mykelas — lihat settings kode parallel kamu
+- #daily <1/0> — aktifkan/matikan reminder #todo harian
+
+*Perintah Developer (Umum):*
+- #apikey new <nama> — buat API key baru
+- #apikey remove <nama> — hapus API key tertentu
+- #apikey list — lihat daftar nama API key
+- #apikey check <nama> — cek detail API key
+- #apidocs — dokumentasi REST API Marbot
+
+*Perintah Admin:*
+- #delete <id> — hapus tugas (id dari #tugas)
+- #update <id> <pesan> — update tugas dengan AI
+- #announcement <pesan> — simpan pengumuman dengan deadline (grup akademik)
+
+*Penting:* #<id> dan #done selalu pakai nomor dari *#todo*. _Info tugas akan otomatis tersimpan via grup info akademik, tidak dari chat lain._
+
+*Want to Contribute?*
+github.com/gimigkk/marbot-academic-bot`;
     }
 
     default:
@@ -279,6 +347,12 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
 
       const undoRes = executeFastCommand(parseFastCommand("#undo"), { store, chatId });
       assert.ok(undoRes.includes("dibalikin jadi pending"));
+
+      const updateRes = executeFastCommand(parseFastCommand("#update 1 Belajar analgor rev2"), { store, chatId });
+      assert.ok(updateRes.includes("[OK] Tugas #1 berhasil diupdate"));
+
+      const helpRes = executeFastCommand(parseFastCommand("#help"), { store, chatId });
+      assert.ok(helpRes.includes("Halow aku Maarbot"));
 
       const delRes = executeFastCommand(parseFastCommand("#del 1"), { store, chatId });
       assert.ok(delRes.includes("[OK] Tugas #1 berhasil dihapus"));

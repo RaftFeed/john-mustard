@@ -28,28 +28,49 @@ startScheduler(store, { rotator });
 const SKILLS_DIR = process.env.SKILLS_DIR || "skills";
 initSkillsWatcher(store, SKILLS_DIR);
 
-const HELP_TEXT = `*[JOHN MUSTARD]*
-Asisten WA sat-set. Kirim chat, VN, atau file langsung.
+const HELP_TEXT = `*[Halow aku Maarbot 👋]*
+_Ilkomerz61's Memory Augmented Academic Recollection BOT_
 
-*PERINTAH CEPAT (BYPASS AI):*
-• #ping — Cek status & latency bot
-• #todo / #tugas — List tugas pending
-• #today — Deadline hari ini
-• #week — Deadline 7 hari ke depan
-• #<id> — Cek detail tugas (misal: #1)
-• #done <id> — Tandai selesai (misal: #done 1)
-• #undo — Batalin selesai terakhir
-• #del <id> — Hapus tugas (misal: #del 1)
-• #add <tugas> — Tambah tugas manual (opsi dl:YYYY-MM-DD #tag)
-• #daily <1/0> — On/off rekap harian jam 07:00 WIB
-• #help — Tampilkan menu ini
+*USER GUIDE (TUTOR SETUP MARBOT)*
+https://ipb.link/marbot
 
-*FITUR LAIN:*
-• Catatan: Simpan & tanya memori penting (nomor rekening, NIM, alamat).
-• File: Simpan dokumen ke vault + auto OCR & kirim preview foto langsung.
-• VN: Dengerin & proses rekaman suara langsung.
-• Web: Riset info terkini & baca isi URL.
-• Python: Hitung presisi & generate chart.`;
+*Perintah Umum:*
+- #ping — cek bot hidup & latency
+- #tugas — lihat semua tugas (global)
+- #today — tugas deadline hari ini
+- #week — tugas 7 hari ke depan
+- #help — bantuan
+
+*Perintah Personal:*
+- #todo — lihat tugas pribadi kamu
+- #<id> — lihat detail tugas dari #todo
+- #done <id> — tandai selesai
+- #undo — batalkan #done terakhir
+
+*Perintah Pengaturan:*
+- #setkelas paket<1-5> — atur kelas otomatis sesuai paket KRS (1-5)
+- #setkelas paket — lihat daftar detail isi paket 1-5
+- #setkelas <matkul> <kode1> <kode2> — atur kode pararel untuk matkul
+- #setkelas asah <track> — atur track Asah 2026 Dicoding (AI / FS / DS / NONE)
+- #mykelas — lihat settings kode parallel kamu
+- #daily <1/0> — aktifkan/matikan reminder #todo harian
+
+*Perintah Developer (Umum):*
+- #apikey new <nama> — buat API key baru
+- #apikey remove <nama> — hapus API key tertentu
+- #apikey list — lihat daftar nama API key
+- #apikey check <nama> — cek detail API key
+- #apidocs — dokumentasi REST API Marbot
+
+*Perintah Admin:*
+- #delete <id> — hapus tugas (id dari #tugas)
+- #update <id> <pesan> — update tugas dengan AI
+- #announcement <pesan> — simpan pengumuman dengan deadline (grup akademik)
+
+*Penting:* #<id> dan #done selalu pakai nomor dari *#todo*. _Info tugas akan otomatis tersimpan via grup info akademik, tidak dari chat lain._
+
+*Want to Contribute?*
+github.com/gimigkk/marbot-academic-bot`;
 
 async function handleIncomingMessage(msg) {
   console.log(">> Processing message from:", msg.from, "text:", msg.body);
