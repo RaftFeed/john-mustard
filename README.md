@@ -1,71 +1,90 @@
-# John Mustard 🤖
+# John Mustard
 
-Autonomous AI executive assistant for WhatsApp powered by Node.js, WAHA, Gemini ReAct, and isolated Python Sandbox.
-
----
-
-## ✨ Features
-
-- **WhatsApp Bridge (WAHA)**: Webhook streaming, 1.0s burst debouncing, multi-bubble replies (`---`), and multi-contact context awareness.
-- **ReAct Loop & Multi-Key Rotator**: Multi-step tool orchestration with automatic Gemini API key rotation on rate-limits (HTTP 429).
-- **Sandboxed Python & Doc Engine**: Isolated script execution, data analysis, OCR, and PDF manipulation (merge, split, compress, render images).
-- **Deterministic Fast Commands**: Zero-latency offline fallback shortcuts (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`).
-- **Memory & Storage**: SQLite WAL persistence for to-dos, reminders, chat history, and document vault with access control lists (ACL).
-- **Procedural Skills (Voyager Pattern)**: Autonomous crystallization of new skills from recurring interactions.
+Autonomous Executive AI Assistant for WhatsApp built on Node.js, WAHA, Gemini ReAct, and an isolated Python compute sandbox.
 
 ---
 
-## ⚡ Quick Start
+## Overview
 
-### 1. Prerequisites
-- **Node.js** >= 20.x
-- **Docker & Docker Compose**
-- **Python** >= 3.12 (with `pymupdf` and `flask` for runner)
+John Mustard is a private, self-hosted WhatsApp assistant engineered with a zero-dependency deep module architecture. It combines multi-step agentic reasoning, sandboxed code execution, document processing, and local database persistence to handle daily executive tasks, scheduling, and information retrieval.
 
-### 2. Environment Setup
-Copy the example environment file and configure your credentials:
+## Core Capabilities
+
+- **WhatsApp Integration (WAHA)**: Real-time webhook streaming, 1.0s burst debouncing, multi-bubble message splitting, and sender identity resolution.
+- **ReAct Execution Engine**: Multi-step tool orchestration powered by Google Gemini, featuring automatic API key rotation on HTTP 429 rate limits.
+- **Sandboxed Execution Environment**: Isolated Docker container for Python script evaluation, data analytics, OCR, and PyMuPDF-based document processing (merge, split, compress, and page rendering).
+- **Deterministic Offline Commands**: Low-latency command shortcuts (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`) that operate independently of LLM availability.
+- **State and Memory Management**: SQLite WAL persistence for task management, reminders, audit logging, and an access-controlled document vault.
+- **Procedural Skill Crystallization**: Autonomous synthesis of reusable procedural skills from recurring user interactions.
+
+## Architecture
+
+| Component | Technology | Role |
+|---|---|---|
+| Core Engine | Node.js (v20+) | Event routing, ReAct loop, SQLite persistence |
+| WhatsApp Gateway | WAHA (WhatsApp HTTP API) | Session lifecycle, media decoding, webhook dispatch |
+| Execution Sandbox | Python 3.12, PyMuPDF, Flask | Isolated code execution and document transformations |
+| Scheduler | Supercronic | Autonomous cron evaluations and proactive reminders |
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js >= 20.x
+- Docker and Docker Compose
+- Python >= 3.12 (for local runner testing)
+
+### Configuration
+
+Create a local environment file from the provided template:
+
 ```bash
 cp .env.example .env
 ```
-Fill in the following key variables in `.env`:
-- `GEMINI_KEYS`: Comma-separated Gemini API keys
-- `TAVILY_API_KEY`: API key for web search
-- `ALLOWED_PHONE`, `OWNER_PHONE`: Whitelisted phone numbers
-- `WAHA_*`: WhatsApp HTTP API credentials
 
-### 3. Run with Docker Compose
-Start all services (WAHA, Bot, Runner, Scheduler):
+Configure the required variables in `.env`:
+
+- `GEMINI_KEYS`: Comma-separated Gemini API keys.
+- `TAVILY_API_KEY`: API key for web search integration.
+- `ALLOWED_PHONE`, `OWNER_PHONE`: Whitelisted WhatsApp phone numbers.
+- `WAHA_*`: WAHA gateway credentials and endpoints.
+
+### Deployment with Docker Compose
+
+Deploy the complete stack (Core Bot, WAHA, Runner, and Scheduler):
+
 ```bash
 docker compose up -d --build
 ```
 
-### 4. Local Development
-Run without Docker container for bot:
+### Local Development
+
+Run the core application locally:
+
 ```bash
 npm install
 npm test
 npm start
 ```
 
----
+## Testing and Verification
 
-## 🧪 Testing
+Execute the test suite covering LLM tool routing, database operations, command parsing, and runner sandboxing:
 
-Run test suite across all modules (LLM, DB, Queue, Rotator, PyMuPDF Runner):
 ```bash
 npm test
 ```
 
-Audit feature usage and error rates:
+Generate usage metrics and error audit reports:
+
 ```bash
 npm run audit
 ```
 
----
+## Documentation
 
-## 📚 Documentation
+Detailed architectural specifications and engineering decisions are available in the `docs/` directory:
 
-Deep-dive architecture and design specifications:
-- [Architecture & Domain Seams](docs/ARCHITECTURE.md)
-- [Documentation Index](docs/INDEX.md)
-- [ADR 001: Zero-Dependency Deep Modules](docs/ADR/001-zero-dependency-deep-modules.md)
+- [System Topology and Domain Seams](docs/ARCHITECTURE.md)
+- [Technical Documentation Index](docs/INDEX.md)
+- [ADR 001: Zero-Dependency Deep Modules Pattern](docs/ADR/001-zero-dependency-deep-modules.md)
