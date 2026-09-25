@@ -114,6 +114,41 @@ export function parseFastCommand(text = "") {
   return null;
 }
 
+export function formatServerHealth(store) {
+  const uptimeSec = os.uptime();
+  const nodeUptime = process.uptime();
+  const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(1);
+  const freeMem = (os.freemem() / 1024 / 1024 / 1024).toFixed(1);
+  const usedMem = (totalMem - freeMem).toFixed(1);
+  const memPct = Math.round(((totalMem - freeMem) / totalMem) * 100);
+
+  const procRss = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+  const cpus = os.cpus();
+  const cpuCores = cpus.length;
+  const loadAvg = os.loadavg().map((l) => l.toFixed(2)).join(", ");
+
+  let diskInfo = "N/A";
+  try {
+    if (fs.statfsSync) {
+      const rootStat = fs.statfsSync("/");
+      const totalDisk = ((rootStat.bsize * rootStat.blocks) / (1024 * 1024 * 1024)).toFixed(1);
+      const freeDisk = ((rootStat.bsize * rootStat.bfree) / (1024 * 1024 * 1024)).toFixed(1);
+      const usedDisk = (totalDisk - freeDisk).toFixed(1);
+      const diskPct = Math.round((usedDisk / totalDisk) * 100);
+      diskInfo = `${usedDisk}/${totalDisk} GB (${diskPct}%, sisa ${freeDisk} GB)`;
+    }
+  } catch {}
+
+  const dbStats = store?.getHealthStats ? store.getHealthStats() : null;
+  const dbLine = dbStats ? `\n• DB: ${dbStats.pendingTodos} pending/${dbStats.todos} total | ${dbStats.vault} vault` : "";
+
+  return `*[SERVER HEALTH]*
+• Uptime: Host ${formatUptime(uptimeSec)} | Bot ${formatUptime(nodeUptime)}
+• CPU: ${cpuCores} vCPU | Load: ${loadAvg}
+• RAM: Host ${usedMem}/${totalMem} GB (${memPct}%) | Bot RSS ${procRss} MB
+• Disk: ${diskInfo}${dbLine}`;
+}
+
 export async function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
   if (!cmd) return null;
 
@@ -261,60 +296,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false }
 
     case "health": {
       if (!isOwner) return "[!] Fitur #health khusus owner (+6281234567890).";
-      const uptimeSec = os.uptime();
-      const nodeUptime = process.uptime();
-      const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(1);
-      const freeMem = (os.freemem() / 1024 / 1024 / 1024).toFixed(1);
-      const usedMem = (totalMem - freeMem).toFixed(1);
-      const memPct = Math.round(((totalMem - freeMem) / totalMem) * 100);
-
-      const procRss = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
-      const procHeap = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-
-      const cpus = os.cpus();
-      const cpuModel = cpus[0]?.model || "Unknown CPU";
-      const cpuCores = cpus.length;
-      const loadAvg = os.loadavg().map((l) => l.toFixed(2)).join(", ");
-
-      let diskInfo = "N/A";
-      try {
-        if (fs.statfsSync) {
-          const rootStat = fs.statfsSync("/");
-          const totalDisk = ((rootStat.bsize * rootStat.blocks) / (1024 * 1024 * 1024)).toFixed(1);
-          const freeDisk = ((rootStat.bsize * rootStat.bfree) / (1024 * 1024 * 1024)).toFixed(1);
-          const usedDisk = (totalDisk - freeDisk).toFixed(1);
-          const diskPct = Math.round((usedDisk / totalDisk) * 100);
-          diskInfo = `${usedDisk}/${totalDisk} GB (${diskPct}%) [Free: ${freeDisk} GB]`;
-        }
-      } catch {}
-
-      const dbStats = store?.getHealthStats ? store.getHealthStats() : null;
-      let dbInfo = "";
-      if (dbStats) {
-        dbInfo = `\nDatabase:\n• Todos: ${dbStats.pendingTodos} pending / ${dbStats.todos} total\n• Vault Files: ${dbStats.vault}\n• Usage Logs: ${dbStats.logs}`;
-      }
-
-      return `*[SERVER HEALTH REPORT]*
-_Khusus Owner (+6281234567890)_
-
-Host & System:
-• Hostname: ${os.hostname()}
-• OS: ${os.type()} ${os.release()} (${os.arch()})
-• Node.js: ${process.version}
-• Server Uptime: ${formatUptime(uptimeSec)}
-• Bot Uptime: ${formatUptime(nodeUptime)}
-
-CPU & Load:
-• Model: ${cpuModel}
-• Cores: ${cpuCores} vCPU
-• Load Average: ${loadAvg} (1m, 5m, 15m)
-
-RAM Usage:
-• Host RAM: ${usedMem} / ${totalMem} GB (${memPct}%)
-• Bot RAM: RSS ${procRss} MB | Heap ${procHeap} MB
-
-Storage (Disk /):
-• Disk: ${diskInfo}${dbInfo}`;
+      return formatServerHealth(store);
     }
 
     case "minecraft": {
@@ -408,7 +390,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.ok(healthDenied.includes("khusus owner"));
 
       const healthAllowed = await executeFastCommand(parseFastCommand("#health"), { store, chatId, isOwner: true });
-      assert.ok(healthAllowed.includes("SERVER HEALTH REPORT"));
+      assert.ok(healthAllowed.includes("SERVER HEALTH"));
 
       const addRes = await executeFastCommand(parseFastCommand("#add Belajar analgor #kuliah"), { store, chatId });
       assert.ok(addRes.includes("[OK] Tugas #1 dicatat"));

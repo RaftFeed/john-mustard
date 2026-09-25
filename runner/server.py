@@ -257,10 +257,30 @@ def process_pdf():
                 "message": f"Berhasil mengompres PDF dari {orig_size // 1024} KB ke {new_size // 1024} KB (hemat {saved_pct:.1f}%)."
             })
 
+        # 6. EXTRACT TEXT (Google Slides & PDF)
+        elif action in ("extract_text", "get_text", "read_slides"):
+            b = get_file_bytes(raw_files[0])
+            doc = fitz.open(stream=b, filetype="pdf")
+            total = len(doc)
+            pages_txt = []
+            for idx, page in enumerate(doc):
+                t = (page.get_text("text") or "").strip()
+                if t:
+                    pages_txt.append(f"--- Halaman/Slide {idx + 1} dari {total} ---\n{t}")
+            doc.close()
+            full_txt = "\n\n".join(pages_txt) if pages_txt else "[Dokumen/Slide tidak memuat teks layer digital]"
+            return jsonify({
+                "status": "success",
+                "action": "extract_text",
+                "text": full_txt[:15000],
+                "page_count": total,
+                "message": f"Berhasil mengekstrak teks dari {total} halaman/slide."
+            })
+
         else:
             return jsonify({
                 "status": "error",
-                "error": f"Aksi '{action}' tidak dikenal. Pilih: merge, split, render_image, images_to_pdf, compress."
+                "error": f"Aksi '{action}' tidak dikenal. Pilih: merge, split, render_image, images_to_pdf, compress, extract_text."
             }), 400
 
     except Exception as e:

@@ -49,25 +49,16 @@ export async function getMinecraftStatus(host = process.env.MC_HOST || "168.110.
 
 export function formatMinecraftStatus(status) {
   if (!status.online) {
-    return `*[MINECRAFT SERVER STATUS]*\n_Khusus Owner (+6281234567890)_\n\nStatus: Offline\nHost: ${status.host}\nInfo: ${status.message || status.error || "Server tidak aktif."}`;
+    return `*[MC SERVER]* Offline (${status.host})`;
   }
 
   const playersText = status.playerList && status.playerList.length > 0
     ? status.playerList.join(", ")
-    : "_(Sedang kosong)_";
+    : "kosong";
 
-  return `*[MINECRAFT SERVER STATUS]*
-_Khusus Owner (+6281234567890)_
-
-Status: Online (Active)
-MOTD: ${status.motd}
-IP Server: ${status.host}
-• Java Edition Port: ${status.javaPort}
-• Bedrock Edition Port: ${status.bedrockPort}
-Versi: ${status.version}
-
-Player Online: ${status.playersOnline} / ${status.playersMax}
-• Daftar Player: ${playersText}`;
+  return `*[MC SERVER]* Online | v${status.version}
+• Host: ${status.host} (Java: ${status.javaPort} | Bedrock: ${status.bedrockPort})
+• Player: ${status.playersOnline}/${status.playersMax} (${playersText})`;
 }
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/minecraft.js")) {
@@ -85,7 +76,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/minecraft.js")) {
       playersMax: 20,
       playerList: ["Player1", "Player2"]
     });
-    assert.ok(formattedMock.includes("Online (Active)"));
+    assert.ok(formattedMock.includes("Online"));
     assert.ok(formattedMock.includes("Player1, Player2"));
     console.log("Minecraft module self-test OK");
   });

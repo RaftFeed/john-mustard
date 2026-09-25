@@ -1,24 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
 import { sendFile, sendText } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
+import { formatServerHealth } from "./commands.js";
+import {
+  proposeSkill,
+  approveSkillProposal,
+  rejectSkillProposal,
+  listSkillProposals,
+  listSkillVersions,
+  rollbackSkill
+} from "./skills_sync.js";
 
 export const TOOLS = [
   {
     functionDeclarations: [
       {
         name: "addTodo",
-        description: "Tambahkan tugas ke To-Do List dengan deadline dan tag matkul/kategori",
+        description: "Tambahkan tugas ke To-Do List dengan deadline, tag matkul/kategori, dan penanggung jawab",
         parameters: {
           type: "OBJECT",
           properties: {
             task: { type: "STRING", description: "Judul tugas, contoh: LKP 6 Analisis Algoritme" },
             deadlineIso: { type: "STRING", description: "Deadline dalam format ISO 8601 (contoh: 2026-09-27T23:59:00+07:00)" },
             tag: { type: "STRING", description: "Tag atau kode mata kuliah, contoh: #analgor [P2]" },
-            category: { type: "STRING", description: "Kategori tugas opsional: work (default) atau routine (absen/kuliah)" }
+            category: { type: "STRING", description: "Kategori tugas opsional: work (default) atau routine (absen/kuliah)" },
+            assignee: { type: "STRING", description: "Nama orang yang ditugaskan (contoh: Gilang, Bunga, atau anggota keluarga/tim)" }
           },
           required: ["task"]
         }
@@ -29,7 +39,8 @@ export const TOOLS = [
         parameters: {
           type: "OBJECT",
           properties: {
-            includeRoutine: { type: "BOOLEAN", description: "Set true untuk menyertakan tugas rutin/kuliah/absen (default false)" }
+            includeRoutine: { type: "BOOLEAN", description: "Set true untuk menyertakan tugas rutin/kuliah/absen (default false)" },
+            assignee: { type: "STRING", description: "Filter to-do list berdasarkan orang yang ditugaskan (opsional)" }
           }
         }
       },
@@ -54,7 +65,8 @@ export const TOOLS = [
             taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika ID tidak disebutkan" },
             newTask: { type: "STRING", description: "Judul tugas baru" },
             deadlineIso: { type: "STRING", description: "Deadline baru dalam format ISO 8601 (contoh: 2026-09-25T09:30:00+07:00)" },
-            tag: { type: "STRING", description: "Tag baru mata kuliah atau kategori" }
+            tag: { type: "STRING", description: "Tag baru mata kuliah atau kategori" },
+            assignee: { type: "STRING", description: "Ganti nama penanggung jawab tugas" }
           }
         }
       },
@@ -81,6 +93,25 @@ export const TOOLS = [
             taskType: { type: "STRING", description: "Tipe tugas: reminder (default) atau scheduled_action" }
           },
           required: ["message", "remindAtIso"]
+        }
+      },
+      {
+        name: "listReminders",
+        description: "Lihat daftar semua pengingat/reminder aktif yang belum terkirim",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
+        name: "deleteReminder",
+        description: "Hapus/batalkan pengingat/reminder berdasarkan ID reminder atau kata kunci pesan",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            reminderId: { type: "NUMBER", description: "ID reminder yang ingin dibatalkan/dihapus (opsional)" },
+            query: { type: "STRING", description: "Pesan atau topik reminder yang ingin dicari untuk dihapus (opsional)" }
+          }
         }
       },
       {
@@ -294,6 +325,110 @@ export const TOOLS = [
         }
       },
       {
+        name: "proposeSkill",
+        description: "Buat proposal skill/macro baru yang akan direview sebelum menjadi aktif",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill (slug alfanumerik tanpa spasi, contoh: format_laporan)" },
+            description: { type: "STRING", description: "Deskripsi singkat fungsi skill" },
+            content: { type: "STRING", description: "Langkah dan instruksi detail skill" }
+          },
+          required: ["name", "content"]
+        }
+      },
+      {
+        name: "approveSkill",
+        description: "Setujui proposal skill menjadi aktif, tercatat di registry dengan audit versioning",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama atau path file proposal skill yang disetujui" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "rejectSkill",
+        description: "Tolak proposal skill agar tidak diaktifkan",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama atau path file proposal skill" },
+            reason: { type: "STRING", description: "Alasan penolakan" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "listSkillVersions",
+        description: "Lihat riwayat versi skill dan arsip versinya (.versions/vNNN.md)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill yang ingin dicek riwayat versinya" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "rollbackSkill",
+        description: "Kembalikan skill ke versi sebelumnya (audit rollback)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill yang ingin di-rollback" },
+            toVersion: { type: "NUMBER", description: "Nomor versi target (opsional, default ke versi tepat sebelum aktif)" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "addPerson",
+        description: "Simpan atau perbarui kontak keluarga, pasangan, atau partner ke direktori koordinasi pasangan",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama kontak atau anggota keluarga (contoh: Gilang, Bunga, Ibu, Dosen A)" },
+            phone: { type: "STRING", description: "Nomor telepon WhatsApp (contoh: 08123456789 atau 628123456789)" },
+            role: { type: "STRING", description: "Peran atau jabatan (contoh: Principal, Co-Principal, Pasangan, Rekan Lab)" },
+            relationship: { type: "STRING", description: "Hubungan (contoh: Suami, Istri, Pasangan, Keluarga, Teman)" },
+            notes: { type: "STRING", description: "Catatan khusus, preferensi, atau info tambahan" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "getPerson",
+        description: "Cari kontak atau detail profil anggota keluarga/partner dari direktori",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama atau nomor telepon kontak yang dicari" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "listPersons",
+        description: "Tampilkan semua kontak dan anggota keluarga di direktori koordinasi pasangan",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
+        name: "deletePerson",
+        description: "Hapus kontak dari direktori koordinasi pasangan",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama kontak yang ingin dihapus" }
+          },
+          required: ["name"]
+        }
+      },
+      {
         name: "saveNote",
         description: "Simpan catatan penting, memori personal, atau info permanen pengguna (contoh: nomor rekening, NIM, alamat, preferensi)",
         parameters: {
@@ -303,6 +438,18 @@ export const TOOLS = [
             content: { type: "STRING", description: "Isi catatan lengkap" }
           },
           required: ["key", "content"]
+        }
+      },
+      {
+        name: "appendNote",
+        description: "Tambahkan poin atau informasi baru ke dalam catatan/daftar yang sudah ada (Living List / shared note), tanpa menghapus catatan lama",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Topik atau nama catatan (contoh: belanja, ide, toefl)" },
+            addition: { type: "STRING", description: "Teks atau item baru yang ingin ditambahkan" }
+          },
+          required: ["key", "addition"]
         }
       },
       {
@@ -357,6 +504,33 @@ export const TOOLS = [
 
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const FALLBACK_MODEL = "gemini-3-flash-preview";
+
+const modelCooldowns = new Map(); // model -> timestamp
+
+// ponytail: demote overloaded/failed models for 120s instead of re-probing every ReAct step
+export function markModelUnavailable(model, cooldownMs = 120_000) {
+  modelCooldowns.set(model, Date.now() + cooldownMs);
+}
+
+export function clearModelCooldowns() {
+  modelCooldowns.clear();
+}
+
+export function getActiveModels(baseModels = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-flash-latest", FALLBACK_MODEL, "gemini-3.5-flash-lite"]) {
+  const now = Date.now();
+  const healthy = [];
+  const cooling = [];
+
+  for (const m of baseModels) {
+    const until = modelCooldowns.get(m) || 0;
+    if (until <= now) {
+      healthy.push(m);
+    } else {
+      cooling.push(m);
+    }
+  }
+  return [...healthy, ...cooling];
+}
 
 export function isSafeUrl(rawUrl) {
   try {
@@ -616,7 +790,84 @@ export async function fetchUrlContent(rawUrl) {
     }
   }
 
-  // 4. Generic Web Page Scraper
+  // 4. Google Slides (/presentation/d/{docId})
+  if (href.includes("/presentation/d/")) {
+    const docMatch = href.match(/\/presentation\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]+)/);
+    const docId = docMatch ? docMatch[1] : null;
+    if (docId) {
+      const pdfUrl = `https://docs.google.com/presentation/d/${docId}/export/pdf`;
+      const res = await fetch(pdfUrl, { headers, signal: AbortSignal.timeout(15000) });
+      if (res.url.includes("accounts.google.com/ServiceLogin")) {
+        throw new Error("Google Slide ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat Google Slide.`);
+      const pdfBuf = Buffer.from(await res.arrayBuffer());
+      const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/pdf");
+      try {
+        const pyRes = await fetch(runnerUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "extract_text",
+            files: [{ data_base64: pdfBuf.toString("base64") }]
+          }),
+          signal: AbortSignal.timeout(15000)
+        });
+        if (pyRes.ok) {
+          const pyData = await pyRes.json();
+          if (pyData.status === "success" && pyData.text) {
+            return `### Google Slides Presentation (${pyData.page_count} Slides)\n\n${pyData.text}`.slice(0, 15000);
+          }
+        }
+      } catch {}
+      return `[Berhasil mengunduh Google Slide (${pdfBuf.length} bytes), namun ekstraksi teks gagal.]`;
+    }
+  }
+
+  // 5. Google Drive Files (/file/d/{fileId} or ?id={fileId})
+  if (href.includes("drive.google.com") && (href.includes("/file/d/") || href.includes("id="))) {
+    const fileMatch = href.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || href.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    const fileId = fileMatch ? fileMatch[1] : null;
+    if (fileId) {
+      const dlUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+      const res = await fetch(dlUrl, { headers, redirect: "follow", signal: AbortSignal.timeout(20000) });
+      if (res.url.includes("accounts.google.com/ServiceLogin")) {
+        throw new Error("File Google Drive ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal mengunduh file Google Drive.`);
+      const cType = res.headers.get("content-type") || "";
+      if (cType.includes("pdf")) {
+        const pdfBuf = Buffer.from(await res.arrayBuffer());
+        const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/pdf");
+        try {
+          const pyRes = await fetch(runnerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "extract_text",
+              files: [{ data_base64: pdfBuf.toString("base64") }]
+            }),
+            signal: AbortSignal.timeout(15000)
+          });
+          if (pyRes.ok) {
+            const pyData = await pyRes.json();
+            if (pyData.status === "success" && pyData.text) {
+              return `### Dokumen PDF Google Drive (${pyData.page_count} Halaman)\n\n${pyData.text}`.slice(0, 15000);
+            }
+          }
+        } catch {}
+      } else {
+        const text = await res.text();
+        if (text.includes("<table") && text.includes("<tr")) {
+          const tableMd = parseHtmlTableToMarkdown(text);
+          if (tableMd) return tableMd.slice(0, 15000);
+        }
+        return text.slice(0, 15000);
+      }
+    }
+  }
+
+  // 6. Generic Web Page Scraper
   const res = await fetch(rawUrl, {
     headers,
     signal: AbortSignal.timeout(10000)
@@ -653,9 +904,10 @@ export async function fetchUrlContent(rawUrl) {
 
 const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "updateTodo", "deleteTodo",
-  "addReminder", "grantFileAccess", "addBacklog", "completeBacklog",
-  "saveSkill", "deleteSkill", "updateSkill", "saveNote", "deleteNote",
-  "processPdf"
+  "addReminder", "deleteReminder", "grantFileAccess", "addBacklog", "completeBacklog",
+  "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",
+  "processPdf", "proposeSkill", "approveSkill", "rejectSkill", "rollbackSkill",
+  "addPerson", "deletePerson"
 ]);
 
 export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
@@ -666,9 +918,75 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   return claimRegex.test(text);
 }
 
+const SUPERSCRIPTS = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "n": "ⁿ", "k": "ᵏ", "x": "ˣ", "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾"
+};
+const SUBSCRIPTS = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "a": "ₐ", "e": "ₑ", "i": "ᵢ", "j": "ⱼ", "k": "ₖ", "m": "ₘ", "n": "ₙ", "o": "ₒ", "p": "ₚ", "r": "ᵣ",
+  "s": "ₛ", "t": "ₜ", "u": "ᵤ", "v": "ᵥ", "x": "ₓ"
+};
+
+export function isNoFluffRequest(text = "") {
+  if (!text) return false;
+  const clean = text.toLowerCase();
+  return (
+    clean.includes("no fluff") ||
+    clean.includes("tanpa basa-basi") ||
+    clean.includes("tanpa basa basi") ||
+    clean.includes("gausah tool call") ||
+    clean.includes("gausah footnote") ||
+    clean.includes("biar bisa di copy") ||
+    clean.includes("biar gampang di copy") ||
+    clean.includes("buat di-copy")
+  );
+}
+
+export function stripHallucinatedToolChips(text = "") {
+  if (!text) return "";
+  return text.replace(/\n*\s*[_*~`]*↳\s*[`\w\s,_]+[_*~`]*\s*$/g, "").trim();
+}
+
+export function sanitizeLatexForWhatsApp(text = "") {
+  if (!text || !text.includes("$")) return text;
+
+  const replaceMath = (_, expr) => {
+    let clean = expr.trim();
+    clean = clean.replace(/\\log_2/g, "log₂").replace(/\\log/g, "log").replace(/\\ln/g, "ln");
+    clean = clean.replace(/\\cdot/g, "·").replace(/\\times/g, "×").replace(/\\approx/g, "≈");
+    clean = clean.replace(/\\leq/g, "≤").replace(/\\geq/g, "≥").replace(/\\neq/g, "≠");
+    clean = clean.replace(/\\sqrt/g, "√").replace(/\\pm/g, "±").replace(/\\infty/g, "∞");
+    clean = clean.replace(/\\sum/g, "Σ").replace(/\\prod/g, "Π").replace(/\\int/g, "∫");
+    clean = clean.replace(/\\theta/g, "θ").replace(/\\lambda/g, "λ").replace(/\\pi/g, "π");
+    clean = clean.replace(/\\alpha/g, "α").replace(/\\beta/g, "β").replace(/\\gamma/g, "γ");
+    clean = clean.replace(/\\Omega/g, "Ω").replace(/\\Theta/g, "Θ").replace(/\\mathcal\{O\}/g, "O");
+
+    // Superscripts
+    clean = clean.replace(/\^\{([^}]+)\}|\^([0-9a-zA-Z+\-]+)/g, (_, p1, p2) => {
+      const val = p1 || p2;
+      return [...val].map((c) => SUPERSCRIPTS[c] || c).join("");
+    });
+
+    // Subscripts
+    clean = clean.replace(/_\{([^}]+)\}|_([0-9a-zA-Z])/g, (_, p1, p2) => {
+      const val = p1 || p2;
+      return [...val].map((c) => SUBSCRIPTS[c] || c).join("");
+    });
+
+    // Strip remaining lone braces and backslashes
+    clean = clean.replace(/[{}]/g, "").replace(/\\/g, "");
+    return clean;
+  };
+
+  return text
+    .replace(/\$\$([^$]+)\$\$/g, replaceMath)
+    .replace(/\$([^$]+)\$/g, replaceMath);
+}
+
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -700,7 +1018,7 @@ async function callGemini(rotator, model, payload) {
 }
 
 export async function generateContent(rotator, payload) {
-  const models = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-flash-latest", FALLBACK_MODEL, "gemini-3.5-flash-lite"];
+  const models = getActiveModels();
   let lastErr = null;
 
   for (const model of models) {
@@ -708,14 +1026,23 @@ export async function generateContent(rotator, payload) {
       return await callGemini(rotator, model, payload);
     } catch (err) {
       lastErr = err;
-      console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
+      const msg = err.message || "";
+      const is503 = err.status === 503 || msg.includes("503") || msg.includes("UNAVAILABLE");
+      const isTimeout = msg.includes("timeout") || msg.includes("aborted");
+      const is404 = err.status === 404 || msg.includes("404") || msg.includes("NOT_FOUND");
+
+      if (is503 || isTimeout || is404) {
+        markModelUnavailable(model, 120_000);
+      }
+      console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 120s. Mencoba model berikutnya...`);
     }
   }
 
   if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
     console.warn(`[LLM] Mode ANY gagal pada semua model. Mencoba fallback ke mode AUTO...`);
     const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
-    for (const model of models) {
+    const autoModels = getActiveModels();
+    for (const model of autoModels) {
       try {
         return await callGemini(rotator, model, autoPayload);
       } catch {}
@@ -750,7 +1077,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
 
   if (name === "addTodo") {
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
-    const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category);
+    const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee);
     const allTodos = store.getTodos(chatId, args.category === "routine");
     formattedList = formatTodoList(allTodos);
     toolResult = {
@@ -758,12 +1085,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       id,
       task: args.task,
       category: args.category || "auto",
+      assignee: args.assignee || null,
       formattedList
     };
   } else if (name === "listTodos") {
-    const todos = store.getTodos(chatId, Boolean(args.includeRoutine));
+    const todos = store.getTodos(chatId, Boolean(args.includeRoutine), args.assignee || null);
     formattedList = formatTodoList(todos);
-    toolResult = { raw: todos, formatted: formattedList, count: todos.length };
+    toolResult = { raw: todos, formatted: formattedList, count: todos.length, assignee: args.assignee || null };
   } else if (name === "completeTodo") {
     const changes = store.completeTodo(args.todoId, chatId);
     const allTodos = store.getTodos(chatId);
@@ -782,7 +1110,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const changes = store.updateTodo(targetId, chatId, {
         task: args.newTask,
         deadline,
-        tag: args.tag
+        tag: args.tag,
+        assignee: args.assignee
       });
       const allTodos = store.getTodos(chatId);
       formattedList = formatTodoList(allTodos);
@@ -822,6 +1151,20 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       task_type: args.taskType || "reminder"
     }, { rotator });
     toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso, recurrence: args.recurrence || null };
+  } else if (name === "listReminders") {
+    const reminders = store.listReminders(chatId);
+    formattedList = formatRemindersList(reminders);
+    toolResult = { success: true, count: reminders.length, reminders, formattedList };
+  } else if (name === "deleteReminder") {
+    const target = args.reminderId || args.query;
+    if (!target) {
+      toolResult = { error: "ID reminder atau teks query wajib diisi untuk menghapus pengingat." };
+    } else {
+      const changes = store.deleteReminder(chatId, target);
+      const remaining = store.listReminders(chatId);
+      formattedList = formatRemindersList(remaining);
+      toolResult = { success: changes > 0, deletedCount: changes, formattedList };
+    }
   } else if (name === "searchVault") {
     let queryEmbedding = null;
     if (rotator && args.query) {
@@ -1156,6 +1499,14 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       content: saved.content,
       message: `Catatan '${saved.key}' berhasil disimpan.`
     };
+  } else if (name === "appendNote") {
+    const note = store.appendNote(chatId, args.key, args.addition);
+    toolResult = {
+      success: true,
+      key: note.key,
+      content: note.content,
+      message: `Poin baru berhasil ditambahkan ke catatan '${note.key}'.`
+    };
   } else if (name === "getNote") {
     const note = store.getNote(chatId, args.key);
     if (!note) {
@@ -1179,44 +1530,100 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       key: args.key,
       message: changes > 0 ? `Catatan '${args.key}' berhasil dihapus.` : `Catatan '${args.key}' tidak ditemukan.`
     };
+  } else if (name === "proposeSkill") {
+    try {
+      const res = proposeSkill(args.name, args.description, args.content, { requestedBy: senderNumber || chatId });
+      toolResult = {
+        success: true,
+        name: res.name,
+        proposalPath: res.proposalPath,
+        message: `Proposal skill '${res.name}' berhasil dibuat dan menunggu persetujuan.`
+      };
+    } catch (err) {
+      toolResult = { error: err.message };
+    }
+  } else if (name === "approveSkill") {
+    const res = approveSkillProposal(args.name, { store });
+    if (res.status !== "success") {
+      toolResult = { error: res.error || "Gagal menyetujui proposal skill." };
+    } else {
+      toolResult = {
+        success: true,
+        skill: res.skill,
+        version: res.version,
+        message: `Proposal skill '${res.skill}' berhasil disetujui sebagai v${res.version}.`
+      };
+    }
+  } else if (name === "rejectSkill") {
+    const res = rejectSkillProposal(args.name, { reason: args.reason || "" });
+    if (res.status !== "success") {
+      toolResult = { error: res.error || "Gagal menolak proposal skill." };
+    } else {
+      toolResult = {
+        success: true,
+        proposal: res.proposal,
+        message: `Proposal skill '${args.name}' berhasil ditolak.`
+      };
+    }
+  } else if (name === "listSkillVersions") {
+    const res = listSkillVersions(args.name);
+    if (res.status !== "success") {
+      toolResult = { error: res.error || `Tidak ada riwayat versi untuk '${args.name}'.` };
+    } else {
+      toolResult = res;
+    }
+  } else if (name === "rollbackSkill") {
+    const res = rollbackSkill(args.name, { toVersion: args.toVersion || null, store, rolledBackBy: senderNumber || chatId });
+    if (res.status !== "success") {
+      toolResult = { error: res.error || `Gagal me-rollback skill '${args.name}'.` };
+    } else {
+      toolResult = {
+        success: true,
+        skill: res.skill,
+        activeVersion: res.active_version,
+        message: res.message
+      };
+    }
+  } else if (name === "addPerson") {
+    try {
+      const p = store.addPerson({
+        name: args.name,
+        phone: args.phone || "",
+        role: args.role || "",
+        notes: args.notes || "",
+        relationship: args.relationship || ""
+      });
+      toolResult = {
+        success: true,
+        person: p,
+        message: `Kontak '${p.name}' berhasil disimpan ke direktori koordinasi pasangan.`
+      };
+    } catch (err) {
+      toolResult = { error: err.message };
+    }
+  } else if (name === "getPerson") {
+    const p = store.getPerson(args.name);
+    if (!p) {
+      toolResult = { error: `Kontak '${args.name}' belum ada di direktori.` };
+    } else {
+      toolResult = { success: true, person: p };
+    }
+  } else if (name === "listPersons") {
+    const list = store.listPersons();
+    formattedList = formatPersonList(list);
+    toolResult = { count: list.length, persons: list, formatted: formattedList };
+  } else if (name === "deletePerson") {
+    const changes = store.deletePerson(args.name);
+    toolResult = {
+      success: changes > 0,
+      name: args.name,
+      message: changes > 0 ? `Kontak '${args.name}' berhasil dihapus dari direktori.` : `Kontak '${args.name}' tidak ditemukan.`
+    };
   } else if (name === "checkServerHealth") {
     if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: "Fitur checkServerHealth hanya khusus untuk nomor owner (+6281234567890)." };
     } else {
-      const uptimeSec = os.uptime();
-      const nodeUptime = process.uptime();
-      const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(1);
-      const freeMem = (os.freemem() / 1024 / 1024 / 1024).toFixed(1);
-      const usedMem = (totalMem - freeMem).toFixed(1);
-      const memPct = Math.round(((totalMem - freeMem) / totalMem) * 100);
-
-      const procRss = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
-      const procHeap = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-
-      const cpus = os.cpus();
-      const cpuModel = cpus[0]?.model || "Unknown CPU";
-      const cpuCores = cpus.length;
-      const loadAvg = os.loadavg().map((l) => l.toFixed(2)).join(", ");
-
-      let diskInfo = "N/A";
-      try {
-        if (fs.statfsSync) {
-          const rootStat = fs.statfsSync("/");
-          const totalDisk = ((rootStat.bsize * rootStat.blocks) / (1024 * 1024 * 1024)).toFixed(1);
-          const freeDisk = ((rootStat.bsize * rootStat.bfree) / (1024 * 1024 * 1024)).toFixed(1);
-          const usedDisk = (totalDisk - freeDisk).toFixed(1);
-          const diskPct = Math.round((usedDisk / totalDisk) * 100);
-          diskInfo = `${usedDisk}/${totalDisk} GB (${diskPct}%) [Free: ${freeDisk} GB]`;
-        }
-      } catch {}
-
-      const dbStats = store?.getHealthStats ? store.getHealthStats() : null;
-      let dbInfo = "";
-      if (dbStats) {
-        dbInfo = `\nDatabase:\n• Todos: ${dbStats.pendingTodos} pending / ${dbStats.todos} total\n• Vault Files: ${dbStats.vault}\n• Usage Logs: ${dbStats.logs}`;
-      }
-
-      const report = `*[SERVER HEALTH REPORT]*\n\nHost & System:\n• Hostname: ${os.hostname()}\n• OS: ${os.type()} ${os.release()} (${os.arch()})\n• Node.js: ${process.version}\n• Server Uptime: ${Math.floor(uptimeSec / 3600)}h ${Math.floor((uptimeSec % 3600) / 60)}m\n• Bot Uptime: ${Math.floor(nodeUptime / 3600)}h ${Math.floor((nodeUptime % 3600) / 60)}m\n\nCPU & Load:\n• Model: ${cpuModel}\n• Cores: ${cpuCores} vCPU\n• Load Avg: ${loadAvg}\n\nRAM Usage:\n• Host RAM: ${usedMem}/${totalMem} GB (${memPct}%)\n• Bot RAM: RSS ${procRss} MB | Heap ${procHeap} MB\n\nStorage (Disk /):\n• Disk: ${diskInfo}${dbInfo}`;
+      const report = formatServerHealth(store);
       formattedList = report;
       toolResult = { success: true, formatted: report };
     }
@@ -1236,7 +1643,23 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   return { toolResult, formattedList };
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null }) {
+// ponytail: inject mid-turn steering from user into active ReAct contents
+export function injectMailboxSteering(mailbox, contents) {
+  if (!mailbox || mailbox.length === 0) return false;
+  const steered = mailbox.splice(0, mailbox.length);
+  const texts = steered.map((m) => m.body).filter(Boolean);
+  if (texts.length === 0) return false;
+
+  const directive = `[UPDATE INSTRUKSI PENGGUNA SAAT INI]:\n${texts.join("\n")}\nSesuaikan sisa tindakan dengan instruksi terbaru ini.`;
+  if (contents.length > 0 && contents[contents.length - 1].role === "user") {
+    contents[contents.length - 1].parts.push({ text: directive });
+  } else {
+    contents.push({ role: "user", parts: [{ text: directive }] });
+  }
+  return true;
+}
+
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, mailbox = null }) {
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -1260,14 +1683,20 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       customSkills.map((s) => `- [${s.name}]: ${s.description}${s.prompt_template.length <= 150 ? ` -> Instruksi: ${s.prompt_template}` : ` (Gunakan tool loadSkill untuk membaca playbook lengkap)`}`).join("\n")
     : "";
 
+  const contactsList = store?.listPersons ? store.listPersons() : [];
+  const coupleContext = contactsList.length > 0
+    ? `\n\nDIREKTORI KOORDINASI PASANGAN & KONTAK KELUARGA:\n` +
+      contactsList.map((p) => `- ${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.role ? ` [${p.role}]` : ""}${p.notes ? `: ${p.notes}` : ""}`).join("\n")
+    : "";
+
   // Multi-turn context: muat riwayat pesan terakhir
   const history = store ? store.getRecentChatHistory(chatId, 6) : [];
-  const isGreeting = isGreetingIntent(userText) || history.length === 0;
+  const isGreeting = isGreetingIntent(userText);
   const greetingInstruction = isGreeting
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
 
-  const finalSystemPrompt = systemPrompt + skillsContext + greetingInstruction;
+  const finalSystemPrompt = systemPrompt + coupleContext + skillsContext + greetingInstruction;
 
   const userParts = [];
   if (audio) {
@@ -1386,6 +1815,11 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
     // Revert toolConfig to AUTO for subsequent steps in the ReAct loop
     toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+
+    // Helmis pattern: Mid-Turn Steering via Mailbox Injection
+    if (injectMailboxSteering(mailbox, contents)) {
+      if (turns >= MAX_STEPS - 1) turns = MAX_STEPS - 2;
+    }
   }
 
   const directText = currentCandidate?.content?.parts?.find((p) => p.text)?.text;
@@ -1402,8 +1836,13 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     finalReply = lastFormattedList || "Aksi berhasil diselesaikan.";
   }
 
-  // Footnote Chips for transparent engine calls
-  if (toolsCalled.length > 0 && finalReply !== "[NO_REPLY]" && !finalReply.includes("↳")) {
+  finalReply = stripHallucinatedToolChips(finalReply);
+  finalReply = sanitizeLatexForWhatsApp(finalReply);
+
+  const noFluff = isNoFluffRequest(userText);
+
+  // Footnote Chips for transparent engine calls (suppressed on no-fluff / copy-only turns)
+  if (toolsCalled.length > 0 && finalReply !== "[NO_REPLY]" && !noFluff) {
     const chips = [...new Set(toolsCalled)].map((t) => `↳ ${t}`).join("  ");
     finalReply = `${finalReply}\n\n_${chips}_`;
   }
@@ -1451,7 +1890,20 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("loadSkill"));
     assert.ok(decls.includes("updateSkill"));
     assert.ok(decls.includes("processPdf"));
+    assert.ok(decls.includes("proposeSkill"));
+    assert.ok(decls.includes("approveSkill"));
+    assert.ok(decls.includes("rejectSkill"));
+    assert.ok(decls.includes("listSkillVersions"));
+    assert.ok(decls.includes("rollbackSkill"));
+    assert.ok(decls.includes("addPerson"));
+    assert.ok(decls.includes("getPerson"));
+    assert.ok(decls.includes("listPersons"));
+    assert.ok(decls.includes("deletePerson"));
+    assert.ok(decls.includes("addReminder"));
+    assert.ok(decls.includes("listReminders"));
+    assert.ok(decls.includes("deleteReminder"));
     assert.ok(decls.includes("saveNote"));
+    assert.ok(decls.includes("appendNote"));
     assert.ok(decls.includes("getNote"));
     assert.ok(decls.includes("listNotes"));
     assert.ok(decls.includes("deleteNote"));
@@ -1459,6 +1911,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("pelajari skill rekap tugas"), true);
     assert.strictEqual(isActionIntent("gabung file pdf #1 dan #2"), true);
     assert.strictEqual(isActionIntent("kompres pdf dokumen ini"), true);
+    assert.strictEqual(isActionIntent("buat proposal skill export json"), true);
+    assert.strictEqual(isActionIntent("rollback skill rekap_malam"), true);
+    assert.strictEqual(isActionIntent("tambahkan kontak Bunga istri"), true);
     assert.strictEqual(isActionIntent("baca url https://id.wikipedia.org"), true);
     assert.strictEqual(isActionIntent("catat nomor rekening bca 12345"), true);
     assert.strictEqual(isActionIntent("lihat catatan pribadi"), true);
@@ -1482,6 +1937,62 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
     assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
+
+    // HTML Table & CSV Parser Tests
+    const sampleHtml = `
+      <table>
+        <tr><th>Nama Matkul</th><th>Hari</th><th>Jam</th></tr>
+        <tr><td>Analisis Algoritme</td><td>Senin</td><td>08:00</td></tr>
+        <tr><td>Basis Data</td><td>Selasa</td><td>10:00</td></tr>
+      </table>
+    `;
+    const parsedMd = parseHtmlTableToMarkdown(sampleHtml);
+    assert.ok(parsedMd.includes("| Nama Matkul | Hari | Jam |"));
+    assert.ok(parsedMd.includes("| Analisis Algoritme | Senin | 08:00 |"));
+
+    const sampleCsv = `Mata Kuliah,Hari,Ruang\n"Kalkulus",Rabu,"Lab A"\n"Fisika",Kamis,"Lab B"`;
+    const csvMd = parseCsvToMarkdown(sampleCsv);
+    assert.ok(csvMd.includes("| Mata Kuliah | Hari | Ruang |"));
+    assert.ok(csvMd.includes("| Kalkulus | Rabu | Lab A |"));
+
+    const wideRows = [
+      ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11"],
+      ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11"]
+    ];
+    const wideMd = formatRowsToMarkdown(wideRows);
+    assert.ok(wideMd.includes("• *C1*: V1"));
+    assert.ok(wideMd.includes("• *C11*: V11"));
+
+    // Model Cooldown & Cascade Ordering Tests
+    clearModelCooldowns();
+    const testModels = ["modelA", "modelB", "modelC"];
+    assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
+    markModelUnavailable("modelA", 60_000);
+    assert.deepStrictEqual(getActiveModels(testModels), ["modelB", "modelC", "modelA"]); // modelA demoted to end
+    clearModelCooldowns();
+    assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
+
+    // Mid-Turn Mailbox Steering Tests
+    const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];
+    const testContents = [{ role: "user", parts: [{ text: "ingatkan rapat" }] }];
+    const injected = injectMailboxSteering(testMailbox, testContents);
+    assert.strictEqual(injected, true);
+    assert.strictEqual(testMailbox.length, 0);
+    assert.ok(testContents[0].parts[1].text.includes("eh koreksi: ganti jam 14.00"));
+
+    // Guardrail, LaTeX Sanitizer, & No-Fluff Tests
+    assert.strictEqual(isNoFluffRequest("Tolong buatkan teks ini, no fluff ya"), true);
+    assert.strictEqual(isNoFluffRequest("buatkan rangkuman materi tanpa basa-basi"), true);
+    assert.strictEqual(isNoFluffRequest("halo john apa kabar"), false);
+
+    const rawChipsText = "Ini hasil analisis data.\n\n_↳ readUrl  executePython_";
+    assert.strictEqual(stripHallucinatedToolChips(rawChipsText), "Ini hasil analisis data.");
+
+    const rawLatex = "Kompleksitasnya adalah $\\mathcal{O}(n \\log_2 n)$ dan nilainya $x^2 + y_1 \\leq 10$.";
+    const cleanMath = sanitizeLatexForWhatsApp(rawLatex);
+    assert.ok(cleanMath.includes("O(n log₂ n)"));
+    assert.ok(cleanMath.includes("x² + y₁ ≤ 10"));
+    assert.ok(!cleanMath.includes("$"));
 
     // Tool permission tests
     executeTool("checkServerHealth", {}, { store: null, chatId: "628999999999" }).then((res) => {

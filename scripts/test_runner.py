@@ -98,6 +98,19 @@ def run_test():
         assert res["status"] == "success"
         assert res["page_count"] == 1
 
+        # Extract Text (Slides / PDF)
+        req = urllib.request.Request(
+            "http://127.0.0.1:8008/pdf",
+            data=json.dumps({
+                "action": "extract_text",
+                "files": [{"data_base64": merged_b64}]
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        res = json.loads(urllib.request.urlopen(req).read())
+        assert res["status"] == "success"
+        assert "PDF 1" in res["text"]
+
         print("ALL RUNNER TESTS PASSED")
     finally:
         p.terminate()

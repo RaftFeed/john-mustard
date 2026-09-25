@@ -164,6 +164,53 @@ export async function downloadMedia(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
+export function extractMediaFilename(msg) {
+  if (!msg) return "file";
+  if (msg.media?.filename || msg.media?.fileName) return String(msg.media.filename || msg.media.fileName).trim();
+  if (msg.filename || msg.fileName) return String(msg.filename || msg.fileName).trim();
+  if (msg._data?.filename || msg._data?.title) return String(msg._data.filename || msg._data.title).trim();
+  const doc = msg._data?.Message?.documentMessage;
+  if (doc?.fileName || doc?.title) return String(doc.fileName || doc.title).trim();
+  return "file";
+}
+
+export function extractQuotedInfo(msg) {
+  if (!msg) return null;
+  // 1. Top-level replyTo
+  if (msg.replyTo) {
+    const text = String(msg.replyTo.body || msg.replyTo.caption || "").trim();
+    const sender = String(msg.replyTo.participant || msg.replyTo.from || "").trim();
+    if (text) return { text, sender };
+  }
+  // 2. _data.quotedMsg
+  const dataQuoted = msg._data?.quotedMsg || msg.quotedMsg;
+  if (dataQuoted) {
+    const text = String(dataQuoted.body || dataQuoted.caption || "").trim();
+    const sender = String(msg._data?.quotedParticipant || dataQuoted.participant || "").trim();
+    if (text) return { text, sender };
+  }
+  // 3. Protobuf contextInfo (GOWS/NOWEB)
+  const contextInfo =
+    msg._data?.Message?.extendedTextMessage?.contextInfo ||
+    msg._data?.contextInfo ||
+    msg.contextInfo;
+  if (contextInfo) {
+    const qMsg = contextInfo.quotedMessage;
+    const sender = String(contextInfo.participant || "").trim();
+    if (qMsg) {
+      if (qMsg.conversation) return { text: String(qMsg.conversation).trim(), sender };
+      if (qMsg.extendedTextMessage?.text) return { text: String(qMsg.extendedTextMessage.text).trim(), sender };
+      if (qMsg.documentMessage?.fileName || qMsg.documentMessage?.title) {
+        return { text: `[Dokumen: ${qMsg.documentMessage.fileName || qMsg.documentMessage.title}]`, sender };
+      }
+      if (qMsg.imageMessage?.caption) return { text: `[Foto: ${qMsg.imageMessage.caption}]`, sender };
+      if (qMsg.imageMessage) return { text: `[Foto]`, sender };
+      if (qMsg.audioMessage) return { text: `[Pesan Suara VN]`, sender };
+    }
+  }
+  return null;
+}
+
 export function parseIncoming(body, allowedPhone) {
   if (body.event !== "message") return null;
 
@@ -195,18 +242,25 @@ export function parseIncoming(body, allowedPhone) {
 
   const mediaUrl = msg.media?.url || msg.mediaUrl || (typeof msg.media === "string" ? msg.media : null);
   const mimetype = msg.media?.mimetype || msg.mimetype || "application/octet-stream";
-  const filename = msg.media?.filename || msg.filename || "file";
+  const filename = extractMediaFilename(msg);
+  const quoted = extractQuotedInfo(msg);
+
+  let bodyText = msg.body || "";
+  if (quoted?.text) {
+    bodyText = `${bodyText}\n\n[MEMBALAS PESAN]: "${quoted.text}"`.trim();
+  }
 
   return {
     id: msg.id,
     from: msg.from,
     senderNumber: resolvedPhone || altNumber || senderNumber,
-    body: msg.body || "",
+    body: bodyText,
     hasMedia: Boolean(msg.hasMedia || mediaUrl),
     mediaUrl,
     filename,
     mimetype,
-    timestamp: msg.timestamp
+    timestamp: msg.timestamp,
+    quoted
   };
 }
 
@@ -225,6 +279,31 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.strictEqual(parsed.body, "halo bot");
   assert.strictEqual(parsed.senderNumber, "6281234567890");
   assert.strictEqual(parseIncoming(samplePayload, "628999999999"), null);
+
+  // Quoted message test
+  const quotedPayload = {
+    event: "message",
+    payload: {
+      id: "MSG_REPLY",
+      from: "6281234567890@c.us",
+      fromMe: false,
+      body: "kerjakan ini",
+      replyTo: {
+        body: "Tugas Kalkulus bab 4 dikumpulkan besok",
+        participant: "6281234567890@c.us"
+      },
+      timestamp: 1700000010
+    }
+  };
+  const parsedQuoted = parseIncoming(quotedPayload, "6281234567890");
+  assert.ok(parsedQuoted.body.includes("kerjakan ini"));
+  assert.ok(parsedQuoted.body.includes('[MEMBALAS PESAN]: "Tugas Kalkulus bab 4 dikumpulkan besok"'));
+  assert.strictEqual(parsedQuoted.quoted.text, "Tugas Kalkulus bab 4 dikumpulkan besok");
+
+  // Media filename test
+  assert.strictEqual(extractMediaFilename({ _data: { Message: { documentMessage: { fileName: "dokumen_rahasia.pdf" } } } }), "dokumen_rahasia.pdf");
+  assert.strictEqual(extractMediaFilename({ media: { fileName: "tabel.xlsx" } }), "tabel.xlsx");
+
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");
   assert.strictEqual(typeof sendImage, "function");

@@ -1,5 +1,315 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+
+export function contentSha256(content) {
+  return crypto.createHash("sha256").update(content || "", "utf-8").digest("hex");
+}
+
+export function getProposalsDir(customDir = null) {
+  if (customDir) return path.resolve(customDir);
+  if (process.env.SKILL_PROPOSALS_DIR) return path.resolve(process.env.SKILL_PROPOSALS_DIR);
+  return path.resolve(path.join("skills", ".proposals"));
+}
+
+export function getSkillVersionsDir(skillsDir, name) {
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  return path.join(skillsDir, cleanName, ".versions");
+}
+
+export function readSkillRegistry(skillsDir = "skills") {
+  const regPath = path.join(skillsDir, ".skill-registry.json");
+  if (!fs.existsSync(regPath)) return {};
+  try {
+    const raw = fs.readFileSync(regPath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+export function writeSkillRegistry(skillsDir = "skills", registry = {}) {
+  if (!fs.existsSync(skillsDir)) fs.mkdirSync(skillsDir, { recursive: true });
+  const regPath = path.join(skillsDir, ".skill-registry.json");
+  const tmpPath = `${regPath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(registry, null, 2), "utf-8");
+  fs.renameSync(tmpPath, regPath);
+}
+
+export function recordSkillVersion(name, content, { skillsDir = "skills", source = "manual", previousVersion = null, proposalPath = null } = {}) {
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const registry = readSkillRegistry(skillsDir);
+  const entry = registry[cleanName] || {};
+  const prev = previousVersion !== null ? previousVersion : (entry.version || 0);
+  const version = prev + 1;
+  const versionsDir = getSkillVersionsDir(skillsDir, cleanName);
+  if (!fs.existsSync(versionsDir)) fs.mkdirSync(versionsDir, { recursive: true });
+
+  const verFile = path.join(versionsDir, `v${String(version).padStart(3, "0")}.md`);
+  fs.writeFileSync(verFile, content, "utf-8");
+
+  entry.version = version;
+  entry.updated_at = new Date().toISOString();
+  entry.source = source;
+  entry.sha256 = contentSha256(content);
+  entry.version_file = verFile;
+  if (previousVersion !== null) entry.previous_version = previousVersion;
+  if (proposalPath) entry.proposal_path = proposalPath;
+
+  registry[cleanName] = entry;
+  writeSkillRegistry(skillsDir, registry);
+  return version;
+}
+
+export function proposeSkill(name, description, content, { requestedBy = "operator", proposalsDir = null } = {}) {
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  if (!cleanName) throw new Error("Nama proposal skill tidak boleh kosong.");
+  const pDir = getProposalsDir(proposalsDir);
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  const proposalPath = path.join(pDir, `${cleanName}.md`);
+  const markdown = `---
+name: ${cleanName}
+description: ${(description || "Proposed skill").trim()}
+status: proposed
+requested_by: ${requestedBy}
+created_at: ${new Date().toISOString()}
+---
+
+${(content || "").trim()}
+`;
+  fs.writeFileSync(proposalPath, markdown, "utf-8");
+  return {
+    status: "proposed",
+    name: cleanName,
+    proposalPath
+  };
+}
+
+export function listSkillProposals({ proposalsDir = null } = {}) {
+  const pDir = getProposalsDir(proposalsDir);
+  if (!fs.existsSync(pDir)) return { pending: [], rejected: [], approved: [] };
+
+  const entries = fs.readdirSync(pDir);
+  const pending = [];
+  const rejected = [];
+  const approved = [];
+
+  for (const f of entries) {
+    const full = path.join(pDir, f);
+    if (!fs.statSync(full).isFile()) continue;
+
+    if (f.endsWith(".md")) {
+      const txt = fs.readFileSync(full, "utf-8");
+      const parsed = parseSkillFromMarkdown(txt, path.basename(f, ".md"));
+      pending.push({ file: f, name: parsed.name, description: parsed.description, path: full });
+    } else if (f.endsWith(".rejected")) {
+      const orig = f.replace(/\.rejected$/, "");
+      rejected.push({ file: f, name: orig, path: full });
+    } else if (f.endsWith(".approved")) {
+      const orig = f.replace(/\.approved$/, "");
+      approved.push({ file: f, name: orig, path: full });
+    }
+  }
+
+  return { pending, rejected, approved };
+}
+
+export function approveSkillProposal(nameOrPath, { store = null, skillsDir = "skills", proposalsDir = null } = {}) {
+  const pDir = getProposalsDir(proposalsDir);
+  let proposalFile = nameOrPath;
+  if (!path.isAbsolute(proposalFile) && !fs.existsSync(proposalFile)) {
+    const candidate = path.join(pDir, `${nameOrPath.replace(/\.md$/, "")}.md`);
+    if (fs.existsSync(candidate)) proposalFile = candidate;
+  }
+  if (!fs.existsSync(proposalFile)) {
+    return { status: "not_found", error: `Proposal file '${nameOrPath}' tidak ditemukan.` };
+  }
+
+  const raw = fs.readFileSync(proposalFile, "utf-8");
+  const parsed = parseSkillFromMarkdown(raw, path.basename(proposalFile, ".md"));
+  const name = parsed.name;
+
+  // Snapshot active skill to .versions if exists
+  const activeStandard = path.join(skillsDir, name, "SKILL.md");
+  const activeFlat = path.join(skillsDir, `${name}.md`);
+  let previousVersion = null;
+  const registry = readSkillRegistry(skillsDir);
+  const entry = registry[name];
+  if (entry && entry.version) previousVersion = entry.version;
+
+  let existingContent = "";
+  if (fs.existsSync(activeStandard)) {
+    existingContent = fs.readFileSync(activeStandard, "utf-8");
+  } else if (fs.existsSync(activeFlat)) {
+    existingContent = fs.readFileSync(activeFlat, "utf-8");
+  }
+
+  if (existingContent) {
+    if (!previousVersion) previousVersion = 1;
+    const vDir = getSkillVersionsDir(skillsDir, name);
+    if (!fs.existsSync(vDir)) fs.mkdirSync(vDir, { recursive: true });
+    const snapFile = path.join(vDir, `v${String(previousVersion).padStart(3, "0")}.md`);
+    fs.writeFileSync(snapFile, existingContent, "utf-8");
+  }
+
+  // Promote to active standard SKILL.md
+  const targetDir = path.join(skillsDir, name);
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+  const targetFile = path.join(targetDir, "SKILL.md");
+  const activeMarkdown = serializeSkillToMarkdown(parsed);
+  fs.writeFileSync(targetFile, activeMarkdown, "utf-8");
+
+  // Save to DB
+  if (store) {
+    store.saveSkill(parsed.name, parsed.description, parsed.prompt_template, { skipDisk: true });
+  }
+
+  // Record version
+  const newVersion = recordSkillVersion(name, activeMarkdown, {
+    skillsDir,
+    source: "proposal_approval",
+    previousVersion,
+    proposalPath: proposalFile
+  });
+
+  // Mark proposal as approved
+  const approvedFile = `${proposalFile}.approved`;
+  try { fs.renameSync(proposalFile, approvedFile); } catch {}
+
+  return {
+    status: "success",
+    skill: name,
+    version: newVersion,
+    previous_version: previousVersion,
+    active_file: targetFile
+  };
+}
+
+export function rejectSkillProposal(nameOrPath, { reason = "unspecified", proposalsDir = null } = {}) {
+  const pDir = getProposalsDir(proposalsDir);
+  let proposalFile = nameOrPath;
+  if (!path.isAbsolute(proposalFile) && !fs.existsSync(proposalFile)) {
+    const candidate = path.join(pDir, `${nameOrPath.replace(/\.md$/, "")}.md`);
+    if (fs.existsSync(candidate)) proposalFile = candidate;
+  }
+  if (!fs.existsSync(proposalFile)) {
+    return { status: "not_found", error: `Proposal file '${nameOrPath}' tidak ditemukan.` };
+  }
+
+  const raw = fs.readFileSync(proposalFile, "utf-8");
+  const rejectedFile = `${proposalFile}.rejected`;
+  const header = `<!-- rejected_at: ${new Date().toISOString()} reason: ${reason} -->\n`;
+  fs.writeFileSync(rejectedFile, header + raw, "utf-8");
+  try { fs.unlinkSync(proposalFile); } catch {}
+
+  return {
+    status: "success",
+    proposal: proposalFile,
+    rejected_file: rejectedFile,
+    reason
+  };
+}
+
+export function listSkillVersions(name, { skillsDir = "skills" } = {}) {
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const registry = readSkillRegistry(skillsDir);
+  const entry = registry[cleanName];
+  if (!entry) {
+    return { status: "not_found", error: `Tidak ada riwayat versi untuk skill '${cleanName}'.` };
+  }
+
+  const vDir = getSkillVersionsDir(skillsDir, cleanName);
+  const archived = [];
+  if (fs.existsSync(vDir)) {
+    for (const f of fs.readdirSync(vDir)) {
+      if (/^v\d{3}\.md$/.test(f)) archived.push(f.replace(/\.md$/, ""));
+    }
+  }
+
+  return {
+    status: "success",
+    skill: cleanName,
+    active_version: entry.version,
+    previous_version: entry.previous_version || null,
+    source: entry.source,
+    updated_at: entry.updated_at,
+    sha256: entry.sha256,
+    archived_versions: archived.sort()
+  };
+}
+
+export function rollbackSkill(name, { toVersion = null, store = null, skillsDir = "skills", rolledBackBy = "operator" } = {}) {
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const registry = readSkillRegistry(skillsDir);
+  const entry = registry[cleanName];
+  if (!entry || !entry.version) {
+    return { status: "not_found", error: `Tidak ada riwayat versi untuk skill '${cleanName}'.` };
+  }
+
+  const activeVersion = entry.version;
+  const vDir = getSkillVersionsDir(skillsDir, cleanName);
+  let targetVersion = toVersion;
+
+  if (targetVersion === null) {
+    targetVersion = entry.previous_version;
+    if (!targetVersion && fs.existsSync(vDir)) {
+      const all = fs.readdirSync(vDir)
+        .filter((f) => /^v\d{3}\.md$/.test(f))
+        .map((f) => parseInt(f.slice(1, 4), 10))
+        .filter((v) => v < activeVersion)
+        .sort((a, b) => b - a);
+      if (all.length > 0) targetVersion = all[0];
+    }
+  }
+
+  if (!targetVersion) {
+    return { status: "not_found", error: `Tidak ada versi sebelumnya yang dapat di-rollback untuk skill '${cleanName}'.` };
+  }
+
+  const verFile = path.join(vDir, `v${String(targetVersion).padStart(3, "0")}.md`);
+  if (!fs.existsSync(verFile)) {
+    return { status: "not_found", error: `Versi v${targetVersion} tidak ditemukan di arsip ${verFile}.` };
+  }
+
+  const restoreRaw = fs.readFileSync(verFile, "utf-8");
+  const parsed = parseSkillFromMarkdown(restoreRaw, cleanName);
+
+  // Archive current active version before overwriting (reversible rollback!)
+  const activeFile = path.join(skillsDir, cleanName, "SKILL.md");
+  if (fs.existsSync(activeFile)) {
+    const curContent = fs.readFileSync(activeFile, "utf-8");
+    const snapCurrent = path.join(vDir, `v${String(activeVersion).padStart(3, "0")}.md`);
+    fs.writeFileSync(snapCurrent, curContent, "utf-8");
+  }
+
+  // Restore content to active file
+  const restoredMarkdown = serializeSkillToMarkdown(parsed);
+  fs.writeFileSync(activeFile, restoredMarkdown, "utf-8");
+
+  // Update SQLite
+  if (store) {
+    store.saveSkill(cleanName, parsed.description, parsed.prompt_template, { skipDisk: true });
+  }
+
+  // Update registry
+  entry.version = targetVersion;
+  entry.updated_at = new Date().toISOString();
+  entry.source = `rollback_from_v${activeVersion}`;
+  entry.previous_version = activeVersion;
+  entry.sha256 = contentSha256(restoredMarkdown);
+  entry.rolled_back_by = rolledBackBy;
+  registry[cleanName] = entry;
+  writeSkillRegistry(skillsDir, registry);
+
+  return {
+    status: "success",
+    skill: cleanName,
+    rolled_back_from: activeVersion,
+    active_version: targetVersion,
+    message: `Skill '${cleanName}' berhasil di-rollback dari v${activeVersion} ke v${targetVersion}.`
+  };
+}
 
 /**
  * Serialize a skill object from SQLite to human-readable Markdown with YAML frontmatter.
@@ -331,6 +641,51 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/skills_sync.js")) {
         const mathSkill = store.getSkill("expert_math");
         assert.ok(mathSkill);
         assert.strictEqual(mathSkill.description, "Solusi kalkulasi math kompleks");
+
+        // 7. Proposals, Versioning & Audit Rollback tests
+        const propDir = path.join(tmpDir, ".proposals");
+        const prop = proposeSkill("data_audit", "Analisis audit data", "Langkah 1: cek DB", {
+          requestedBy: "tester",
+          proposalsDir: propDir
+        });
+        assert.strictEqual(prop.status, "proposed");
+        assert.ok(fs.existsSync(prop.proposalPath));
+
+        const propList = listSkillProposals({ proposalsDir: propDir });
+        assert.strictEqual(propList.pending.length, 1);
+        assert.strictEqual(propList.pending[0].name, "data_audit");
+
+        const approved = approveSkillProposal("data_audit", {
+          store,
+          skillsDir: tmpDir,
+          proposalsDir: propDir
+        });
+        assert.strictEqual(approved.status, "success");
+        assert.strictEqual(approved.version, 1);
+        assert.ok(store.getSkill("data_audit"));
+
+        // Update skill to create v2
+        const v2 = recordSkillVersion("data_audit", "---\nname: data_audit\ndescription: Analisis audit data v2\n---\n\nLangkah v2", {
+          skillsDir: tmpDir,
+          source: "test_update",
+          previousVersion: 1
+        });
+        assert.strictEqual(v2, 2);
+
+        const vList = listSkillVersions("data_audit", { skillsDir: tmpDir });
+        assert.strictEqual(vList.status, "success");
+        assert.strictEqual(vList.active_version, 2);
+        assert.ok(vList.archived_versions.includes("v001"));
+
+        // Rollback to v1
+        const rolled = rollbackSkill("data_audit", {
+          toVersion: 1,
+          store,
+          skillsDir: tmpDir
+        });
+        assert.strictEqual(rolled.status, "success");
+        assert.strictEqual(rolled.active_version, 1);
+        assert.strictEqual(rolled.rolled_back_from, 2);
 
         if (watcher && typeof watcher.close === "function") {
           watcher.close();

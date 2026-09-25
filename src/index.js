@@ -91,7 +91,8 @@ async function handleIncomingMessage(msg) {
           senderNumber: msg.senderNumber,
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => audioTrajectory.push(...traj),
-          audio: { buffer, mimetype: msg.mimetype, filename: msg.filename }
+          audio: { buffer, mimetype: msg.mimetype, filename: msg.filename },
+          mailbox: msg.mailbox
         });
         await sendText(msg.from, reply);
         console.log(`>> Sent audio reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
@@ -219,7 +220,8 @@ async function handleIncomingMessage(msg) {
       chatId: msg.from,
       senderNumber: msg.senderNumber,
       onToolCall: (name) => toolsCalled.push(name),
-      onTrajectory: (traj) => textTrajectory.push(...traj)
+      onTrajectory: (traj) => textTrajectory.push(...traj),
+      mailbox: msg.mailbox
     });
 
     if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {

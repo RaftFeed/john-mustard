@@ -154,15 +154,48 @@ export class Storage {
         updated_at INTEGER NOT NULL,
         UNIQUE(chat_id, key)
       );
+      CREATE TABLE IF NOT EXISTS contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        phone TEXT NOT NULL,
+        role TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        relationship TEXT DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     try { this.db.exec("ALTER TABLE todos ADD COLUMN deadline INTEGER"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN tag TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN category TEXT DEFAULT 'work'"); } catch {}
+    try { this.db.exec("ALTER TABLE todos ADD COLUMN assignee TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
+
+    // Seed default couple/principal directory if empty
+    const contactCount = this.db.prepare("SELECT count(*) as count FROM contacts").get()?.count || 0;
+    if (contactCount === 0) {
+      const pName = process.env.PRIMARY_USER_NAME || "Gilang";
+      const pPhone = process.env.PRIMARY_USER_PHONE || "6281234567890";
+      const sName = process.env.SECONDARY_USER_NAME || "Bunga";
+      const sPhone = process.env.SECONDARY_USER_PHONE || "6289876543210";
+      this.addPerson({
+        name: pName,
+        phone: pPhone,
+        role: "User / Principal",
+        notes: "Direct, prefers concise updates",
+        relationship: "Principal"
+      });
+      this.addPerson({
+        name: sName,
+        phone: sPhone,
+        role: "Co-Principal / Partner",
+        notes: "Co-principal",
+        relationship: "Partner"
+      });
+    }
   }
 
   saveChatMessage(chatId, role, content) {
@@ -249,25 +282,46 @@ export class Storage {
     this.db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?").run(id);
   }
 
-  addTodo(chatId, task, deadline = null, tag = null, category = null) {
-    const cat = category || detectTaskCategory(task);
-    const stmt = this.db.prepare(
-      "INSERT INTO todos (chat_id, task, deadline, tag, category, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-    );
-    return stmt.run(chatId, task, deadline, tag, cat, Date.now()).lastInsertRowid;
+  listReminders(chatId) {
+    return this.db
+      .prepare("SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY remind_at ASC")
+      .all(chatId);
   }
 
-  getTodos(chatId, includeRoutine = false) {
+  deleteReminder(chatId, idOrQuery) {
+    if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
+      const res = this.db.prepare("DELETE FROM reminders WHERE chat_id = ? AND id = ?").run(chatId, Number(idOrQuery));
+      return res.changes;
+    }
+    const clean = `%${String(idOrQuery || "").trim()}%`;
+    const res = this.db.prepare("DELETE FROM reminders WHERE chat_id = ? AND message LIKE ? AND status = 'pending'").run(chatId, clean);
+    return res.changes;
+  }
+
+  addTodo(chatId, task, deadline = null, tag = null, category = null, assignee = "") {
+    const cat = category || detectTaskCategory(task);
+    const stmt = this.db.prepare(
+      "INSERT INTO todos (chat_id, task, deadline, tag, category, assignee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    return stmt.run(chatId, task, deadline, tag, cat, assignee || "", Date.now()).lastInsertRowid;
+  }
+
+  getTodos(chatId, includeRoutine = false, assignee = null) {
     let sql = `
-      SELECT id, task, deadline, tag, category 
+      SELECT id, task, deadline, tag, category, assignee 
       FROM todos 
       WHERE chat_id = ? AND done = 0
     `;
+    const params = [chatId];
     if (!includeRoutine) {
       sql += " AND (category != 'routine' OR category IS NULL)";
     }
+    if (assignee) {
+      sql += " AND LOWER(assignee) = LOWER(?)";
+      params.push(assignee.trim());
+    }
     sql += " ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, id ASC";
-    return this.db.prepare(sql).all(chatId);
+    return this.db.prepare(sql).all(...params);
   }
 
   getTodoById(id, chatId) {
@@ -476,16 +530,17 @@ export class Storage {
       .get(chatId, `%${query}%`);
   }
 
-  updateTodo(id, chatId, { task, deadline, tag, category }) {
+  updateTodo(id, chatId, { task, deadline, tag, category, assignee }) {
     const existing = this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
     if (!existing) return 0;
     const newTask = task !== undefined && task !== null ? task : existing.task;
     const newDeadline = deadline !== undefined ? deadline : existing.deadline;
     const newTag = tag !== undefined ? tag : existing.tag;
     const newCategory = category !== undefined ? category : existing.category;
+    const newAssignee = assignee !== undefined ? assignee : (existing.assignee || "");
     return this.db
-      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ? WHERE id = ? AND chat_id = ?")
-      .run(newTask, newDeadline, newTag, newCategory, id, chatId).changes;
+      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ? WHERE id = ? AND chat_id = ?")
+      .run(newTask, newDeadline, newTag, newCategory, newAssignee, id, chatId).changes;
   }
 
   deleteTodo(id, chatId) {
@@ -579,6 +634,20 @@ export class Storage {
     return this.getNote(chatId, cleanKey);
   }
 
+  appendNote(chatId, key, addition) {
+    const cleanKey = String(key || "").trim().toLowerCase();
+    const cleanAddition = String(addition || "").trim();
+    if (!cleanAddition) return this.getNote(chatId, cleanKey);
+    const existing = this.getNote(chatId, cleanKey);
+    let newContent = cleanAddition;
+    if (existing && existing.content) {
+      newContent = `${existing.content}\n• ${cleanAddition}`;
+    } else {
+      newContent = `• ${cleanAddition}`;
+    }
+    return this.saveNote(chatId, cleanKey, newContent);
+  }
+
   getNote(chatId, key) {
     const cleanKey = String(key || "").trim().toLowerCase();
     const row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND key = ?").get(chatId, cleanKey);
@@ -594,6 +663,83 @@ export class Storage {
     const cleanKey = String(key || "").trim().toLowerCase();
     return this.db.prepare("DELETE FROM notes WHERE chat_id = ? AND (key = ? OR key LIKE ?)").run(chatId, cleanKey, `%${cleanKey}%`).changes;
   }
+
+  // --- Contacts & Couple Directory ---
+  addPerson({ name, phone = "", role = "", notes = "", relationship = "" }) {
+    if (!name || !name.trim()) throw new Error("Nama kontak tidak boleh kosong");
+    const cleanName = name.trim();
+    const cleanPhone = phone ? normalizePhone(phone) : "";
+    const cleanRole = (role || "").trim();
+    const cleanNotes = (notes || "").trim();
+    const cleanRel = (relationship || "").trim();
+    const now = Date.now();
+
+    this.db.prepare(`
+      INSERT INTO contacts (name, phone, role, notes, relationship, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        phone = excluded.phone,
+        role = excluded.role,
+        notes = excluded.notes,
+        relationship = excluded.relationship,
+        updated_at = excluded.updated_at
+    `).run(cleanName, cleanPhone, cleanRole, cleanNotes, cleanRel, now);
+
+    return this.getPerson(cleanName);
+  }
+
+  getPerson(nameOrPhone) {
+    if (!nameOrPhone) return null;
+    const q = String(nameOrPhone).trim();
+    const norm = normalizePhone(q);
+    return this.db.prepare(`
+      SELECT * FROM contacts 
+      WHERE LOWER(name) = LOWER(?) 
+         OR LOWER(name) LIKE LOWER(?) 
+         OR (phone != '' AND phone = ?)
+      ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id ASC
+      LIMIT 1
+    `).get(q, `%${q}%`, norm, q) || null;
+  }
+
+  listPersons() {
+    return this.db.prepare("SELECT * FROM contacts ORDER BY id ASC").all();
+  }
+
+  deletePerson(name) {
+    if (!name) return 0;
+    const q = String(name).trim();
+    return this.db.prepare("DELETE FROM contacts WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?)").run(q, `%${q}%`).changes;
+  }
+}
+
+export function formatPersonList(persons = []) {
+  if (!persons || persons.length === 0) {
+    return "*[Direktori Kontak]*\nBelum ada kontak atau anggota keluarga terdaftar.";
+  }
+  const lines = ["*[Direktori Kontak & Koordinasi Pasangan]*\n"];
+  persons.forEach((p, idx) => {
+    const relStr = p.relationship ? ` [${p.relationship}]` : "";
+    const roleStr = p.role ? ` • _${p.role}_` : "";
+    const phoneStr = p.phone ? `\n   HP: +${p.phone}` : "";
+    const notesStr = p.notes ? `\n   Catatan: ${p.notes}` : "";
+    lines.push(`${idx + 1}. *${p.name}*${relStr}${roleStr}${phoneStr}${notesStr}`);
+  });
+  return lines.join("\n\n");
+}
+
+export function formatRemindersList(reminders = []) {
+  if (!reminders || reminders.length === 0) {
+    return "*[DAFTAR PENGINGAT]*\nBelum ada pengingat yang aktif.";
+  }
+  const lines = ["*[DAFTAR PENGINGAT AKTIF]*\n"];
+  reminders.forEach((r, idx) => {
+    const d = new Date(r.remind_at);
+    const timeStr = d.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+    const recStr = r.recurrence ? ` _(berulang: ${r.recurrence})_` : "";
+    lines.push(`${idx + 1}. [ID: ${r.id}] *${r.message}*${recStr}\n   ⏰ Jadwal: ${timeStr} WIB`);
+  });
+  return lines.join("\n\n");
 }
 
 export function formatNotesList(notes = []) {
@@ -669,8 +815,9 @@ export function formatTodoList(todos) {
 
     lines.push(`${badge} *[${item.id}] ${item.task}*`);
     lines.push(`├── ${deadlineStr}`);
+    const assigneeStr = item.assignee ? ` [👤 ${item.assignee}]` : "";
     const tagBase = item.tag ? (item.tag.startsWith("#") ? item.tag : `#${item.tag}`) : "#tugas";
-    const tagStr = item.category === "routine" ? `${tagBase} [Rutin]` : tagBase;
+    const tagStr = item.category === "routine" ? `${tagBase} [Rutin]${assigneeStr}` : `${tagBase}${assigneeStr}`;
     lines.push(`└── ${tagStr}\n`);
   });
 
@@ -884,18 +1031,72 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   const removedDaily = store.setDailyDigest("user1", false);
   assert.ok(removedDaily >= 1);
 
-  // Personal notes / memory test
+  // Personal notes / memory & appendNote test
   const savedNote = store.saveNote("user1", "rekening_bca", "BCA 1234567890 a.n. John");
   assert.strictEqual(savedNote.key, "rekening_bca");
   assert.strictEqual(savedNote.content, "BCA 1234567890 a.n. John");
   const fetchedNote = store.getNote("user1", "bca");
   assert.strictEqual(fetchedNote.content, "BCA 1234567890 a.n. John");
+
+  // Living list appendNote
+  const appended = store.appendNote("user1", "belanja", "Telur 1kg");
+  assert.ok(appended.content.includes("Telur 1kg"));
+  const appended2 = store.appendNote("user1", "belanja", "Susu UHT");
+  assert.ok(appended2.content.includes("Telur 1kg"));
+  assert.ok(appended2.content.includes("Susu UHT"));
+
   const notesList = store.listNotes("user1");
-  assert.strictEqual(notesList.length, 1);
+  assert.strictEqual(notesList.length, 2);
   const formattedNotes = formatNotesList(notesList);
   assert.ok(formattedNotes.includes("rekening_bca"));
+  assert.ok(formattedNotes.includes("belanja"));
   assert.strictEqual(store.deleteNote("user1", "rekening_bca"), 1);
+  assert.strictEqual(store.deleteNote("user1", "belanja"), 1);
   assert.strictEqual(store.listNotes("user1").length, 0);
+
+  // List & Delete Reminders test
+  const testRemId1 = store.addReminder("rem_user", "Jemput adik di stasiun", Date.now() + 3600_000);
+  const testRemId2 = store.addReminder("rem_user", "Bayar listrik", Date.now() + 7200_000);
+  const activeRems = store.listReminders("rem_user");
+  assert.strictEqual(activeRems.length, 2);
+  const formattedRems = formatRemindersList(activeRems);
+  assert.ok(formattedRems.includes("Jemput adik di stasiun"));
+  assert.ok(formattedRems.includes("Bayar listrik"));
+
+  assert.strictEqual(store.deleteReminder("rem_user", testRemId1), 1);
+  assert.strictEqual(store.deleteReminder("rem_user", "listrik"), 1);
+  assert.strictEqual(store.listReminders("rem_user").length, 0);
+
+  // Contacts & Couple Directory tests
+  const p1 = store.addPerson({
+    name: "Bunga",
+    phone: "08987654321",
+    role: "Co-Principal",
+    notes: "Istri / partner",
+    relationship: "Partner"
+  });
+  assert.strictEqual(p1.name, "Bunga");
+  assert.strictEqual(p1.phone, "628987654321");
+  const pFind = store.getPerson("bunga");
+  assert.ok(pFind);
+  assert.strictEqual(pFind.name, "Bunga");
+  const pList = store.listPersons();
+  assert.ok(pList.some((p) => p.name === "Bunga"));
+  const pFormatted = formatPersonList(pList);
+  assert.ok(pFormatted.includes("Bunga"));
+  assert.ok(pFormatted.includes("Partner"));
+
+  // Assignee task test
+  const taskForBunga = store.addTodo("user1", "Beli susu oat", null, "#belanja", "work", "Bunga");
+  const todosBunga = store.getTodos("user1", false, "Bunga");
+  assert.strictEqual(todosBunga.length, 1);
+  assert.strictEqual(todosBunga[0].id, taskForBunga);
+  assert.strictEqual(todosBunga[0].assignee, "Bunga");
+  const formattedAssigned = formatTodoList(todosBunga);
+  assert.ok(formattedAssigned.includes("👤 Bunga"));
+
+  assert.strictEqual(store.deletePerson("Bunga"), 1);
+  assert.strictEqual(store.getPerson("Bunga"), null);
 
   console.log("DB & Formatter self-test OK");
 }
