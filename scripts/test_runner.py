@@ -111,6 +111,40 @@ def run_test():
         assert res["status"] == "success"
         assert "PDF 1" in res["text"]
 
+        # Test 5: Document Convert (/convert) - DOCX
+        import io, docx
+        doc_x = docx.Document()
+        doc_x.add_paragraph("Laporan Keuangan Q3 John Mustard")
+        buf_x = io.BytesIO()
+        doc_x.save(buf_x)
+        docx_b64 = base64.b64encode(buf_x.getvalue()).decode("utf-8")
+
+        req = urllib.request.Request(
+            "http://127.0.0.1:8008/convert",
+            data=json.dumps({
+                "files": [{"filename": "laporan.docx", "data_base64": docx_b64}],
+                "target_format": "pdf"
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        res = json.loads(urllib.request.urlopen(req).read())
+        assert res["status"] == "success"
+        assert "Laporan Keuangan Q3" in res["text"]
+        assert len(res["data_base64"]) > 0
+
+        # Test 6: OCR endpoint (/ocr)
+        req = urllib.request.Request(
+            "http://127.0.0.1:8008/ocr",
+            data=json.dumps({
+                "files": [{"filename": "sample.pdf", "data_base64": merged_b64}]
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        res = json.loads(urllib.request.urlopen(req).read())
+        assert res["status"] == "success"
+        assert res["page_count"] == 2
+        assert "PDF 1" in res["text"]
+
         print("ALL RUNNER TESTS PASSED")
     finally:
         p.terminate()

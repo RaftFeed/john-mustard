@@ -287,6 +287,250 @@ def process_pdf():
         return jsonify({"status": "error", "error": f"Gagal memproses PDF: {str(e)}"}), 500
 
 
+@app.route("/convert", methods=["POST"])
+def convert_document():
+    """
+    Office & document converter endpoint.
+    Supports .docx, .xlsx, .pptx, .txt via headless LibreOffice (if installed)
+    or native Python fallback (python-docx, zipfile/xml, PyMuPDF).
+    """
+    payload = request.get_json(silent=True) or {}
+    files = payload.get("files") or []
+    target_format = str(payload.get("target_format", "pdf")).strip().lower()
+    if not files:
+        return jsonify({"status": "error", "error": "Parameter 'files' tidak boleh kosong."}), 400
+
+    f_entry = files[0]
+    filename = f_entry.get("filename", "document.docx") if isinstance(f_entry, dict) else "document.docx"
+    ext = os.path.splitext(filename)[1].lower()
+
+    b = None
+    if isinstance(f_entry, dict):
+        if "data_base64" in f_entry and f_entry["data_base64"]:
+            b = base64.b64decode(f_entry["data_base64"])
+        elif "filepath" in f_entry and os.path.exists(f_entry["filepath"]):
+            with open(f_entry["filepath"], "rb") as fh:
+                b = fh.read()
+    elif isinstance(f_entry, str):
+        if os.path.exists(f_entry):
+            with open(f_entry, "rb") as fh:
+                b = fh.read()
+        else:
+            b = base64.b64decode(f_entry)
+
+    if not b:
+        return jsonify({"status": "error", "error": "Konten file tidak ditemukan."}), 400
+
+    import shutil
+    soffice_bin = shutil.which("soffice") or shutil.which("libreoffice") or os.environ.get("SOFFICE_PATH")
+    if soffice_bin and (os.path.exists(soffice_bin) if os.path.isabs(soffice_bin) else True):
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                in_path = os.path.join(tmpdir, filename)
+                with open(in_path, "wb") as fh:
+                    fh.write(b)
+                out_fmt = "pdf" if target_format in ("pdf", "document") else "txt"
+                cmd = [soffice_bin, "--headless", "--convert-to", out_fmt, "--outdir", tmpdir, in_path]
+                res = subprocess.run(cmd, capture_output=True, timeout=30)
+                out_name = os.path.splitext(filename)[0] + ("." + out_fmt)
+                out_path = os.path.join(tmpdir, out_name)
+                if os.path.exists(out_path):
+                    with open(out_path, "rb") as fh:
+                        out_b = fh.read()
+                    text_content = ""
+                    if out_fmt == "pdf" and fitz:
+                        d = fitz.open(stream=out_b, filetype="pdf")
+                        text_content = "\n".join((page.get_text("text") or "").strip() for page in d)
+                        d.close()
+                    elif out_fmt == "txt":
+                        text_content = out_b.decode("utf-8", errors="replace")
+                    return jsonify({
+                        "status": "success",
+                        "engine": "libreoffice",
+                        "filename": out_name,
+                        "mimetype": "application/pdf" if out_fmt == "pdf" else "text/plain",
+                        "data_base64": base64.b64encode(out_b).decode("utf-8"),
+                        "text": text_content[:15000],
+                        "message": f"Berhasil mengonversi '{filename}' ke format {out_fmt.upper()} via LibreOffice."
+                    })
+        except Exception:
+            pass
+
+    # Native Python Fallback
+    try:
+        if ext == ".docx":
+            try:
+                import docx
+            except ImportError:
+                return jsonify({"status": "error", "error": "python-docx tidak terpasang."}), 500
+            doc = docx.Document(io.BytesIO(b))
+            parts = []
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    parts.append(p.text.strip())
+            for t in doc.tables:
+                table_lines = []
+                for row in t.rows:
+                    row_txt = [c.text.strip().replace("\n", " ") for c in row.cells]
+                    table_lines.append("| " + " | ".join(row_txt) + " |")
+                if table_lines:
+                    parts.append("\n".join(table_lines))
+            full_text = "\n\n".join(parts) if parts else "[Dokumen DOCX kosong]"
+
+            pdf_b64 = None
+            if fitz and target_format == "pdf":
+                pdf_doc = fitz.open()
+                page = pdf_doc.new_page()
+                page.insert_textbox(page.rect, full_text[:4000], fontsize=11)
+                pdf_bytes = pdf_doc.tobytes(deflate=True)
+                pdf_doc.close()
+                pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+
+            return jsonify({
+                "status": "success",
+                "engine": "python_docx",
+                "filename": os.path.splitext(filename)[0] + (".pdf" if target_format == "pdf" and pdf_b64 else ".txt"),
+                "mimetype": "application/pdf" if target_format == "pdf" and pdf_b64 else "text/plain",
+                "data_base64": pdf_b64 or base64.b64encode(full_text.encode("utf-8")).decode("utf-8"),
+                "text": full_text[:15000],
+                "message": f"Berhasil mengekstrak/mengonversi DOCX '{filename}' ({len(parts)} paragraf/tabel)."
+            })
+
+        elif ext in (".xlsx", ".xlsm"):
+            import zipfile
+            import xml.etree.ElementTree as ET
+            with zipfile.ZipFile(io.BytesIO(b)) as zf:
+                shared_strings = []
+                if "xl/sharedStrings.xml" in zf.namelist():
+                    root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+                    for si in root.findall(".//{*}si"):
+                        t = "".join(node.text for node in si.findall(".//{*}t") if node.text)
+                        shared_strings.append(t)
+
+                sheet_files = [n for n in zf.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
+                all_sheets_txt = []
+                for s_file in sheet_files:
+                    s_root = ET.fromstring(zf.read(s_file))
+                    rows = []
+                    for row in s_root.findall(".//{*}row"):
+                        cols = []
+                        for c in row.findall(".//{*}c"):
+                            v = c.find(".//{*}v")
+                            val = v.text if v is not None and v.text else ""
+                            if c.attrib.get("t") == "s" and val.isdigit():
+                                idx = int(val)
+                                val = shared_strings[idx] if idx < len(shared_strings) else val
+                            cols.append(val)
+                        if any(cols):
+                            rows.append("| " + " | ".join(cols) + " |")
+                    if rows:
+                        sheet_name = os.path.basename(s_file).replace(".xml", "")
+                        all_sheets_txt.append(f"### Sheet: {sheet_name}\n" + "\n".join(rows[:100]))
+
+                full_text = "\n\n".join(all_sheets_txt) if all_sheets_txt else "[Excel kosong]"
+                return jsonify({
+                    "status": "success",
+                    "engine": "python_xlsx",
+                    "filename": os.path.splitext(filename)[0] + ".txt",
+                    "mimetype": "text/plain",
+                    "data_base64": base64.b64encode(full_text.encode("utf-8")).decode("utf-8"),
+                    "text": full_text[:15000],
+                    "message": f"Berhasil mengekstrak data spreadsheet '{filename}'."
+                })
+
+        else:
+            text_str = b.decode("utf-8", errors="replace")
+            return jsonify({
+                "status": "success",
+                "engine": "plain_text",
+                "filename": filename,
+                "mimetype": "text/plain",
+                "data_base64": base64.b64encode(b).decode("utf-8"),
+                "text": text_str[:15000],
+                "message": f"Berhasil membaca file teks '{filename}'."
+            })
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Gagal konversi dokumen: {str(e)}"}), 500
+
+
+@app.route("/ocr", methods=["POST"])
+def ocr_document():
+    """
+    OCR endpoint for images and scanned PDFs.
+    Uses PyMuPDF OCR (Tesseract binding) or tesseract CLI if present,
+    with graceful fallback to digital text or informative report.
+    """
+    payload = request.get_json(silent=True) or {}
+    files = payload.get("files") or []
+    lang = str(payload.get("lang", "ind+eng")).strip()
+
+    if not files:
+        return jsonify({"status": "error", "error": "Parameter 'files' tidak boleh kosong."}), 400
+
+    f_entry = files[0]
+    filename = f_entry.get("filename", "scan.jpg") if isinstance(f_entry, dict) else "scan.jpg"
+    ext = os.path.splitext(filename)[1].lower()
+
+    b = None
+    if isinstance(f_entry, dict):
+        if "data_base64" in f_entry and f_entry["data_base64"]:
+            b = base64.b64decode(f_entry["data_base64"])
+        elif "filepath" in f_entry and os.path.exists(f_entry["filepath"]):
+            with open(f_entry["filepath"], "rb") as fh:
+                b = fh.read()
+    elif isinstance(f_entry, str):
+        if os.path.exists(f_entry):
+            with open(f_entry, "rb") as fh:
+                b = fh.read()
+        else:
+            b = base64.b64decode(f_entry)
+
+    if not b:
+        return jsonify({"status": "error", "error": "Konten file tidak ditemukan."}), 400
+
+    if fitz is None:
+        return jsonify({"status": "error", "error": "PyMuPDF tidak terpasang di runner."}), 500
+
+    try:
+        is_pdf = (ext == ".pdf") or b.startswith(b"%PDF")
+        if is_pdf:
+            doc = fitz.open(stream=b, filetype="pdf")
+        else:
+            img_doc = fitz.open(stream=b)
+            pdf_bytes = img_doc.convert_to_pdf()
+            doc = fitz.open("pdf", pdf_bytes)
+            img_doc.close()
+
+        total = len(doc)
+        ocr_results = []
+        engine_used = "tesseract_mupdf"
+
+        for idx, page in enumerate(doc):
+            extracted = ""
+            try:
+                tp = page.get_textpage_ocr(language=lang, dpi=150)
+                extracted = tp.extractText().strip()
+            except Exception:
+                extracted = (page.get_text("text") or "").strip()
+                engine_used = "digital_fallback"
+
+            if extracted:
+                ocr_results.append(f"--- Halaman {idx + 1} ---\n{extracted}")
+
+        doc.close()
+        full_text = "\n\n".join(ocr_results) if ocr_results else "[OCR tidak mendeteksi teks]"
+
+        return jsonify({
+            "status": "success",
+            "ocr_engine": engine_used,
+            "page_count": total,
+            "text": full_text[:15000],
+            "message": f"Selesai memproses OCR {total} halaman (engine: {engine_used})."
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Gagal OCR dokumen: {str(e)}"}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")

@@ -45,6 +45,16 @@ export const TOOLS = [
         }
       },
       {
+        name: "getTodosDue",
+        description: "Tampilkan tugas yang deadline/jatuh tempo hari ini atau beberapa hari ke depan",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            daysAhead: { type: "NUMBER", description: "Jumlah hari ke depan (0 = hari ini, 7 = minggu ini). Default 0" }
+          }
+        }
+      },
+      {
         name: "completeTodo",
         description: "Tandai tugas di To-Do List sebagai selesai",
         parameters: {
@@ -53,6 +63,14 @@ export const TOOLS = [
             todoId: { type: "NUMBER", description: "ID tugas yang mau ditandai selesai" }
           },
           required: ["todoId"]
+        }
+      },
+      {
+        name: "undoLastTodo",
+        description: "Batalkan penandaan selesai pada tugas to-do list terakhir yang baru saja di-done",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
         }
       },
       {
@@ -112,6 +130,17 @@ export const TOOLS = [
             reminderId: { type: "NUMBER", description: "ID reminder yang ingin dibatalkan/dihapus (opsional)" },
             query: { type: "STRING", description: "Pesan atau topik reminder yang ingin dicari untuk dihapus (opsional)" }
           }
+        }
+      },
+      {
+        name: "setDailyDigest",
+        description: "Aktifkan atau nonaktifkan pengiriman rekap to-do harian otomatis setiap pukul 07:00 WIB",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            enable: { type: "BOOLEAN", description: "Set true untuk aktifkan, false untuk nonaktifkan" }
+          },
+          required: ["enable"]
         }
       },
       {
@@ -322,6 +351,80 @@ export const TOOLS = [
             }
           },
           required: ["action", "targetFiles"]
+        }
+      },
+      {
+        name: "mergePdf",
+        description: "Gabungkan (merge) dua atau lebih file PDF di Vault menjadi satu file PDF utuh",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            targetFiles: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar ID (#1, #2) atau nama file PDF di Vault yang mau digabung"
+            },
+            outputFilename: { type: "STRING", description: "Nama file hasil gabungan (opsional)" },
+            caption: { type: "STRING", description: "Keterangan saat file dikirim ke WhatsApp" },
+            sendDirectly: { type: "BOOLEAN", description: "Set true jika ingin file hasil langsung dikirim ke WhatsApp" }
+          },
+          required: ["targetFiles"]
+        }
+      },
+      {
+        name: "splitPdf",
+        description: "Ekstrak rentang halaman tertentu dari file PDF di Vault",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            targetFile: { type: "STRING", description: "ID (#1) atau nama file PDF di Vault" },
+            pages: { type: "STRING", description: "Rentang halaman yang diekstrak (contoh: '1-3', '1,3,5', 'last')" },
+            outputFilename: { type: "STRING", description: "Nama file hasil ekstrak (opsional)" },
+            caption: { type: "STRING", description: "Keterangan saat file dikirim ke WhatsApp" },
+            sendDirectly: { type: "BOOLEAN", description: "Set true jika ingin file hasil langsung dikirim ke WhatsApp" }
+          },
+          required: ["targetFile"]
+        }
+      },
+      {
+        name: "compressPdf",
+        description: "Kompres dan optimasi ukuran file PDF di Vault",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            targetFile: { type: "STRING", description: "ID (#1) atau nama file PDF di Vault" },
+            outputFilename: { type: "STRING", description: "Nama file hasil kompresi (opsional)" },
+            caption: { type: "STRING", description: "Keterangan saat file dikirim ke WhatsApp" },
+            sendDirectly: { type: "BOOLEAN", description: "Set true jika ingin file hasil langsung dikirim ke WhatsApp" }
+          },
+          required: ["targetFile"]
+        }
+      },
+      {
+        name: "convertDocument",
+        description: "Konversi atau ekstrak isi file office (DOCX, XLSX, TXT) di Vault ke format PDF atau teks (didukung headless LibreOffice & python runner)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            targetFile: { type: "STRING", description: "ID (#1) atau nama file di Vault" },
+            targetFormat: { type: "STRING", description: "Format target: 'pdf' atau 'text' (default 'pdf')" },
+            outputFilename: { type: "STRING", description: "Nama file baru hasil konversi (opsional)" },
+            caption: { type: "STRING", description: "Keterangan saat file dikirim ke WhatsApp" },
+            sendDirectly: { type: "BOOLEAN", description: "Set true jika ingin file hasil langsung dikirim ke WhatsApp" }
+          },
+          required: ["targetFile"]
+        }
+      },
+      {
+        name: "ocrDocument",
+        description: "Ekstrak teks dari file gambar atau scan PDF di Vault menggunakan OCR (Tesseract / PyMuPDF OCR engine)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            targetFile: { type: "STRING", description: "ID (#1) atau nama file gambar/PDF di Vault" },
+            lang: { type: "STRING", description: "Bahasa OCR opsional (contoh: ind+eng)" }
+          },
+          required: ["targetFile"]
         }
       },
       {
@@ -903,10 +1006,11 @@ export async function fetchUrlContent(rawUrl) {
 }
 
 const MUTATION_TOOLS = new Set([
-  "addTodo", "completeTodo", "updateTodo", "deleteTodo",
-  "addReminder", "deleteReminder", "grantFileAccess", "addBacklog", "completeBacklog",
+  "addTodo", "completeTodo", "updateTodo", "deleteTodo", "undoLastTodo",
+  "addReminder", "deleteReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
   "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",
-  "processPdf", "proposeSkill", "approveSkill", "rejectSkill", "rollbackSkill",
+  "processPdf", "mergePdf", "splitPdf", "compressPdf", "convertDocument",
+  "proposeSkill", "approveSkill", "rejectSkill", "rollbackSkill",
   "addPerson", "deletePerson"
 ]);
 
@@ -986,7 +1090,7 @@ export function sanitizeLatexForWhatsApp(text = "") {
 
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -1092,11 +1196,30 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const todos = store.getTodos(chatId, Boolean(args.includeRoutine), args.assignee || null);
     formattedList = formatTodoList(todos);
     toolResult = { raw: todos, formatted: formattedList, count: todos.length, assignee: args.assignee || null };
+  } else if (name === "getTodosDue") {
+    const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
+    const todos = store.getTodosDue(chatId, days);
+    formattedList = formatTodoList(todos);
+    toolResult = { count: todos.length, daysAhead: days, todos, formattedList };
   } else if (name === "completeTodo") {
     const changes = store.completeTodo(args.todoId, chatId);
     const allTodos = store.getTodos(chatId);
     formattedList = formatTodoList(allTodos);
     toolResult = { success: changes > 0, formattedList };
+  } else if (name === "undoLastTodo") {
+    const undone = store.undoLastDone(chatId);
+    if (!undone) {
+      toolResult = { error: "Tidak ada tugas selesai yang bisa dibatalkan (undo)." };
+    } else {
+      const allTodos = store.getTodos(chatId);
+      formattedList = formatTodoList(allTodos);
+      toolResult = {
+        success: true,
+        undoneTodo: undone,
+        formattedList,
+        message: `Tugas #${undone.id} ('${undone.task}') berhasil dikembalikan ke status belum selesai.`
+      };
+    }
   } else if (name === "updateTodo") {
     let targetId = args.todoId;
     if (!targetId && args.taskQuery) {
@@ -1165,6 +1288,16 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       formattedList = formatRemindersList(remaining);
       toolResult = { success: changes > 0, deletedCount: changes, formattedList };
     }
+  } else if (name === "setDailyDigest") {
+    const enable = Boolean(args.enable);
+    store.setDailyDigest(chatId, enable);
+    toolResult = {
+      success: true,
+      enabled: enable,
+      message: enable
+        ? "Rekap harian to-do list jam 07:00 WIB berhasil diaktifkan."
+        : "Rekap harian to-do list jam 07:00 WIB berhasil dinonaktifkan."
+    };
   } else if (name === "searchVault") {
     let queryEmbedding = null;
     if (rotator && args.query) {
@@ -1378,9 +1511,21 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       name: saved.name,
       message: `Skill '${saved.name}' berhasil diperbarui.`
     };
-  } else if (name === "processPdf") {
-    const action = String(args.action || "").trim().toLowerCase();
-    const rawTargets = Array.isArray(args.targetFiles) ? args.targetFiles : [args.targetFiles].filter(Boolean);
+  } else if (name === "processPdf" || name === "mergePdf" || name === "splitPdf" || name === "compressPdf") {
+    let action = String(args.action || "").trim().toLowerCase();
+    let rawTargets = [];
+    if (name === "mergePdf") {
+      action = "merge";
+      rawTargets = Array.isArray(args.targetFiles) ? args.targetFiles : [args.targetFiles].filter(Boolean);
+    } else if (name === "splitPdf") {
+      action = "split";
+      rawTargets = [args.targetFile].filter(Boolean);
+    } else if (name === "compressPdf") {
+      action = "compress";
+      rawTargets = [args.targetFile].filter(Boolean);
+    } else {
+      rawTargets = Array.isArray(args.targetFiles) ? args.targetFiles : [args.targetFiles].filter(Boolean);
+    }
     if (rawTargets.length === 0) {
       toolResult = { error: "Daftar targetFiles tidak boleh kosong." };
     } else {
@@ -1488,6 +1633,122 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
           }
         } catch (err) {
           toolResult = { error: `Gagal menjalankan runner PDF: ${err.message}` };
+        }
+      }
+    }
+  } else if (name === "convertDocument") {
+    const target = args.targetFile;
+    if (!target) {
+      toolResult = { error: "Parameter targetFile wajib diisi." };
+    } else {
+      const fileRec = store.resolveVaultFile(target, chatId);
+      if (!fileRec) {
+        toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
+      } else if (!store.hasFileAccess(fileRec.id, chatId)) {
+        toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
+      } else if (!fs.existsSync(fileRec.filepath)) {
+        toolResult = { error: `File fisik '${fileRec.filename}' tidak ditemukan di disk server.` };
+      } else {
+        const b = fs.readFileSync(fileRec.filepath);
+        const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/convert");
+        try {
+          const resp = await fetch(runnerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              files: [{ filename: fileRec.filename, data_base64: b.toString("base64") }],
+              target_format: args.targetFormat || "pdf"
+            }),
+            signal: AbortSignal.timeout(30000)
+          });
+          if (!resp.ok) {
+            throw new Error(`Runner convert error (${resp.status}): ${await resp.text()}`);
+          }
+          const data = await resp.json();
+          if (data.status !== "success") {
+            toolResult = { error: data.error || "Gagal mengonversi dokumen." };
+          } else {
+            let outName = args.outputFilename || data.filename || `converted_${fileRec.filename}.pdf`;
+            const isPdf = data.mimetype === "application/pdf";
+            const category = "documents";
+            const dir = path.join("vault", category);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const savedPath = path.join(dir, `${Date.now()}_${outName}`);
+            const outBuf = Buffer.from(data.data_base64, "base64");
+            fs.writeFileSync(savedPath, outBuf);
+
+            const fileId = store.saveVaultFile({
+              ownerId: chatId,
+              filename: outName,
+              category,
+              filepath: savedPath,
+              mimetype: data.mimetype,
+              filesize: outBuf.length,
+              summary: data.text ? data.text.slice(0, 300) : `Hasil konversi dari ${fileRec.filename}`
+            });
+
+            if (args.sendDirectly) {
+              const caption = args.caption || data.message || `Hasil konversi dokumen ${outName}`;
+              await sendFile(chatId, savedPath, outName, caption, isPdf);
+            }
+
+            toolResult = {
+              success: true,
+              fileId,
+              filename: outName,
+              engine: data.engine,
+              extractedText: (data.text || "").slice(0, 5000),
+              message: data.message
+            };
+          }
+        } catch (err) {
+          toolResult = { error: `Gagal menjalankan konversi dokumen: ${err.message}` };
+        }
+      }
+    }
+  } else if (name === "ocrDocument") {
+    const target = args.targetFile;
+    if (!target) {
+      toolResult = { error: "Parameter targetFile wajib diisi." };
+    } else {
+      const fileRec = store.resolveVaultFile(target, chatId);
+      if (!fileRec) {
+        toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
+      } else if (!store.hasFileAccess(fileRec.id, chatId)) {
+        toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
+      } else if (!fs.existsSync(fileRec.filepath)) {
+        toolResult = { error: `File fisik '${fileRec.filename}' tidak ditemukan di disk server.` };
+      } else {
+        const b = fs.readFileSync(fileRec.filepath);
+        const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/ocr");
+        try {
+          const resp = await fetch(runnerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              files: [{ filename: fileRec.filename, data_base64: b.toString("base64") }],
+              lang: args.lang || "ind+eng"
+            }),
+            signal: AbortSignal.timeout(30000)
+          });
+          if (!resp.ok) {
+            throw new Error(`Runner OCR error (${resp.status}): ${await resp.text()}`);
+          }
+          const data = await resp.json();
+          if (data.status !== "success") {
+            toolResult = { error: data.error || "Gagal OCR dokumen." };
+          } else {
+            toolResult = {
+              success: true,
+              filename: fileRec.filename,
+              ocrEngine: data.ocr_engine,
+              pageCount: data.page_count,
+              text: data.text,
+              message: data.message
+            };
+          }
+        } catch (err) {
+          toolResult = { error: `Gagal menjalankan runner OCR: ${err.message}` };
         }
       }
     }
@@ -1890,6 +2151,14 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("loadSkill"));
     assert.ok(decls.includes("updateSkill"));
     assert.ok(decls.includes("processPdf"));
+    assert.ok(decls.includes("mergePdf"));
+    assert.ok(decls.includes("splitPdf"));
+    assert.ok(decls.includes("compressPdf"));
+    assert.ok(decls.includes("convertDocument"));
+    assert.ok(decls.includes("ocrDocument"));
+    assert.ok(decls.includes("getTodosDue"));
+    assert.ok(decls.includes("undoLastTodo"));
+    assert.ok(decls.includes("setDailyDigest"));
     assert.ok(decls.includes("proposeSkill"));
     assert.ok(decls.includes("approveSkill"));
     assert.ok(decls.includes("rejectSkill"));
@@ -1911,6 +2180,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("pelajari skill rekap tugas"), true);
     assert.strictEqual(isActionIntent("gabung file pdf #1 dan #2"), true);
     assert.strictEqual(isActionIntent("kompres pdf dokumen ini"), true);
+    assert.strictEqual(isActionIntent("konversi file laporan.docx ke pdf"), true);
+    assert.strictEqual(isActionIntent("scan ocr foto ktp"), true);
+    assert.strictEqual(isActionIntent("undo tugas terakhir"), true);
     assert.strictEqual(isActionIntent("buat proposal skill export json"), true);
     assert.strictEqual(isActionIntent("rollback skill rekap_malam"), true);
     assert.strictEqual(isActionIntent("tambahkan kontak Bunga istri"), true);
