@@ -159,7 +159,17 @@ export class Storage {
     const rem = this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(id);
     if (!rem) return null;
     const oneDay = 24 * 60 * 60 * 1000;
-    const step = recurrence === "weekly" ? 7 * oneDay : oneDay;
+    let step = oneDay;
+    if (recurrence === "weekly") {
+      step = 7 * oneDay;
+    } else if (recurrence === "daily") {
+      step = oneDay;
+    } else {
+      const matchH = String(recurrence).match(/(\d+)h/i);
+      if (matchH) {
+        step = parseInt(matchH[1], 10) * 60 * 60 * 1000;
+      }
+    }
     let nextTime = rem.remind_at + step;
     const now = Date.now();
     while (nextTime <= now) {
@@ -390,24 +400,24 @@ export class Storage {
 
 export function formatSkillList(skills = []) {
   if (!skills || skills.length === 0) {
-    return "⚡ *[Custom Skills]*\nBelum ada skill atau macro yang dikristalisasi.";
+    return "*[Custom Skills]*\nBelum ada skill atau macro yang dikristalisasi.";
   }
-  const lines = ["⚡ *[Custom Skills / Automasi Bot]*\n"];
+  const lines = ["*[Custom Skills / Automasi Bot]*\n"];
   skills.forEach((s) => {
-    lines.push(`🔹 *${s.name}*\n   _${s.description}_`);
+    lines.push(`• *${s.name}*\n   _${s.description}_`);
   });
   return lines.join("\n\n");
 }
 
 export function formatBacklogList(backlogs) {
   if (!backlogs || backlogs.length === 0) {
-    return "💡 *[Backlog Improvement]*\nBelum ada ide improvement yang dicatat.";
+    return "*[Backlog Improvement]*\nBelum ada ide improvement yang dicatat.";
   }
-  const lines = ["💡 *[Backlog Improvement — Ide & Fitur]*\n"];
+  const lines = ["*[Backlog Improvement — Ide & Fitur]*\n"];
   backlogs.forEach((b) => {
     const d = new Date(b.created_at);
     const dateStr = `${d.getDate()}/${d.getMonth() + 1}`;
-    lines.push(`📌 *[#${b.id}]* ${b.idea} _(${dateStr})_`);
+    lines.push(`• *[#${b.id}]* ${b.idea} _(${dateStr})_`);
   });
   lines.push("\n_Tandai selesai: #backlog done <id>_");
   return lines.join("\n");
@@ -415,17 +425,17 @@ export function formatBacklogList(backlogs) {
 
 export function formatTodoList(todos) {
   if (!todos || todos.length === 0) {
-    return "?? *Tidak ada tugas pending!* Semua to-do list sudah selesai.";
+    return "*Tidak ada tugas pending.* To-do list aman semua.";
   }
 
   const now = new Date();
   const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
   const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
-  let lines = ["\u{1F304} *[Pengingat Tugas]*\n"];
+  let lines = ["*[Pengingat Tugas]*\n"];
 
   todos.forEach((item) => {
-    let badge = "??";
+    let badge = "•";
     let deadlineStr = "Tanpa deadline";
 
     if (item.deadline) {
@@ -433,9 +443,9 @@ export function formatTodoList(todos) {
       const diffMs = dl.getTime() - now.getTime();
       const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-      if (diffDays <= 0) badge = "\u{1F534}";
-      else if (diffDays <= 2) badge = "\u{1F7E1}";
-      else badge = "\u{1F7E2}";
+      if (diffDays <= 0) badge = "[!]";
+      else if (diffDays <= 2) badge = "[~]";
+      else badge = "•";
 
       const dayName = daysId[dl.getDay()];
       const dateNum = dl.getDate();
@@ -449,14 +459,13 @@ export function formatTodoList(todos) {
     }
 
     lines.push(`${badge} *[${item.id}] ${item.task}*`);
-    lines.push(`\u251C\u2500\u2500 ${deadlineStr}`);
+    lines.push(`├── ${deadlineStr}`);
     const tagBase = item.tag ? (item.tag.startsWith("#") ? item.tag : `#${item.tag}`) : "#tugas";
     const tagStr = item.category === "routine" ? `${tagBase} [Rutin]` : tagBase;
-    lines.push(`\u2514\u2500\u2500 ${tagStr}\n`);
+    lines.push(`└── ${tagStr}\n`);
   });
 
-  lines.push("Semangat! \u{1F4AA}");
-  return lines.join("\n");
+  return lines.join("\n").trim();
 }
 
 export function logInteraction(db, { prompt, tools = [], status = "success", error = null }) {
@@ -609,6 +618,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(remId > 0);
   const nextRemind = store.advanceRecurringReminder(remId, "daily");
   assert.ok(nextRemind > Date.now());
+
+  const remId6h = store.addReminder("user1", "Cek tugas tiap 6 jam", Date.now() - 1000, "every_6h");
+  const nextRemind6h = store.advanceRecurringReminder(remId6h, "every_6h");
+  assert.ok(nextRemind6h > Date.now());
+  assert.ok(nextRemind6h - Date.now() <= 6 * 3600 * 1000);
 
   console.log("DB & Formatter self-test OK");
 }

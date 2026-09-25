@@ -75,7 +75,7 @@ export const TOOLS = [
           properties: {
             message: { type: "STRING", description: "Pesan pengingat" },
             remindAtIso: { type: "STRING", description: "Waktu pengingat dalam ISO 8601 (contoh: 2026-09-25T17:00:00+07:00)" },
-            recurrence: { type: "STRING", description: "Perulangan pengingat opsional: daily, weekly" },
+            recurrence: { type: "STRING", description: "Perulangan pengingat opsional: daily, weekly, every_6h, 6h, 12h, dsb." },
             taskType: { type: "STRING", description: "Tipe tugas: reminder (default) atau scheduled_action" }
           },
           required: ["message", "remindAtIso"]
