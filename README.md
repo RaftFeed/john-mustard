@@ -1,6 +1,20 @@
 # John Mustard 🤖
 
-> Personal AI Assistant WhatsApp Bot built with Node.js, WAHA, Gemini, and Python Sandbox.
+> Autonomous AI Executive Assistant for WhatsApp powered by Node.js, WAHA, Gemini ReAct, and isolated Python Sandbox.
+
+---
+
+## 📖 About
+
+**John Mustard** adalah asisten eksekutif pribadi otonom berbasis WhatsApp yang dibangun dengan arsitektur *zero-dependency deep modules*. Bot ini mengintegrasikan penalaran ReAct multi-step (Google Gemini API), eksekusi kode terisolasi (Python sandbox), manipulasi dokumen (PyMuPDF), manajemen task/catatan berbasis SQLite, serta fallback command offline deterministik.
+
+### ✨ Fitur Utama
+- **WhatsApp Bridge (WAHA)**: Webhook streaming, message debouncing (1.0s buffer), split bubble message (`---`), multi-contact aware.
+- **ReAct Loop & Multi-Key Rotator**: Eksekusi multi-step agentik dengan rotasi otomatis API key Gemini saat rate-limit (429).
+- **Sandboxed Python & Doc Engine**: Eksekusi script komputasi, visualisasi, OCR, dan operasi PDF (merge, split, compress, image rendering) via isolated container.
+- **Deterministic Fast Commands**: Fallback cepat offline tanpa latency AI (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`).
+- **Memory & Storage**: SQLite WAL persistence untuk to-dos, reminders, chat history, document vault dengan access control list (ACL).
+- **Procedural Skills (Voyager Pattern)**: Auto-kristalisasi kebiasaan dan alur kerja baru dari percakapan berulang.
 
 ---
 
