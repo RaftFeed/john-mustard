@@ -136,7 +136,16 @@ export class Storage {
     ).run(chatId, role, content, Date.now());
   }
 
-  getRecentChatHistory(chatId, limit = 8) {
+  getRecentChatHistory(chatId, limit = 8, maxIdleMs = 3600_000) {
+    const latest = this.db.prepare(
+      "SELECT created_at FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1"
+    ).get(chatId);
+
+    // Jeda lebih dari 1 jam -> sesi lama expired, dianggap sesi baru (empty history)
+    if (!latest || (Date.now() - latest.created_at) > maxIdleMs) {
+      return [];
+    }
+
     const rows = this.db.prepare(
       "SELECT role, content FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?"
     ).all(chatId, limit);
@@ -582,6 +591,10 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(history.length, 2);
   assert.strictEqual(history[0].content, "halo");
   assert.strictEqual(history[1].content, "siap");
+
+  // Idle timeout test (sesi kadaluarsa jika lewat batas idle)
+  const expiredHistory = store.getRecentChatHistory("user1", 8, -1);
+  assert.strictEqual(expiredHistory.length, 0);
 
   // Multi-user & ACL tests
   assert.strictEqual(normalizePhone("08123456789"), "628123456789");
