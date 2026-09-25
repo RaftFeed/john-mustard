@@ -1,7 +1,8 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatSkillList } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList, formatPersonList, formatRemindersList } from "./db.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
+import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
 function formatUptime(seconds) {
   const d = Math.floor(seconds / (3600 * 24));
@@ -77,6 +78,27 @@ export function parseFastCommand(text = "") {
 
   if (/^#skills?\b/i.test(trimmed)) {
     return { type: "skills" };
+  }
+
+  if (/^#(reminders?|pengingat)\b/i.test(trimmed)) {
+    return { type: "reminders" };
+  }
+
+  if (/^#(kontak|contacts|directory)\b/i.test(trimmed)) {
+    return { type: "contacts" };
+  }
+
+  if (/^#proposals?\b/i.test(trimmed)) {
+    return { type: "proposals" };
+  }
+
+  const rollbackMatch = trimmed.match(/^#rollback\s+([a-zA-Z0-9_-]+)(?:\s+(?:v)?(\d+))?$/i);
+  if (rollbackMatch) {
+    return {
+      type: "rollback",
+      name: rollbackMatch[1],
+      version: rollbackMatch[2] ? parseInt(rollbackMatch[2], 10) : null
+    };
   }
 
   const backlogMatch = trimmed.match(/^#backlog(\s+(.*))?$/is);
@@ -275,6 +297,38 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false }
       return formatSkillList(list);
     }
 
+    case "reminders": {
+      const list = store.listReminders ? store.listReminders(chatId) : [];
+      return formatRemindersList(list);
+    }
+
+    case "contacts": {
+      const list = store.listPersons ? store.listPersons() : [];
+      return formatPersonList(list);
+    }
+
+    case "proposals": {
+      const props = listSkillProposals();
+      if (!props.pending || props.pending.length === 0) {
+        return "*[Proposal Skill]*\nTidak ada proposal skill yang menunggu persetujuan.";
+      }
+      const lines = ["*[Proposal Skill Menunggu Review]*\n"];
+      props.pending.forEach((p, idx) => {
+        lines.push(`${idx + 1}. *${p.name}*\n   _${p.description}_`);
+      });
+      lines.push("\n_Gunakan tool approveSkill atau rejectSkill untuk memproses._");
+      return lines.join("\n");
+    }
+
+    case "rollback": {
+      if (!isOwner) return "[!] Fitur #rollback khusus owner.";
+      const res = rollbackSkill(cmd.name, { toVersion: cmd.version, store, rolledBackBy: chatId });
+      if (res.status !== "success") {
+        return `[!] Gagal rollback skill: ${res.error}`;
+      }
+      return `[OK] ${res.message}`;
+    }
+
     case "backlogList": {
       if (!isOwner) return "[!] Fitur #backlog khusus owner.";
       const list = store.getBacklogs(chatId);
@@ -316,6 +370,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 
 *Perintah To-Do & Tugas (Manual):*
 - #tugas / #todo — Lihat to-do list pending
+- #reminders — Lihat daftar pengingat/reminder aktif
 - #today — Tugas deadline hari ini
 - #week — Tugas 7 hari ke depan
 - #<id> — Cek detail tugas (misal: #1)
@@ -328,6 +383,9 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 *Perintah Otomasi & Pengaturan:*
 - #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
 - #skills — Lihat daftar skill & macro otomatis
+- #proposals — Cek antrean proposal skill
+- #rollback <skill> [v] — Kembalikan versi skill
+- #kontak — Direktori koordinasi pasangan & keluarga
 
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
@@ -371,6 +429,14 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#daily 1").value, "1");
       assert.strictEqual(parseFastCommand("#dew").type, "dew");
       assert.strictEqual(parseFastCommand("#skills").type, "skills");
+      assert.strictEqual(parseFastCommand("#reminders").type, "reminders");
+      assert.strictEqual(parseFastCommand("#pengingat").type, "reminders");
+      assert.strictEqual(parseFastCommand("#kontak").type, "contacts");
+      assert.strictEqual(parseFastCommand("#contacts").type, "contacts");
+      assert.strictEqual(parseFastCommand("#proposals").type, "proposals");
+      assert.strictEqual(parseFastCommand("#rollback rekap_malam 2").type, "rollback");
+      assert.strictEqual(parseFastCommand("#rollback rekap_malam 2").name, "rekap_malam");
+      assert.strictEqual(parseFastCommand("#rollback rekap_malam 2").version, 2);
       assert.strictEqual(parseFastCommand("#health").type, "health");
       assert.strictEqual(parseFastCommand("#mc").type, "minecraft");
       assert.strictEqual(parseFastCommand("#help").type, "help");
@@ -382,6 +448,12 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
 
       const skillsRes = await executeFastCommand(parseFastCommand("#skills"), { store, chatId });
       assert.ok(skillsRes.includes("Custom Skills"));
+
+      const contactsRes = await executeFastCommand(parseFastCommand("#kontak"), { store, chatId });
+      assert.ok(contactsRes.includes("Direktori Kontak"));
+
+      const proposalsRes = await executeFastCommand(parseFastCommand("#proposals"), { store, chatId });
+      assert.ok(proposalsRes.includes("Proposal"));
 
       const pingRes = await executeFastCommand(parseFastCommand("#ping"), { store, chatId });
       assert.ok(pingRes.includes("PONG!"));
