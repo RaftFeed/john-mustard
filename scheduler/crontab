@@ -1,0 +1,1 @@
+*/15 * * * * * curl -fsS -X POST http://bot:4500/api/scheduler/tick

@@ -71,6 +71,9 @@ export async function sendSingleText(chatId, text, replyTo = null) {
 
 // Multi-Bubble Splitting (Helmis pattern)
 export async function sendText(chatId, text, replyTo = null) {
+  if (!text || text.trim() === "[NO_REPLY]" || text.trim().startsWith("[NO_REPLY]")) {
+    return null;
+  }
   const bubbles = text.split(/\n\s*---\s*\n/).map((b) => b.trim()).filter(Boolean);
   let lastRes = null;
   for (let i = 0; i < bubbles.length; i++) {

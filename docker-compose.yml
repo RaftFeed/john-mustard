@@ -27,18 +27,39 @@ services:
     restart: unless-stopped
     depends_on:
       - waha
+      - runner
+    ports:
+      - "4500:4500"
     environment:
       - PORT=4500
       - WAHA_URL=http://waha:3000
       - WAHA_API_KEY=${WAHA_API_KEY}
       - DB_PATH=/app/data/bot.db
       - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - PYTHON_RUNNER_URL=http://runner:8000/run
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data
       - ./vault:/app/vault
       - ./waha_sessions:/app/waha_sessions:ro
+    networks:
+      - bot-net
+
+  runner:
+    build: ./runner
+    container_name: john-mustard-runner
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - bot-net
+
+  scheduler:
+    build: ./scheduler
+    container_name: john-mustard-scheduler
+    restart: unless-stopped
+    depends_on:
+      - bot
     networks:
       - bot-net
 

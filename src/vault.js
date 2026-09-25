@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getEmbedding } from "./llm.js";
 
 export function detectCategory(filename = "", mime = "") {
   const lower = (filename + " " + mime).toLowerCase();
@@ -63,6 +64,16 @@ export async function ingestVaultFile(store, rotator, { buffer, filename, mimety
     summary = caption ? `Catatan: ${caption}` : `File ${filename}`;
   }
 
+  let embedding = null;
+  if (rotator) {
+    try {
+      const textToEmbed = `${filename} ${category} ${summary}`.trim();
+      embedding = await getEmbedding(rotator, textToEmbed);
+    } catch (embErr) {
+      console.warn("[Vault] Semantic embedding calculation skipped:", embErr.message);
+    }
+  }
+
   const id = store.saveVaultFile({
     ownerId,
     filename,
@@ -70,7 +81,8 @@ export async function ingestVaultFile(store, rotator, { buffer, filename, mimety
     filepath: targetPath,
     mimetype,
     filesize: buffer.length,
-    summary
+    summary,
+    embedding
   });
 
   return { id, filename, category, filepath: targetPath, summary };

@@ -8,7 +8,31 @@ export function normalizePhone(raw) {
   return digits;
 }
 
+export function detectTaskCategory(title = "") {
+  if (!title) return "work";
+  const t = title.toLowerCase();
+  const isWork = /\b(buat|bikin|kerjakan|tulis|koding|coding|submit|kumpulkan|proposal|laporan|tugas|revisi|presentasi|slide|makalah)\b/i.test(t);
+  if (isWork) return "work";
+  const isRoutine = /\b(absen|presensi|kehadiran|kuliah|kelas|check-?in)\b/i.test(t);
+  if (isRoutine) return "routine";
+  return "work";
+}
+
 export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || "6281234567890");
+
+export function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
 export class Storage {
   constructor(dbPath = "bot.db") {
@@ -23,7 +47,9 @@ export class Storage {
         chat_id TEXT NOT NULL,
         message TEXT NOT NULL,
         remind_at INTEGER NOT NULL,
-        status TEXT DEFAULT 'pending'
+        status TEXT DEFAULT 'pending',
+        recurrence TEXT DEFAULT NULL,
+        task_type TEXT DEFAULT 'reminder'
       );
       CREATE TABLE IF NOT EXISTS todos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +57,7 @@ export class Storage {
         task TEXT NOT NULL,
         deadline INTEGER,
         tag TEXT,
+        category TEXT DEFAULT 'work',
         done INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
       );
@@ -43,6 +70,7 @@ export class Storage {
         mimetype TEXT NOT NULL,
         filesize INTEGER NOT NULL,
         summary TEXT,
+        embedding BLOB,
         created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS file_permissions (
@@ -82,11 +110,22 @@ export class Storage {
         status TEXT DEFAULT 'pending',
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS skills (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT NOT NULL,
+        prompt_template TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
     `);
 
     try { this.db.exec("ALTER TABLE todos ADD COLUMN deadline INTEGER"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN tag TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE todos ADD COLUMN category TEXT DEFAULT 'work'"); } catch {}
+    try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
+    try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
   }
 
   saveChatMessage(chatId, role, content) {
@@ -103,11 +142,11 @@ export class Storage {
     return rows.reverse();
   }
 
-  addReminder(chatId, message, remindAtTimestamp) {
+  addReminder(chatId, message, remindAtTimestamp, recurrence = null, taskType = "reminder") {
     const stmt = this.db.prepare(
-      "INSERT INTO reminders (chat_id, message, remind_at) VALUES (?, ?, ?)"
+      "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type) VALUES (?, ?, ?, ?, ?)"
     );
-    return stmt.run(chatId, message, remindAtTimestamp).lastInsertRowid;
+    return stmt.run(chatId, message, remindAtTimestamp, recurrence, taskType).lastInsertRowid;
   }
 
   getPendingReminders(now = Date.now()) {
@@ -116,36 +155,54 @@ export class Storage {
       .all(now);
   }
 
+  advanceRecurringReminder(id, recurrence) {
+    const rem = this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(id);
+    if (!rem) return null;
+    const oneDay = 24 * 60 * 60 * 1000;
+    const step = recurrence === "weekly" ? 7 * oneDay : oneDay;
+    let nextTime = rem.remind_at + step;
+    const now = Date.now();
+    while (nextTime <= now) {
+      nextTime += step;
+    }
+    this.db.prepare("UPDATE reminders SET remind_at = ?, status = 'pending' WHERE id = ?").run(nextTime, id);
+    return nextTime;
+  }
+
   markReminderDone(id) {
     this.db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?").run(id);
   }
 
-  addTodo(chatId, task, deadline = null, tag = null) {
+  addTodo(chatId, task, deadline = null, tag = null, category = null) {
+    const cat = category || detectTaskCategory(task);
     const stmt = this.db.prepare(
-      "INSERT INTO todos (chat_id, task, deadline, tag, created_at) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO todos (chat_id, task, deadline, tag, category, created_at) VALUES (?, ?, ?, ?, ?, ?)"
     );
-    return stmt.run(chatId, task, deadline, tag, Date.now()).lastInsertRowid;
+    return stmt.run(chatId, task, deadline, tag, cat, Date.now()).lastInsertRowid;
   }
 
-  getTodos(chatId) {
-    return this.db
-      .prepare(`
-        SELECT id, task, deadline, tag 
-        FROM todos 
-        WHERE chat_id = ? AND done = 0 
-        ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, id ASC
-      `)
-      .all(chatId);
+  getTodos(chatId, includeRoutine = false) {
+    let sql = `
+      SELECT id, task, deadline, tag, category 
+      FROM todos 
+      WHERE chat_id = ? AND done = 0
+    `;
+    if (!includeRoutine) {
+      sql += " AND (category != 'routine' OR category IS NULL)";
+    }
+    sql += " ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, id ASC";
+    return this.db.prepare(sql).all(chatId);
   }
 
 
   // --- Document Vault & Access Control ---
-  saveVaultFile({ ownerId = "", filename, category = "documents", filepath, mimetype, filesize, summary = "" }) {
+  saveVaultFile({ ownerId = "", filename, category = "documents", filepath, mimetype, filesize, summary = "", embedding = null }) {
     const normOwner = normalizePhone(ownerId);
+    const embBuffer = embedding && Array.isArray(embedding) ? Buffer.from(new Float32Array(embedding).buffer) : null;
     const stmt = this.db.prepare(
-      "INSERT INTO vault_files (owner_id, filename, category, filepath, mimetype, filesize, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO vault_files (owner_id, filename, category, filepath, mimetype, filesize, summary, embedding, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
-    return stmt.run(normOwner, filename, category, filepath, mimetype, filesize, summary, Date.now()).lastInsertRowid;
+    return stmt.run(normOwner, filename, category, filepath, mimetype, filesize, summary, embBuffer, Date.now()).lastInsertRowid;
   }
 
   hasFileAccess(fileId, userId) {
@@ -187,7 +244,7 @@ export class Storage {
     return this.db.prepare("UPDATE file_requests SET status = ? WHERE id = ?").run(status, requestId).changes;
   }
 
-  searchVaultFiles(query = "", category = null, userId = null) {
+  searchVaultFiles(query = "", category = null, userId = null, queryEmbedding = null) {
     let sql = `
       SELECT DISTINCT v.* FROM vault_files v
       LEFT JOIN file_permissions p ON v.id = p.file_id
@@ -204,6 +261,35 @@ export class Storage {
     if (category) {
       sql += " AND v.category = ?";
       params.push(category);
+    }
+
+    if (queryEmbedding && Array.isArray(queryEmbedding) && queryEmbedding.length > 0) {
+      const rows = this.db.prepare(sql).all(...params);
+      const queryVec = new Float32Array(queryEmbedding);
+      const scored = [];
+      const qLower = (query || "").toLowerCase().trim();
+
+      for (const row of rows) {
+        let score = 0;
+        if (row.embedding) {
+          const rowVec = new Float32Array(
+            row.embedding.buffer,
+            row.embedding.byteOffset,
+            row.embedding.byteLength / 4
+          );
+          score = cosineSimilarity(queryVec, rowVec);
+        }
+        if (qLower) {
+          const matchName = row.filename.toLowerCase().includes(qLower);
+          const matchSum = (row.summary || "").toLowerCase().includes(qLower);
+          if (matchName || matchSum) score += 0.35;
+        }
+        if (score >= 0.45 || (qLower && (row.filename.toLowerCase().includes(qLower) || (row.summary || "").toLowerCase().includes(qLower)))) {
+          scored.push({ ...row, score });
+        }
+      }
+      scored.sort((a, b) => b.score - a.score);
+      return scored.slice(0, 10);
     }
 
     if (query && query.trim() !== "") {
@@ -231,15 +317,16 @@ export class Storage {
       .get(chatId, `%${query}%`);
   }
 
-  updateTodo(id, chatId, { task, deadline, tag }) {
+  updateTodo(id, chatId, { task, deadline, tag, category }) {
     const existing = this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
     if (!existing) return 0;
     const newTask = task !== undefined && task !== null ? task : existing.task;
     const newDeadline = deadline !== undefined ? deadline : existing.deadline;
     const newTag = tag !== undefined ? tag : existing.tag;
+    const newCategory = category !== undefined ? category : existing.category;
     return this.db
-      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ? WHERE id = ? AND chat_id = ?")
-      .run(newTask, newDeadline, newTag, id, chatId).changes;
+      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ? WHERE id = ? AND chat_id = ?")
+      .run(newTask, newDeadline, newTag, newCategory, id, chatId).changes;
   }
 
   deleteTodo(id, chatId) {
@@ -275,6 +362,41 @@ export class Storage {
       "UPDATE backlogs SET status = 'done' WHERE id = ? AND user_id = ?"
     ).run(id, norm).changes;
   }
+
+  // --- Skills / Auto-Crystallization ---
+  saveSkill(name, description, promptTemplate) {
+    const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    const stmt = this.db.prepare(
+      "INSERT INTO skills (name, description, prompt_template, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET description = excluded.description, prompt_template = excluded.prompt_template"
+    );
+    stmt.run(cleanName, (description || "").trim(), (promptTemplate || "").trim(), Date.now());
+    return this.getSkill(cleanName);
+  }
+
+  getSkills() {
+    return this.db.prepare("SELECT * FROM skills ORDER BY name ASC").all();
+  }
+
+  getSkill(name) {
+    const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    return this.db.prepare("SELECT * FROM skills WHERE name = ?").get(cleanName);
+  }
+
+  deleteSkill(name) {
+    const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    return this.db.prepare("DELETE FROM skills WHERE name = ?").run(cleanName).changes;
+  }
+}
+
+export function formatSkillList(skills = []) {
+  if (!skills || skills.length === 0) {
+    return "⚡ *[Custom Skills]*\nBelum ada skill atau macro yang dikristalisasi.";
+  }
+  const lines = ["⚡ *[Custom Skills / Automasi Bot]*\n"];
+  skills.forEach((s) => {
+    lines.push(`🔹 *${s.name}*\n   _${s.description}_`);
+  });
+  return lines.join("\n\n");
 }
 
 export function formatBacklogList(backlogs) {
@@ -328,7 +450,8 @@ export function formatTodoList(todos) {
 
     lines.push(`${badge} *[${item.id}] ${item.task}*`);
     lines.push(`\u251C\u2500\u2500 ${deadlineStr}`);
-    const tagStr = item.tag ? (item.tag.startsWith("#") ? item.tag : `#${item.tag}`) : "#tugas";
+    const tagBase = item.tag ? (item.tag.startsWith("#") ? item.tag : `#${item.tag}`) : "#tugas";
+    const tagStr = item.category === "routine" ? `${tagBase} [Rutin]` : tagBase;
     lines.push(`\u2514\u2500\u2500 ${tagStr}\n`);
   });
 
@@ -441,6 +564,51 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
 
   store.completeBacklog(bId, "6281234567890");
   assert.strictEqual(store.getBacklogs("6281234567890").length, 0);
+
+  // Vector search & cosine similarity test
+  assert.strictEqual(cosineSimilarity([1, 0], [1, 0]), 1);
+  assert.strictEqual(cosineSimilarity([1, 0], [0, 1]), 0);
+  const fileVec = store.saveVaultFile({
+    ownerId: "628123456789",
+    filename: "struk_ukt.pdf",
+    category: "receipts",
+    filepath: "vault/receipts/struk_ukt.pdf",
+    mimetype: "application/pdf",
+    filesize: 2048,
+    summary: "Bukti pembayaran UKT semester 5",
+    embedding: [0.9, 0.1, 0.0]
+  });
+  const vecResults = store.searchVaultFiles("biaya kampus", null, "628123456789", [0.85, 0.15, 0.0]);
+  assert.strictEqual(vecResults.length, 1);
+  assert.strictEqual(vecResults[0].id, fileVec);
+
+  // Auto-crystallization / Skills tests
+  const sk = store.saveSkill("rekap_malam", "Rangkum to-do list harian", "Ambil listTodos lalu buatkan ringkasan");
+  assert.strictEqual(sk.name, "rekap_malam");
+  assert.strictEqual(store.getSkills().length, 1);
+  assert.strictEqual(store.getSkill("rekap_malam").description, "Rangkum to-do list harian");
+  const skFormatted = formatSkillList(store.getSkills());
+  assert.ok(skFormatted.includes("rekap_malam"));
+  assert.strictEqual(store.deleteSkill("rekap_malam"), 1);
+  assert.strictEqual(store.getSkills().length, 0);
+
+  // Category & routine tests
+  assert.strictEqual(detectTaskCategory("Absen kelas matematika"), "routine");
+  assert.strictEqual(detectTaskCategory("Presensi kuliah"), "routine");
+  assert.strictEqual(detectTaskCategory("Kerjakan laporan praktikum absen"), "work");
+  assert.strictEqual(detectTaskCategory("Buat slide presentasi"), "work");
+
+  const routineId = store.addTodo("user1", "Absen kuliah jam 8");
+  const workId = store.addTodo("user1", "Kerjakan tugas akhir");
+  assert.strictEqual(store.getTodos("user1", false).length, 1);
+  assert.strictEqual(store.getTodos("user1", false)[0].id, workId);
+  assert.strictEqual(store.getTodos("user1", true).length, 2);
+
+  // Recurring reminder tests
+  const remId = store.addReminder("user1", "Minum vitamin", Date.now() - 1000, "daily");
+  assert.ok(remId > 0);
+  const nextRemind = store.advanceRecurringReminder(remId, "daily");
+  assert.ok(nextRemind > Date.now());
 
   console.log("DB & Formatter self-test OK");
 }

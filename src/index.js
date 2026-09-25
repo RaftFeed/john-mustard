@@ -19,7 +19,7 @@ const dbPath = process.env.DB_PATH || "bot.db";
 const store = new Storage(dbPath);
 
 // Jalankan runner pengingat (cek tiap 15 detik)
-startScheduler(store);
+startScheduler(store, { rotator });
 
 const HELP_TEXT = `📋 *[JOHN MUSTARD — EXECUTIVE ASSISTANT]* 🕶️
 Halo! Saya John Mustard, asisten pribadi eksekutif berbasis WhatsApp yang siap bantu kebutuhan harianmu ("sat-set").
@@ -69,6 +69,11 @@ async function handleIncomingMessage(msg) {
   const toolsCalled = [];
   startTyping(msg.from);
   const typingTimer = setInterval(() => startTyping(msg.from), 6000);
+  const watchdogTimer = setTimeout(async () => {
+    try {
+      await sendText(msg.from, "_Sedang memproses permintaanmu... (mohon tunggu sebentar)_");
+    } catch {}
+  }, 12000);
 
   try {
     // 1. Tangani Incoming Media
@@ -231,10 +236,14 @@ async function handleIncomingMessage(msg) {
       onToolCall: (name) => toolsCalled.push(name)
     });
 
-    await sendText(msg.from, reply);
-    console.log(`>> Sent reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-    store.saveChatMessage(msg.from, "user", msg.body);
-    store.saveChatMessage(msg.from, "model", reply);
+    if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {
+      await sendText(msg.from, reply);
+      console.log(`>> Sent reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
+      store.saveChatMessage(msg.from, "user", msg.body);
+      store.saveChatMessage(msg.from, "model", reply);
+    } else {
+      console.log(`>> Suppressed reply [NO_REPLY] for ${msg.from}`);
+    }
 
     logInteraction(store.db, {
       prompt: msg.body,
@@ -252,15 +261,17 @@ async function handleIncomingMessage(msg) {
       error: err.message
     });
   } finally {
+    clearTimeout(watchdogTimer);
     clearInterval(typingTimer);
     stopTyping(msg.from);
   }
 }
 
-const app = createServer(handleIncomingMessage);
+const app = createServer(handleIncomingMessage, { store, rotator });
 app.listen(PORT, () => {
   console.log(`🚀 John Mustard Bot Server aktif di port ${PORT}`);
   console.log(`🔑 Terpasang ${keys.length} Gemini API Key`);
   console.log(`📱 Whitelist nomor WA: ${process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "SEMUA"}`);
   console.log(`📦 Document Vault storage siap di folder ./vault`);
+  console.log(`⚡ FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
 });

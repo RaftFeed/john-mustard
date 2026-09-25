@@ -1,7 +1,10 @@
-import { formatTodoList, formatBacklogList, normalizePhone, OWNER_PHONE } from "./db.js";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { formatTodoList, formatBacklogList, formatSkillList, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendFile, sendText } from "./waha.js";
 
-const TOOLS = [
+export const TOOLS = [
   {
     functionDeclarations: [
       {
@@ -12,7 +15,8 @@ const TOOLS = [
           properties: {
             task: { type: "STRING", description: "Judul tugas, contoh: LKP 6 Analisis Algoritme" },
             deadlineIso: { type: "STRING", description: "Deadline dalam format ISO 8601 (contoh: 2026-09-27T23:59:00+07:00)" },
-            tag: { type: "STRING", description: "Tag atau kode mata kuliah, contoh: #analgor [P2]" }
+            tag: { type: "STRING", description: "Tag atau kode mata kuliah, contoh: #analgor [P2]" },
+            category: { type: "STRING", description: "Kategori tugas opsional: work (default) atau routine (absen/kuliah)" }
           },
           required: ["task"]
         }
@@ -22,7 +26,9 @@ const TOOLS = [
         description: "Tampilkan daftar tugas / to-do list aktif beserta countdown deadline",
         parameters: {
           type: "OBJECT",
-          properties: {}
+          properties: {
+            includeRoutine: { type: "BOOLEAN", description: "Set true untuk menyertakan tugas rutin/kuliah/absen (default false)" }
+          }
         }
       },
       {
@@ -68,7 +74,9 @@ const TOOLS = [
           type: "OBJECT",
           properties: {
             message: { type: "STRING", description: "Pesan pengingat" },
-            remindAtIso: { type: "STRING", description: "Waktu pengingat dalam ISO 8601 (contoh: 2026-09-25T17:00:00+07:00)" }
+            remindAtIso: { type: "STRING", description: "Waktu pengingat dalam ISO 8601 (contoh: 2026-09-25T17:00:00+07:00)" },
+            recurrence: { type: "STRING", description: "Perulangan pengingat opsional: daily, weekly" },
+            taskType: { type: "STRING", description: "Tipe tugas: reminder (default) atau scheduled_action" }
           },
           required: ["message", "remindAtIso"]
         }
@@ -163,6 +171,60 @@ const TOOLS = [
           },
           required: ["query"]
         }
+      },
+      {
+        name: "readUrl",
+        description: "Baca dan ekstrak teks konten dari URL / tautan web publik atau artikel (dengan proteksi SSRF)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            url: { type: "STRING", description: "URL lengkap website atau artikel online (contoh: https://...)" }
+          },
+          required: ["url"]
+        }
+      },
+      {
+        name: "executePython",
+        description: "Jalankan script Python untuk kalkulasi presisi, analisis data, manipulasi string/data, atau plotting grafik chart (simpan chart ke os.environ['CHART_PATH'] atau /tmp/chart.png)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            code: { type: "STRING", description: "Script Python lengkap yang siap dieksekusi" }
+          },
+          required: ["code"]
+        }
+      },
+      {
+        name: "saveSkill",
+        description: "Simpan skill atau macro kustom baru (auto-crystallization) yang diajarkan oleh pengguna untuk dipakai kembali nanti",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill singkat tanpa spasi (contoh: rekap_malam, cek_jadwal_ujian)" },
+            description: { type: "STRING", description: "Deskripsi singkat fungsi dan tujuan skill ini" },
+            promptTemplate: { type: "STRING", description: "Instruksi dan langkah kerja detail yang harus dijalankan saat skill ini dipanggil" }
+          },
+          required: ["name", "description", "promptTemplate"]
+        }
+      },
+      {
+        name: "listSkills",
+        description: "Tampilkan semua custom skills / macro yang sudah dipelajari dan tersimpan",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
+        name: "deleteSkill",
+        description: "Hapus skill atau macro kustom dari memori bot",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill yang ingin dihapus" }
+          },
+          required: ["name"]
+        }
       }
     ]
   }
@@ -171,9 +233,72 @@ const TOOLS = [
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const FALLBACK_MODEL = "gemini-3-flash-preview";
 
+export function isSafeUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
+    if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return false;
+    const m172 = host.match(/^172\.(\d+)\./);
+    if (m172) {
+      const second = parseInt(m172[1], 10);
+      if (second >= 16 && second <= 31) return false;
+    }
+    if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchUrlContent(rawUrl) {
+  if (!isSafeUrl(rawUrl)) {
+    throw new Error("URL tidak aman atau mengarah ke alamat lokal/privat (SSRF Protection).");
+  }
+  const res = await fetch(rawUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)" },
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat halaman web.`);
+  const html = await res.text();
+  const clean = html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, "\n### $1\n")
+    .replace(/<p[^>]*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n• ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+  return clean.slice(0, 8000);
+}
+
+const MUTATION_TOOLS = new Set([
+  "addTodo", "completeTodo", "updateTodo", "deleteTodo",
+  "addReminder", "grantFileAccess", "addBacklog", "completeBacklog",
+  "saveSkill", "deleteSkill"
+]);
+
+export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
+  if (!text) return false;
+  const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
+  if (hasMutationTool) return false;
+  const claimRegex = /(sudah|berhasil|telah)\s+(di|ku|saya|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi)/i;
+  return claimRegex.test(text);
+}
+
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel)/i.test(text);
 }
 
 // ponytail: direct fetch with two-model fallback, no heavy sdk
@@ -213,25 +338,45 @@ async function generateContent(rotator, payload) {
   }
 }
 
-export async function executeTool(name, args, { store, chatId }) {
+export async function getEmbedding(rotator, text) {
+  if (!text || typeof text !== "string" || !text.trim() || !rotator) return null;
+  return rotator.execute(async (key) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${key}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "models/text-embedding-004",
+        content: { parts: [{ text: text.trim().slice(0, 2048) }] }
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!res.ok) throw new Error(`Embedding API error (${res.status}): ${await res.text()}`);
+    const data = await res.json();
+    return data.embedding?.values || null;
+  });
+}
+
+export async function executeTool(name, args, { store, chatId, rotator = null }) {
   let toolResult = {};
   let formattedList = null;
 
   if (name === "addTodo") {
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
-    const id = store.addTodo(chatId, args.task, deadline, args.tag);
-    const allTodos = store.getTodos(chatId);
+    const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category);
+    const allTodos = store.getTodos(chatId, args.category === "routine");
     formattedList = formatTodoList(allTodos);
     toolResult = {
       success: true,
       id,
       task: args.task,
+      category: args.category || "auto",
       formattedList
     };
   } else if (name === "listTodos") {
-    const todos = store.getTodos(chatId);
+    const todos = store.getTodos(chatId, Boolean(args.includeRoutine));
     formattedList = formatTodoList(todos);
-    toolResult = { raw: todos, formatted: formattedList };
+    toolResult = { raw: todos, formatted: formattedList, count: todos.length };
   } else if (name === "completeTodo") {
     const changes = store.completeTodo(args.todoId, chatId);
     const allTodos = store.getTodos(chatId);
@@ -280,10 +425,18 @@ export async function executeTool(name, args, { store, chatId }) {
   } else if (name === "addReminder") {
     const timestamp = new Date(args.remindAtIso).getTime();
     if (isNaN(timestamp)) throw new Error("Format tanggal/jam ISO tidak valid");
-    const id = store.addReminder(chatId, args.message, timestamp);
-    toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso };
+    const id = store.addReminder(chatId, args.message, timestamp, args.recurrence || null, args.taskType || "reminder");
+    toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso, recurrence: args.recurrence || null };
   } else if (name === "searchVault") {
-    const files = store.searchVaultFiles(args.query || "", args.category || null, chatId);
+    let queryEmbedding = null;
+    if (rotator && args.query) {
+      try {
+        queryEmbedding = await getEmbedding(rotator, args.query);
+      } catch (embErr) {
+        console.warn("[Vault] Semantic embedding search failed, fallback to keyword:", embErr.message);
+      }
+    }
+    const files = store.searchVaultFiles(args.query || "", args.category || null, chatId, queryEmbedding);
     toolResult = {
       count: files.length,
       files: files.map((f) => ({
@@ -393,6 +546,68 @@ export async function executeTool(name, args, { store, chatId }) {
         content: r.content
       }))
     };
+  } else if (name === "readUrl") {
+    try {
+      const content = await fetchUrlContent(args.url);
+      toolResult = {
+        url: args.url,
+        content,
+        length: content.length
+      };
+    } catch (err) {
+      toolResult = { error: `Gagal membaca URL: ${err.message}` };
+    }
+  } else if (name === "executePython") {
+    const runnerUrl = process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run";
+    try {
+      const resp = await fetch(runnerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: args.code }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!resp.ok) {
+        throw new Error(`Runner error (${resp.status}): ${await resp.text()}`);
+      }
+      const data = await resp.json();
+
+      if (data.image_base64) {
+        const tmpImg = path.join(os.tmpdir(), `chart_${Date.now()}.png`);
+        fs.writeFileSync(tmpImg, Buffer.from(data.image_base64, "base64"));
+        try {
+          await sendFile(chatId, tmpImg, "chart.png", "Hasil plot chart Python");
+        } finally {
+          try { fs.unlinkSync(tmpImg); } catch {}
+        }
+      }
+
+      toolResult = {
+        stdout: data.stdout || null,
+        stderr: data.stderr || null,
+        exitCode: data.exit_code
+      };
+    } catch (err) {
+      toolResult = { error: `Python runner error: ${err.message}` };
+    }
+  } else if (name === "saveSkill") {
+    const saved = store.saveSkill(args.name, args.description, args.promptTemplate);
+    toolResult = {
+      success: true,
+      name: saved.name,
+      description: saved.description,
+      message: `Skill '${saved.name}' berhasil disimpan dan dikristalisasi.`
+    };
+  } else if (name === "listSkills") {
+    const skills = store.getSkills();
+    formattedList = formatSkillList(skills);
+    toolResult = { count: skills.length, skills, formatted: formattedList };
+  } else if (name === "deleteSkill") {
+    const changes = store.deleteSkill(args.name);
+    toolResult = {
+      success: changes > 0,
+      name: args.name,
+      message: changes > 0 ? `Skill '${args.name}' berhasil dihapus.` : `Skill '${args.name}' tidak ditemukan.`
+    };
   } else {
     toolResult = { error: "Unknown function" };
   }
@@ -402,27 +617,26 @@ export async function executeTool(name, args, { store, chatId }) {
 
 export async function processChat(rotator, userText, { store, chatId, onToolCall, audio = null }) {
   const now = new Date();
-  const systemPrompt = `Kamu adalah John Mustard, asisten pribadi eksekutif berbasis WhatsApp.
-Waktu sekarang: ${now.toISOString()} (${now.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB).
+  let basePrompt = "";
+  const promptPath = path.resolve("config/system-prompt.md");
+  if (fs.existsSync(promptPath)) {
+    try {
+      basePrompt = fs.readFileSync(promptPath, "utf-8");
+    } catch {}
+  }
+  if (!basePrompt) {
+    basePrompt = `Kamu adalah John Mustard, asisten pribadi eksekutif berbasis WhatsApp.\nWaktu sekarang: {{CURRENT_TIME}}.`;
+  }
+  const timeStr = `${now.toISOString()} (${now.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB)`;
+  const systemPrompt = basePrompt.replace("{{CURRENT_TIME}}", timeStr);
 
-KARAKTER & GAYA BICARA:
-- Santai, cerdas, ceplas-ceplos, solutif, tanpa basa-basi klise ("sat-set"). Paham konteks, lelucon, dan meme internet.
-- DILARANG mengulang perkenalan diri (seperti "Halo! Saya John Mustard, asisten pribadi...") di setiap balasan! User sudah kenal kamu. Langsung jawab intinya.
-- Referensi nama "John Mustard": meme internet viral TikTok "My name is John Mustard" (audio dramatis ala imthatguy3131), ditambah teriakan ikonik "MUSTARD!" Kendrick Lamar (track tv off / album GNX), dan sesekali pelesetan John Marston. Kalau user ungkit atau ngetes ini, tanggapi dengan nyambung, kocak, dan paham referensinya.
-- Model AI: Jika ditanya, jawab jujur dan lugas bahwa kamu ditenagai model Google Gemini (Gemini 3.5 Flash).
-- Wajib perhatikan konteks pesan-pesan sebelumnya. Jika user bilang "salah", "bukan", mengoreksi, atau memberi petunjuk, sambung dan lanjutkan topik sebelumnya!
+  const customSkills = store?.getSkills ? store.getSkills() : [];
+  const skillsContext = customSkills.length > 0
+    ? `\n\nCUSTOM SKILLS TERDAFTAR (Gunakan instruksi ini jika user memanggil skill):\n` +
+      customSkills.map((s) => `- [${s.name}]: ${s.description} -> Instruksi: ${s.prompt_template}`).join("\n")
+    : "";
 
-INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
-- DILARANG membuat janji verbal palsu di teks tanpa eksekusi tool (seperti "nanti aku ingatkan", "sudah kuubah" padahal belum panggil tool). Wajib langsung panggil tool di giliran ini!
-- Jika user minta to-do list / daftar tugas, panggil listTodos dan kembalikan teks hasil fungsi listTodos secara persis tanpa mengubah layout pohon (tree branch) dan ikon badge.
-- Jika user minta koreksi/ubah to-do (misal "ganti A jadi B", "ubah jam jadi 09.30"), WAJIB panggil updateTodo!
-- Jika user minta hapus to-do, WAJIB panggil deleteTodo!
-- WAJIB SEARCH WEB (Kapan pun Perlu):
-  1) Fakta dunia nyata, berita, tokoh publik/pejabat, peristiwa, rilis teknologi/game/produk, atau kabar terkini.
-  2) Informasi dinamis yang bisa berubah seiring waktu (kurs, harga, regulasi, jadwal, skor, cuaca, statistik).
-  3) Topik apa pun yang kamu tidak 100% yakin atau memerlukan verifikasi data valid. Dilarang berhalusinasi dari ingatan lama jika menyangkut fakta.
-  4) Pertanyaan eksplisit yang meminta cek, googling, cari berita, atau riset internet.
-- Kamu bisa memisahkan pesan panjang dengan '---' di baris baru untuk mengirim bubble WhatsApp terpisah jika diperlukan.`;
+  const finalSystemPrompt = systemPrompt + skillsContext;
 
   const userParts = [];
   if (audio) {
@@ -471,6 +685,7 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
   const isAction = isActionIntent(userText);
   let toolConfig = isAction ? { functionCallingConfig: { mode: "ANY" } } : undefined;
 
+  const toolsCalled = [];
   let currentCandidate = null;
   let lastFormattedList = null;
   const MAX_STEPS = 5;
@@ -478,7 +693,7 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
 
   while (turns < MAX_STEPS) {
     const payload = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
+      systemInstruction: { parts: [{ text: finalSystemPrompt }] },
       contents,
       tools: TOOLS,
       ...(toolConfig ? { toolConfig } : {})
@@ -490,16 +705,35 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
 
     const fnCallPart = currentCandidate.content.parts?.find((p) => p.functionCall);
     if (!fnCallPart?.functionCall) {
+      // Anti-Hallucination & Mutation Guardrail Check
+      const candidateText = currentCandidate.content.parts?.find((p) => p.text)?.text || "";
+      if (detectUnexecutedMutationClaim(candidateText, toolsCalled)) {
+        if (turns < MAX_STEPS - 1) {
+          turns++;
+          contents.push(currentCandidate.content);
+          contents.push({
+            role: "user",
+            parts: [{
+              text: "SYSTEM INTEGRITY FAULT: Kamu mengklaim telah melakukan tindakan/mutasi data pada sistem, tapi BELUM memanggil functionCall ke tool terkait! Eksekusi functionCall ke tool sekarang."
+            }]
+          });
+          toolConfig = { functionCallingConfig: { mode: "ANY" } };
+          continue;
+        } else {
+          return "Mohon maaf, tindakan tersebut belum berhasil diproses di sistem database. Silakan ulangi perintah secara spesifik.";
+        }
+      }
       break;
     }
 
     turns++;
     const { name, args } = fnCallPart.functionCall;
+    toolsCalled.push(name);
     if (onToolCall) onToolCall(name);
 
     let resultObj = {};
     try {
-      resultObj = await executeTool(name, args, { store, chatId });
+      resultObj = await executeTool(name, args, { store, chatId, rotator });
     } catch (toolErr) {
       resultObj = { toolResult: { error: toolErr.message } };
     }
@@ -520,13 +754,25 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
 
   const directText = currentCandidate?.content?.parts?.find((p) => p.text)?.text;
   const text = directText?.trim();
+  let finalReply = "";
+
   if (text) {
     if (lastFormattedList && !text.includes("─") && !text.includes("[")) {
-      return `${text}\n\n${lastFormattedList}`;
+      finalReply = `${text}\n\n${lastFormattedList}`;
+    } else {
+      finalReply = text;
     }
-    return text;
+  } else {
+    finalReply = lastFormattedList || "Aksi berhasil diselesaikan.";
   }
-  return lastFormattedList || "Aksi berhasil diselesaikan.";
+
+  // Footnote Chips for transparent engine calls
+  if (toolsCalled.length > 0 && finalReply !== "[NO_REPLY]" && !finalReply.includes("↳")) {
+    const chips = [...new Set(toolsCalled)].map((t) => `↳ ${t}`).join("  ");
+    finalReply = `${finalReply}\n\n_${chips}_`;
+  }
+
+  return finalReply;
 }
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
@@ -535,11 +781,35 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(typeof executeTool, "function");
     assert.strictEqual(isActionIntent("tambahkan tugas"), true);
     assert.strictEqual(isActionIntent("ingatkan besok jam 7"), true);
+    assert.strictEqual(isActionIntent("hitung 25 * 40 pake python"), true);
     assert.strictEqual(isActionIntent("halo bro"), false);
     const decls = TOOLS[0].functionDeclarations.map((d) => d.name);
     assert.ok(decls.includes("addBacklog"));
     assert.ok(decls.includes("listBacklogs"));
     assert.ok(decls.includes("completeBacklog"));
+    assert.ok(decls.includes("executePython"));
+    assert.ok(decls.includes("saveSkill"));
+    assert.ok(decls.includes("listSkills"));
+    assert.ok(decls.includes("deleteSkill"));
+    assert.ok(decls.includes("readUrl"));
+    assert.strictEqual(isActionIntent("pelajari skill rekap tugas"), true);
+    assert.strictEqual(isActionIntent("baca url https://id.wikipedia.org"), true);
+
+    // SSRF Safety Tests
+    assert.strictEqual(isSafeUrl("http://localhost:3000/api"), false);
+    assert.strictEqual(isSafeUrl("http://127.0.0.1:8080"), false);
+    assert.strictEqual(isSafeUrl("http://192.168.1.1/router"), false);
+    assert.strictEqual(isSafeUrl("http://10.0.0.5/secret"), false);
+    assert.strictEqual(isSafeUrl("http://172.20.0.2/meta"), false);
+    assert.strictEqual(isSafeUrl("http://169.254.169.254/latest/meta-data"), false);
+    assert.strictEqual(isSafeUrl("https://en.wikipedia.org/wiki/Node.js"), true);
+
+    // Mutation Claim Detection Tests
+    assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", []), true);
+    assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
+    assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
+    assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
+
     console.log("LLM module self-test OK");
   });
 }
