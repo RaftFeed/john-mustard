@@ -152,6 +152,17 @@ const TOOLS = [
           },
           required: ["backlogId"]
         }
+      },
+      {
+        name: "searchWeb",
+        description: "Cari info terbaru, berita, riset, fakta, cuaca, atau informasi real-time di internet",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Kata kunci pencarian yang spesifik dan efektif" }
+          },
+          required: ["query"]
+        }
       }
     ]
   }
@@ -205,6 +216,7 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
 - Jika user minta to-do list / daftar tugas, panggil listTodos dan kembalikan teks hasil fungsi listTodos secara persis tanpa mengubah layout pohon (tree branch) dan ikon badge.
 - Jika user minta koreksi/ubah to-do (misal "ganti A jadi B", "ubah jam jadi 09.30"), WAJIB panggil updateTodo!
 - Jika user minta hapus to-do, WAJIB panggil deleteTodo!
+- Jika user bertanya info terkini, berita, cuaca, riset, pencarian Google, atau fakta yang butuh data internet/real-time, WAJIB panggil tool searchWeb!
 - Kamu bisa memisahkan pesan panjang dengan '---' di baris baru untuk mengirim bubble WhatsApp terpisah jika diperlukan.`;
 
   const userParts = [];
@@ -416,6 +428,31 @@ INVARIAN AKSI (ANTI-PROMISSORY GUARDRAIL):
           const changes = store.completeBacklog(args.backlogId, chatId);
           toolResult = { success: changes > 0, backlogId: args.backlogId };
         }
+      } else if (name === "searchWeb") {
+        const apiKey = process.env.TAVILY_API_KEY || "tvly-dummy-placeholder-key";
+        const searchRes = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: apiKey,
+            query: args.query,
+            max_results: 5,
+            search_depth: "basic"
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!searchRes.ok) {
+          throw new Error(`Tavily search gagal (${searchRes.status}): ${await searchRes.text()}`);
+        }
+        const searchData = await searchRes.json();
+        toolResult = {
+          query: args.query,
+          results: (searchData.results || []).map((r) => ({
+            title: r.title,
+            url: r.url,
+            content: r.content
+          }))
+        };
       } else {
         toolResult = { error: "Unknown function" };
       }

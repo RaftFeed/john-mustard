@@ -49,10 +49,15 @@ Halo! Saya John Mustard, asisten pribadi eksekutif berbasis WhatsApp yang siap b
 • Minta izin file orang: _"Minta akses file ID 5"_
 • Persetujuan akses: Balas _"SETUJU <ID>"_ atau _"TOLAK <ID>"_
 
-5️⃣ *Tanya Jawab & Brainstorming* 💡
+5️⃣ *Browsing & Web Search Real-Time* 🌐
+• Cari berita/info terkini: _"Cari berita terbaru soal teknologi AI minggu ini"_
+• Riset & cek fakta: _"Siapa rektor UI sekarang?"_, _"Berapa kurs dollar hari ini?"_
+• Riset topik/tugas kuliah langsung dari internet!
+
+6️⃣ *Tanya Jawab & Brainstorming* 💡
 • Tanya topik apa saja, cari ide/judul skripsi, draft pesan penting, dsb.
 
-6️⃣ *Ide & Feature Backlog (Khusus Owner)* 🛠️
+7️⃣ *Ide & Feature Backlog (Khusus Owner)* 🛠️
 • Simpan ide: _"#backlog Tambah fitur export database"_
 • Cek ide: _"#backlog"_ atau _"#backlog list"_
 • Tandai selesai: _"#backlog done 1"_
