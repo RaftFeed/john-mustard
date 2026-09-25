@@ -63,6 +63,10 @@ export function parseFastCommand(text = "") {
     return { type: "daily", value: val };
   }
 
+  if (/^#(dew|mustard)\b/i.test(trimmed)) {
+    return { type: "dew" };
+  }
+
   const backlogMatch = trimmed.match(/^#backlog(\s+(.*))?$/is);
   if (backlogMatch) {
     const sub = (backlogMatch[2] || "").trim();
@@ -99,6 +103,10 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
       const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
       const pendingTodos = store.getTodos(chatId, true).length;
       return `PONG!\n• Status: Online (Ready)\n• Uptime: ${uptime}\n• RAM: ${mem} MB\n• Tugas Pending: ${pendingTodos}`;
+    }
+
+    case "dew": {
+      return "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀";
     }
 
     case "listTodos": {
@@ -228,10 +236,14 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#42").id, 42);
       assert.strictEqual(parseFastCommand("#add Kerjakan PR #kuliah").raw, "Kerjakan PR #kuliah");
       assert.strictEqual(parseFastCommand("#daily 1").value, "1");
+      assert.strictEqual(parseFastCommand("#dew").type, "dew");
       assert.strictEqual(parseFastCommand("#help").type, "help");
       assert.strictEqual(parseFastCommand("halo john"), null);
 
       // Test execution
+      const dewRes = executeFastCommand(parseFastCommand("#dew"), { store, chatId });
+      assert.ok(dewRes.includes("DEW DEW DEW"));
+
       const pingRes = executeFastCommand(parseFastCommand("#ping"), { store, chatId });
       assert.ok(pingRes.includes("PONG!"));
 

@@ -303,7 +303,11 @@ export function isActionIntent(text = "") {
 
 export function isGreetingIntent(text = "") {
   if (!text) return false;
-  return /^(p|halo|hai|hey|hei|woi|oi|tes|test|assalamualaikum|pagi|siang|sore|malam|mustard|john)\b/i.test(text.trim());
+  const t = text.trim();
+  return (
+    /^(p|halo|hai|hey|hei|woi|oi|tes|test|assalamualaikum|pagi|siang|sore|malam|mustard|john)\b/i.test(t) ||
+    /(siapa\s+(kamu|lu)|nama\s+(kamu|lu)|kamu\s+siapa|lu\s+siapa|perkenal|kenalan|dew\s*dew|john\s+mustard)/i.test(t)
+  );
 }
 
 // ponytail: direct fetch with two-model fallback, no heavy sdk
