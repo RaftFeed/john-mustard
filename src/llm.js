@@ -1179,6 +1179,14 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   let toolResult = {};
   let formattedList = null;
 
+  const isGroup = String(chatId).endsWith("@g.us");
+  if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess")) {
+    return {
+      toolResult: { error: "Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik." },
+      formattedList: null
+    };
+  }
+
   if (name === "addTodo") {
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
     const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee);
@@ -1372,14 +1380,14 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }
   } else if (name === "addBacklog") {
     if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+      toolResult = { error: `Fitur backlog hanya khusus untuk nomor admin/owner (+${OWNER_PHONE}).` };
     } else {
       const id = store.addBacklog(chatId, args.idea);
       toolResult = { success: true, id, idea: args.idea, message: `Ide improvement #${id} disimpan ke backlog.` };
     }
   } else if (name === "listBacklogs") {
     if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+      toolResult = { error: `Fitur backlog hanya khusus untuk nomor admin/owner (+${OWNER_PHONE}).` };
     } else {
       const items = store.getBacklogs(chatId);
       formattedList = formatBacklogList(items);
@@ -1387,13 +1395,17 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }
   } else if (name === "completeBacklog") {
     if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: "Fitur backlog hanya khusus untuk nomor admin/owner (+6281234567890)." };
+      toolResult = { error: `Fitur backlog hanya khusus untuk nomor admin/owner (+${OWNER_PHONE}).` };
     } else {
       const changes = store.completeBacklog(args.backlogId, chatId);
       toolResult = { success: changes > 0, backlogId: args.backlogId };
     }
   } else if (name === "searchWeb") {
-    const apiKey = process.env.TAVILY_API_KEY || "tvly-dummy-placeholder-key";
+    const apiKey = process.env.TAVILY_API_KEY;
+    if (!apiKey) {
+      toolResult = { error: "Pencarian web gagal: TAVILY_API_KEY belum dikonfigurasi di environment." };
+      return { toolResult, formattedList };
+    }
     const searchRes = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1882,7 +1894,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "checkServerHealth") {
     if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: "Fitur checkServerHealth hanya khusus untuk nomor owner (+6281234567890)." };
+      toolResult = { error: `Fitur checkServerHealth hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
     } else {
       const report = formatServerHealth(store);
       formattedList = report;
@@ -1890,7 +1902,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }
   } else if (name === "checkMinecraftServer") {
     if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: "Fitur checkMinecraftServer hanya khusus untuk nomor owner (+6281234567890)." };
+      toolResult = { error: `Fitur checkMinecraftServer hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
     } else {
       const status = await getMinecraftStatus();
       const formatted = formatMinecraftStatus(status);
@@ -1957,7 +1969,12 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
 
-  const finalSystemPrompt = systemPrompt + coupleContext + skillsContext + greetingInstruction;
+  const isGroupChat = String(chatId).endsWith("@g.us");
+  const groupContext = isGroupChat
+    ? `\n\n[OBROLAN GRUP KELUARGA]: Kamu saat ini berada di dalam grup obrolan keluarga. Jawab secara ringkas, to the point, dan bersahabat. To-do list di obrolan ini adalah daftar tugas bersama keluarga. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
+    : "";
+
+  const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
 
   const userParts = [];
   if (audio) {
@@ -2270,8 +2287,12 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     executeTool("checkServerHealth", {}, { store: null, chatId: "628999999999" }).then((res) => {
       assert.ok(res.toolResult.error?.includes("khusus untuk nomor owner"));
     });
-    executeTool("checkServerHealth", {}, { store: null, chatId: "6281234567890" }).then((res) => {
+    executeTool("checkServerHealth", {}, { store: null, chatId: OWNER_PHONE }).then((res) => {
       assert.strictEqual(res.toolResult.success, true);
+    });
+    // Group Vault Isolation test
+    executeTool("searchVault", { query: "KTP" }, { store: null, chatId: "1203630234567890@g.us" }).then((res) => {
+      assert.ok(res.toolResult.error?.includes("dinonaktifkan di obrolan grup"));
     });
 
     console.log("LLM module self-test OK");

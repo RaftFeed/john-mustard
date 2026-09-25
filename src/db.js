@@ -970,16 +970,16 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(store.getFileRequest(reqId).status, "approved");
 
   // Backlog tests
-  const bId = store.addBacklog("6281234567890", "Buat fitur export CSV");
+  const bId = store.addBacklog(OWNER_PHONE, "Buat fitur export CSV");
   assert.ok(bId > 0);
-  const backlogs = store.getBacklogs("6281234567890");
+  const backlogs = store.getBacklogs(OWNER_PHONE);
   assert.strictEqual(backlogs.length, 1);
   assert.strictEqual(backlogs[0].idea, "Buat fitur export CSV");
   const formattedBacklogs = formatBacklogList(backlogs);
   assert.ok(formattedBacklogs.includes("Buat fitur export CSV"));
 
-  store.completeBacklog(bId, "6281234567890");
-  assert.strictEqual(store.getBacklogs("6281234567890").length, 0);
+  store.completeBacklog(bId, OWNER_PHONE);
+  assert.strictEqual(store.getBacklogs(OWNER_PHONE).length, 0);
 
   // Vector search & cosine similarity test
   assert.strictEqual(cosineSimilarity([1, 0], [1, 0]), 1);

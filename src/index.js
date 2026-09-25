@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./waha.js";
+import { sendText, sendFile, downloadMedia, startTyping, stopTyping, fetchBotNumber } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
@@ -127,7 +127,7 @@ async function handleIncomingMessage(msg) {
         filename: msg.filename,
         mimetype: msg.mimetype,
         caption: msg.body,
-        ownerId: msg.from
+        ownerId: msg.senderNumber || msg.from
       });
 
       const reply = `*[Document Vault]*\nFile tersimpan di server.\n\n• ID: ${saved.id}\n• Nama: ${saved.filename}\n• Kategori: #${saved.category}\n\n*Ringkasan:*\n${saved.summary}`;
@@ -195,7 +195,8 @@ async function handleIncomingMessage(msg) {
     }
 
     // Fast-path deterministic commands (bypass LLM fallback saat AI dunguk/down)
-    const fastCmd = parseFastCommand(trimmed);
+    const cmdText = trimmed.replace(/^@\S+\s*/, "").trim();
+    const fastCmd = parseFastCommand(cmdText) || parseFastCommand(trimmed);
     if (fastCmd) {
       console.log(`>> Fast command [${fastCmd.type}] from ${msg.from}`);
       const isOwnerUser = isOwner(msg.from, msg.senderNumber);
@@ -275,4 +276,7 @@ app.listen(PORT, () => {
   console.log(`[Vault] Document Vault siap di folder ./vault`);
   console.log(`[Skills] 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
   console.log(`[MCP] FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
+  fetchBotNumber().then((num) => {
+    if (num) console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num}`);
+  }).catch(() => {});
 });

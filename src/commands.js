@@ -1,6 +1,6 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatSkillList, formatPersonList, formatRemindersList } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList, formatPersonList, formatRemindersList, OWNER_PHONE } from "./db.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
@@ -349,12 +349,12 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false }
     }
 
     case "health": {
-      if (!isOwner) return "[!] Fitur #health khusus owner (+6281234567890).";
+      if (!isOwner) return `[!] Fitur #health khusus owner (+${OWNER_PHONE}).`;
       return formatServerHealth(store);
     }
 
     case "minecraft": {
-      if (!isOwner) return "[!] Fitur #mc khusus owner (+6281234567890).";
+      if (!isOwner) return `[!] Fitur #mc khusus owner (+${OWNER_PHONE}).`;
       const status = await getMinecraftStatus();
       return formatMinecraftStatus(status);
     }
