@@ -5,6 +5,7 @@ import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
 import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
+import { parseFastCommand, executeFastCommand } from "./commands.js";
 
 const PORT = process.env.PORT || 4000;
 const rawKeys = process.env.GEMINI_KEYS || "";
@@ -21,48 +22,27 @@ const store = new Storage(dbPath);
 // Jalankan runner pengingat (cek tiap 15 detik)
 startScheduler(store, { rotator });
 
-const HELP_TEXT = `📋 *[JOHN MUSTARD — EXECUTIVE ASSISTANT]* 🕶️
-Halo! Saya John Mustard, asisten pribadi eksekutif berbasis WhatsApp yang siap bantu kebutuhan harianmu ("sat-set").
+const HELP_TEXT = `*[JOHN MUSTARD]*
+Asisten WA sat-set. Kirim chat, VN, atau file langsung.
 
-✨ *KEMAMPUAN UTAMA:*
+*PERINTAH CEPAT (BYPASS AI):*
+• #ping — Cek status & latency bot
+• #todo / #tugas — List tugas pending
+• #today — Deadline hari ini
+• #week — Deadline 7 hari ke depan
+• #<id> — Cek detail tugas (misal: #1)
+• #done <id> — Tandai selesai (misal: #done 1)
+• #undo — Batalin selesai terakhir
+• #del <id> — Hapus tugas (misal: #del 1)
+• #add <tugas> — Tambah tugas manual (opsi dl:YYYY-MM-DD #tag)
+• #daily <1/0> — On/off rekap harian jam 07:00 WIB
+• #help — Tampilkan menu ini
 
-1️⃣ *To-Do List & Deadline Tracker* 📝
-• Tambah tugas: _"Tambahkan tugas LKP 6 Analgor deadline besok jam 23.59 #analgor"_
-• Lihat daftar: _"Lihat to do"_ / _"Cek tugas"_
-• Koreksi/Ubah: _"Ubah tugas pitching game sheet jadi pitching gameseed jam 09.30"_
-• Selesai: _"Tandai tugas ID 1 selesai"_
-• Hapus: _"Hapus tugas pitching gameseed"_
-
-2️⃣ *Pesan Suara (Voice Note / VN)* 🎙️
-• Bicara langsung via voice note WhatsApp! John Mustard bisa langsung dengerin dan eksekusi to-do, reminder, atau jawab pertanyaan.
-
-3️⃣ *Pengingat Otomatis (Reminder)* ⏰
-• _"Ingatkan aku ada seminar besok jam 10 pagi"_
-• Otomatis ping WhatsApp kamu saat waktunya tiba!
-
-4️⃣ *Document Vault & Hak Akses File* 📁
-• Kirim file dokumen, PDF, struk transfer, nota, atau KTP langsung ke sini.
-• Otomatis disimpan ke brankas pribadi dan dibuat ringkasan OCR.
-• Cari dokumen: _"Carikan struk transfer kemarin"_
-• Minta kirim file: _"Kirim file KTP aku"_
-• Bagikan file ke teman: _"Beri akses file ID 3 ke 08123456789"_
-• Minta izin file orang: _"Minta akses file ID 5"_
-• Persetujuan akses: Balas _"SETUJU <ID>"_ atau _"TOLAK <ID>"_
-
-5️⃣ *Browsing & Web Search Real-Time* 🌐
-• Cari berita/info terkini: _"Cari berita terbaru soal teknologi AI minggu ini"_
-• Riset & cek fakta: _"Siapa rektor UI sekarang?"_, _"Berapa kurs dollar hari ini?"_
-• Riset topik/tugas kuliah langsung dari internet!
-
-6️⃣ *Tanya Jawab & Brainstorming* 💡
-• Tanya topik apa saja, cari ide/judul skripsi, draft pesan penting, dsb.
-
-7️⃣ *Ide & Feature Backlog (Khusus Owner)* 🛠️
-• Simpan ide: _"#backlog Tambah fitur export database"_
-• Cek ide: _"#backlog"_ atau _"#backlog list"_
-• Tandai selesai: _"#backlog done 1"_
-
-Ketik *?help* kapan saja untuk membuka menu bantuan ini!`;
+*FITUR LAIN:*
+• VN: Dengerin & proses rekaman suara langsung.
+• File: Simpan dokumen ke vault + auto OCR.
+• Web: Riset info terkini & baca isi URL.
+• Python: Hitung presisi & generate chart.`;
 
 async function handleIncomingMessage(msg) {
   console.log(">> Processing message from:", msg.from, "text:", msg.body);
@@ -112,7 +92,7 @@ async function handleIncomingMessage(msg) {
         ownerId: msg.from
       });
 
-      const reply = `📁 *[Document Vault]*\nDokumen berhasil disimpan ke server!\n\n📌 *ID File:* ${saved.id}\n📄 *Nama:* ${saved.filename}\n🏷️ *Kategori:* #${saved.category}\n\n📝 *Ringkasan:*\n${saved.summary}`;
+      const reply = `*[Document Vault]*\nFile tersimpan di server.\n\n• ID: ${saved.id}\n• Nama: ${saved.filename}\n• Kategori: #${saved.category}\n\n*Ringkasan:*\n${saved.summary}`;
       await sendText(msg.from, reply);
       console.log(`>> Sent vault reply to ${msg.from}: ID ${saved.id}`);
 
@@ -136,17 +116,17 @@ async function handleIncomingMessage(msg) {
       const req = store.getFileRequest(reqId);
 
       if (!req) {
-        await sendText(msg.from, `⚠️ Permintaan akses ID #${reqId} tidak ditemukan.`);
+        await sendText(msg.from, `[!] Permintaan akses ID #${reqId} gak ketemu.`);
         return;
       }
 
       if (req.status !== "pending") {
-        await sendText(msg.from, `ℹ️ Permintaan akses ID #${reqId} sudah diproses sebelumnya (${req.status}).`);
+        await sendText(msg.from, `[i] Permintaan akses ID #${reqId} udah diproses (${req.status}).`);
         return;
       }
 
       if (normalizePhone(msg.from) !== normalizePhone(req.owner_id)) {
-        await sendText(msg.from, `⛔ Anda bukan pemilik file dari permintaan ini.`);
+        await sendText(msg.from, `[!] Lu bukan owner dari file ini.`);
         return;
       }
 
@@ -156,16 +136,16 @@ async function handleIncomingMessage(msg) {
         store.respondFileRequest(reqId, "approved");
         store.grantFileAccess(req.file_id, req.requester_id);
 
-        await sendText(msg.from, `✅ Akses file *${file?.filename || req.file_id}* berhasil disetujui untuk +${req.requester_id}.`);
+        await sendText(msg.from, `[OK] Akses file *${file?.filename || req.file_id}* disetujui buat +${req.requester_id}.`);
 
         if (file) {
-          await sendText(req.requester_id, `🎉 Permintaan akses file *${file.filename}* telah disetujui oleh pemilik! Dokumen dikirim:`);
+          await sendText(req.requester_id, `[OK] Permintaan akses file *${file.filename}* udah disetujui owner. Ini filenya:`);
           await sendFile(req.requester_id, file.filepath, file.filename, file.summary || file.filename);
         }
       } else {
         store.respondFileRequest(reqId, "rejected");
-        await sendText(msg.from, `❌ Permintaan akses file *${file?.filename || req.file_id}* telah ditolak.`);
-        await sendText(req.requester_id, `⚠️ Permintaan akses Anda untuk file *${file?.filename || req.file_id}* ditolak oleh pemilik.`);
+        await sendText(msg.from, `[x] Permintaan akses file *${file?.filename || req.file_id}* ditolak.`);
+        await sendText(req.requester_id, `[!] Permintaan akses lu buat file *${file?.filename || req.file_id}* ditolak owner.`);
       }
 
       logInteraction(store.db, {
@@ -176,58 +156,24 @@ async function handleIncomingMessage(msg) {
       return;
     }
 
-    // Fast-path command #backlog (khusus owner)
-    const backlogMatch = trimmed.match(/^#backlog(\s+(.*))?$/is);
-    if (backlogMatch) {
-      if (normalizePhone(msg.from) !== OWNER_PHONE) {
-        await sendText(msg.from, "⛔ Fitur #backlog hanya khusus untuk nomor owner.");
+    // Fast-path deterministic commands (bypass LLM fallback saat AI dunguk/down)
+    const fastCmd = parseFastCommand(trimmed);
+    if (fastCmd) {
+      console.log(`>> Fast command [${fastCmd.type}] from ${msg.from}`);
+      const isOwner = normalizePhone(msg.from) === OWNER_PHONE;
+      const cmdReply = executeFastCommand(fastCmd, { store, chatId: msg.from, isOwner });
+      if (cmdReply) {
+        await sendText(msg.from, cmdReply);
+        console.log(`>> Sent fast command reply to ${msg.from}: ${cmdReply.slice(0, 60).replace(/\n/g, " ")}`);
+        store.saveChatMessage(msg.from, "user", msg.body);
+        store.saveChatMessage(msg.from, "model", cmdReply);
+        logInteraction(store.db, {
+          prompt: trimmed,
+          tools: [`fastCommand:${fastCmd.type}`],
+          status: "success"
+        });
         return;
       }
-
-      const sub = (backlogMatch[2] || "").trim();
-      const doneMatch = sub.match(/^done\s+(\d+)$/i);
-
-      if (!sub || sub.toLowerCase() === "list") {
-        const list = store.getBacklogs(msg.from);
-        await sendText(msg.from, formatBacklogList(list));
-      } else if (doneMatch) {
-        const bId = parseInt(doneMatch[1], 10);
-        const changed = store.completeBacklog(bId, msg.from);
-        if (changed > 0) {
-          await sendText(msg.from, `✅ Ide improvement *[#${bId}]* berhasil ditandai selesai!`);
-        } else {
-          await sendText(msg.from, `⚠️ Ide improvement *[#${bId}]* tidak ditemukan.`);
-        }
-      } else {
-        const bId = store.addBacklog(msg.from, sub);
-        await sendText(msg.from, `💡 *[Backlog Improvement]*\nBerhasil dicatat!\n📌 *ID:* #${bId}\n📝 *Ide:* ${sub}`);
-      }
-
-      logInteraction(store.db, {
-        prompt: trimmed,
-        tools: ["backlog"],
-        status: "success"
-      });
-      return;
-    }
-
-    // Fast-path command ?help
-    if (
-      trimmed === "?help" ||
-      trimmed === "/help" ||
-      trimmed === "!help" ||
-      trimmed.toLowerCase() === "help" ||
-      trimmed.toLowerCase() === "? help"
-    ) {
-      console.log(`>> Direct ?help command from ${msg.from}`);
-      await sendText(msg.from, HELP_TEXT);
-      console.log(`>> Sent reply to ${msg.from}: [HELP_TEXT]`);
-      logInteraction(store.db, {
-        prompt: trimmed,
-        tools: ["helpMenu"],
-        status: "success"
-      });
-      return;
     }
 
     const reply = await processChat(rotator, msg.body, {
@@ -252,7 +198,7 @@ async function handleIncomingMessage(msg) {
     });
   } catch (err) {
     console.error("Gagal proses chat:", err.message);
-    await sendText(msg.from, "⚠️ Terjadi kendala saat memproses permintaan.");
+    await sendText(msg.from, "[!] Gagal memproses permintaan.");
 
     logInteraction(store.db, {
       prompt: msg.body || "[No Body]",

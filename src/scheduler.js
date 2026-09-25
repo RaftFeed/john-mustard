@@ -14,14 +14,14 @@ export async function tickScheduler(store, { rotator = null } = {}) {
           onToolCall: () => {}
         });
         if (reply && reply !== "[NO_REPLY]") {
-          await sendText(item.chat_id, `🤖 *[Jadwal Otomatis Bot]*\n${reply}`);
+          await sendText(item.chat_id, `*[Jadwal Otomatis]*\n${reply}`);
         }
       } catch (err) {
         console.error(`Scheduled action #${item.id} error:`, err.message);
-        await sendText(item.chat_id, `⚠️ Gagal menjalankan jadwal otomatis #${item.id}: ${err.message}`);
+        await sendText(item.chat_id, `[!] Gagal eksekusi jadwal #${item.id}: ${err.message}`);
       }
     } else {
-      await sendText(item.chat_id, `⏰ *PENGINGAT:*\n${item.message}`);
+      await sendText(item.chat_id, `*[PENGINGAT]*\n${item.message}`);
     }
 
     if (item.recurrence) {

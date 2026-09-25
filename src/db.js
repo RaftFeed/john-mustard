@@ -37,6 +37,7 @@ export function cosineSimilarity(vecA, vecB) {
 export class Storage {
   constructor(dbPath = "bot.db") {
     this.db = new DatabaseSync(dbPath);
+    this.lastDoneByChat = new Map();
     this.init();
   }
 
@@ -204,6 +205,47 @@ export class Storage {
     return this.db.prepare(sql).all(chatId);
   }
 
+  getTodoById(id, chatId) {
+    return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
+  }
+
+  getTodosDue(chatId, daysAhead = 0) {
+    const now = new Date();
+    const targetEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysAhead, 23, 59, 59, 999).getTime();
+    return this.db.prepare(`
+      SELECT id, task, deadline, tag, category, done
+      FROM todos
+      WHERE chat_id = ? AND done = 0 AND deadline IS NOT NULL AND deadline <= ?
+      ORDER BY deadline ASC, id ASC
+    `).all(chatId, targetEnd);
+  }
+
+  setDailyDigest(chatId, enable = true) {
+    if (!enable) {
+      return this.db.prepare(
+        "DELETE FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%'"
+      ).run(chatId).changes;
+    }
+    const exist = this.db.prepare(
+      "SELECT id FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND status = 'pending'"
+    ).get(chatId);
+    if (exist) return exist.id;
+
+    const now = new Date();
+    const next7am = new Date(now);
+    next7am.setHours(7, 0, 0, 0);
+    if (next7am.getTime() <= now.getTime()) {
+      next7am.setDate(next7am.getDate() + 1);
+    }
+    return this.addReminder(
+      chatId,
+      "Rekap to-do harian: kirimkan daftar tugas hari ini.",
+      next7am.getTime(),
+      "daily",
+      "scheduled_action"
+    );
+  }
+
 
   // --- Document Vault & Access Control ---
   saveVaultFile({ ownerId = "", filename, category = "documents", filepath, mimetype, filesize, summary = "", embedding = null }) {
@@ -316,9 +358,30 @@ export class Storage {
   }
 
   completeTodo(id, chatId) {
-    return this.db
+    const changes = this.db
       .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
       .run(id, chatId).changes;
+    if (changes > 0) {
+      this.lastDoneByChat.set(chatId, id);
+    }
+    return changes;
+  }
+
+  undoLastDone(chatId) {
+    let lastId = this.lastDoneByChat.get(chatId);
+    if (!lastId) {
+      const row = this.db
+        .prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1")
+        .get(chatId);
+      if (row) lastId = row.id;
+    }
+    if (!lastId) return null;
+    const changes = this.db
+      .prepare("UPDATE todos SET done = 0 WHERE id = ? AND chat_id = ?")
+      .run(lastId, chatId).changes;
+    if (changes === 0) return null;
+    this.lastDoneByChat.delete(chatId);
+    return this.getTodoById(lastId, chatId);
   }
 
   findTodo(chatId, query) {
@@ -623,6 +686,25 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   const nextRemind6h = store.advanceRecurringReminder(remId6h, "every_6h");
   assert.ok(nextRemind6h > Date.now());
   assert.ok(nextRemind6h - Date.now() <= 6 * 3600 * 1000);
+
+  // Undo & detail tests
+  const todoToUndo = store.addTodo("user1", "Tugas coba undo");
+  assert.ok(store.getTodoById(todoToUndo, "user1"));
+  store.completeTodo(todoToUndo, "user1");
+  const undone = store.undoLastDone("user1");
+  assert.strictEqual(undone.id, todoToUndo);
+  assert.strictEqual(undone.done, 0);
+
+  // Due tests
+  const dueTodayId = store.addTodo("user1", "Deadline hari ini", Date.now() + 3600 * 1000);
+  const dueTodayList = store.getTodosDue("user1", 0);
+  assert.ok(dueTodayList.some((t) => t.id === dueTodayId));
+
+  // Daily digest test
+  const dailyRemId = store.setDailyDigest("user1", true);
+  assert.ok(dailyRemId > 0);
+  const removedDaily = store.setDailyDigest("user1", false);
+  assert.ok(removedDaily >= 1);
 
   console.log("DB & Formatter self-test OK");
 }
