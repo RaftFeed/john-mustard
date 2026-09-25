@@ -1,0 +1,45 @@
+services:
+  waha:
+    image: devlikeapro/waha:noweb-arm
+    container_name: john-mustard-waha
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD}
+      - WHATSAPP_SWAGGER_USERNAME=${WHATSAPP_SWAGGER_USERNAME:-admin}
+      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD}
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - WAHA_BASE_URL=http://waha:3000
+      - WHATSAPP_HOOK_URL=http://bot:4500/webhook
+      - WHATSAPP_HOOK_EVENTS=message
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
+    volumes:
+      - ./waha_sessions:/app/.sessions
+    networks:
+      - bot-net
+
+  bot:
+    build: .
+    container_name: john-mustard-bot
+    restart: unless-stopped
+    depends_on:
+      - waha
+    environment:
+      - PORT=4500
+      - WAHA_URL=http://waha:3000
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - DB_PATH=/app/data/bot.db
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./data:/app/data
+      - ./vault:/app/vault
+      - ./waha_sessions:/app/waha_sessions:ro
+    networks:
+      - bot-net
+
+networks:
+  bot-net:
+    driver: bridge
