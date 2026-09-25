@@ -329,7 +329,7 @@ async function callGemini(rotator, model, payload) {
   });
 }
 
-async function generateContent(rotator, payload) {
+export async function generateContent(rotator, payload) {
   try {
     return await callGemini(rotator, DEFAULT_MODEL, payload);
   } catch (err) {
@@ -624,7 +624,7 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
   return { toolResult, formattedList };
 }
 
-export async function processChat(rotator, userText, { store, chatId, onToolCall, audio = null }) {
+export async function processChat(rotator, userText, { store, chatId, onToolCall, onTrajectory = null, audio = null }) {
   const now = new Date();
   let basePrompt = "";
   const promptPath = path.resolve("config/system-prompt.md");
@@ -700,6 +700,7 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
   let toolConfig = isAction ? { functionCallingConfig: { mode: "ANY" } } : undefined;
 
   const toolsCalled = [];
+  const executedTrajectory = [];
   let currentCandidate = null;
   let lastFormattedList = null;
   const MAX_STEPS = 5;
@@ -752,6 +753,12 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
       resultObj = { toolResult: { error: toolErr.message } };
     }
 
+    executedTrajectory.push({
+      name,
+      args,
+      result: resultObj.toolResult
+    });
+
     if (resultObj.formattedList) {
       lastFormattedList = resultObj.formattedList;
     }
@@ -793,6 +800,12 @@ export async function processChat(rotator, userText, { store, chatId, onToolCall
     } else if (!finalReply.includes("🤠") && !finalReply.includes("🥀")) {
       finalReply = finalReply.replace(/MY NAME IS JOHN MUSTARDDD DEW DEW DEW/i, "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀");
     }
+  }
+
+  if (onTrajectory && executedTrajectory.length > 0) {
+    try {
+      onTrajectory(executedTrajectory);
+    } catch {}
   }
 
   return finalReply;

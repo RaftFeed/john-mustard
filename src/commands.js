@@ -1,4 +1,4 @@
-import { formatTodoList, formatBacklogList } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList } from "./db.js";
 
 function formatUptime(seconds) {
   const d = Math.floor(seconds / (3600 * 24));
@@ -65,6 +65,10 @@ export function parseFastCommand(text = "") {
 
   if (/^#(dew|mustard)\b/i.test(trimmed)) {
     return { type: "dew" };
+  }
+
+  if (/^#skills?\b/i.test(trimmed)) {
+    return { type: "skills" };
   }
 
   const backlogMatch = trimmed.match(/^#backlog(\s+(.*))?$/is);
@@ -189,6 +193,11 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
       return "*[Daily Reminder]*\nFormat: `#daily 1` (aktifkan jam 07:00 WIB) atau `#daily 0` (matikan).";
     }
 
+    case "skills": {
+      const list = store.getSkills();
+      return formatSkillList(list);
+    }
+
     case "backlogList": {
       if (!isOwner) return "[!] Fitur #backlog khusus owner.";
       const list = store.getBacklogs(chatId);
@@ -209,7 +218,7 @@ export function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
     }
 
     case "help": {
-      return `*[JOHN MUSTARD — FAST COMMANDS]*\n(Bypass AI, instant & anti-lemot)\n\n• #ping — Cek status & latency bot\n• #todo / #tugas — Lihat to-do list pending\n• #today — Tugas deadline hari ini\n• #week — Tugas 7 hari ke depan\n• #<id> — Cek detail tugas (contoh: #1)\n• #done <id> — Tandai selesai (contoh: #done 1)\n• #undo — Batalkan selesai terakhir\n• #del <id> — Hapus tugas (contoh: #del 1)\n• #add <tugas> — Tambah tugas tanpa AI (opsi dl:YYYY-MM-DD #tag)\n• #daily <1/0> — On/off reminder harian jam 07:00 WIB\n• #help — Tampilkan menu ini\n\nUntuk chat bebas atau riset, langsung ketik pesan atau kirim VN kaya biasa.`;
+      return `*[JOHN MUSTARD — FAST COMMANDS]*\n(Bypass AI, instant & anti-lemot)\n\n• #ping — Cek status & latency bot\n• #todo / #tugas — Lihat to-do list pending\n• #today — Tugas deadline hari ini\n• #week — Tugas 7 hari ke depan\n• #<id> — Cek detail tugas (contoh: #1)\n• #done <id> — Tandai selesai (contoh: #done 1)\n• #undo — Batalkan selesai terakhir\n• #del <id> — Hapus tugas (contoh: #del 1)\n• #add <tugas> — Tambah tugas tanpa AI (opsi dl:YYYY-MM-DD #tag)\n• #daily <1/0> — On/off reminder harian jam 07:00 WIB\n• #skills — Lihat daftar skill & macro otomatis\n• #help — Tampilkan menu ini\n\nUntuk chat bebas atau riset, langsung ketik pesan atau kirim VN kaya biasa.`;
     }
 
     default:
@@ -237,12 +246,16 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#add Kerjakan PR #kuliah").raw, "Kerjakan PR #kuliah");
       assert.strictEqual(parseFastCommand("#daily 1").value, "1");
       assert.strictEqual(parseFastCommand("#dew").type, "dew");
+      assert.strictEqual(parseFastCommand("#skills").type, "skills");
       assert.strictEqual(parseFastCommand("#help").type, "help");
       assert.strictEqual(parseFastCommand("halo john"), null);
 
       // Test execution
       const dewRes = executeFastCommand(parseFastCommand("#dew"), { store, chatId });
       assert.ok(dewRes.includes("DEW DEW DEW"));
+
+      const skillsRes = executeFastCommand(parseFastCommand("#skills"), { store, chatId });
+      assert.ok(skillsRes.includes("Custom Skills"));
 
       const pingRes = executeFastCommand(parseFastCommand("#ping"), { store, chatId });
       assert.ok(pingRes.includes("PONG!"));

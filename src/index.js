@@ -6,6 +6,7 @@ import { processChat } from "./llm.js";
 import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
+import { autoCrystallizeTurn } from "./crystallize.js";
 
 const PORT = process.env.PORT || 4000;
 const rawKeys = process.env.GEMINI_KEYS || "";
@@ -62,16 +63,30 @@ async function handleIncomingMessage(msg) {
       if (msg.mimetype && msg.mimetype.startsWith("audio/")) {
         console.log(`>> Memproses audio: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
+        const audioTrajectory = [];
         const reply = await processChat(rotator, msg.body, {
           store,
           chatId: msg.from,
           onToolCall: (name) => toolsCalled.push(name),
+          onTrajectory: (traj) => audioTrajectory.push(...traj),
           audio: { buffer, mimetype: msg.mimetype, filename: msg.filename }
         });
         await sendText(msg.from, reply);
         console.log(`>> Sent audio reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
         store.saveChatMessage(msg.from, "user", msg.body ? `[Voice Note] ${msg.body}` : "[Pesan Suara VN]");
         store.saveChatMessage(msg.from, "model", reply);
+
+        // Voyager pattern: autonomous background crystallization (zero added latency)
+        queueMicrotask(() => {
+          autoCrystallizeTurn({
+            senderName: msg.from,
+            userMessage: msg.body ? `[Voice Note] ${msg.body}` : "[Voice Note]",
+            executedTools: audioTrajectory,
+            finalReply: reply,
+            store,
+            rotator
+          }).catch((err) => console.warn("[Crystallize] Background reflection error:", err.message));
+        });
         logInteraction(store.db, {
           prompt: `[AUDIO: ${msg.filename}] ${msg.body || ""}`.trim(),
           tools: toolsCalled,
@@ -176,10 +191,12 @@ async function handleIncomingMessage(msg) {
       }
     }
 
+    const textTrajectory = [];
     const reply = await processChat(rotator, msg.body, {
       store,
       chatId: msg.from,
-      onToolCall: (name) => toolsCalled.push(name)
+      onToolCall: (name) => toolsCalled.push(name),
+      onTrajectory: (traj) => textTrajectory.push(...traj)
     });
 
     if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {
@@ -187,6 +204,18 @@ async function handleIncomingMessage(msg) {
       console.log(`>> Sent reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
       store.saveChatMessage(msg.from, "user", msg.body);
       store.saveChatMessage(msg.from, "model", reply);
+
+      // Voyager pattern: autonomous background crystallization (zero added latency)
+      queueMicrotask(() => {
+        autoCrystallizeTurn({
+          senderName: msg.from,
+          userMessage: msg.body || "",
+          executedTools: textTrajectory,
+          finalReply: reply,
+          store,
+          rotator
+        }).catch((err) => console.warn("[Crystallize] Background reflection error:", err.message));
+      });
     } else {
       console.log(`>> Suppressed reply [NO_REPLY] for ${msg.from}`);
     }

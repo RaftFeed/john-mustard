@@ -80,6 +80,7 @@ john-mustard/
 │   ├── index.js                    # Bootstrap runtime & orchestrator entry point
 │   ├── server.js                   # HTTP Webhook Server & FastMCP SSE Controller
 │   ├── llm.js                      # Agent Core: ReAct loop, Multi-Key Cascade, Guardrails, SSRF Reader
+│   ├── crystallize.js              # Autonomous Skill Crystallizer & Background Reflection Engine (Voyager Pattern)
 │   ├── db.js                       # Storage Engine: SQLite WAL, Vector Index, Task Repo, Vault ACL
 │   ├── scheduler.js                # Proactive Engine: Recurrence calculation & Autonomous Action Runner
 │   ├── queue.js                    # Inbound FIFO queue with burst debouncer (1.0s window)
@@ -158,6 +159,24 @@ Sesuai filosofi **Deep Modules** (*a lot of behaviour behind a small interface*)
   1. *Burst Coalescence*: Pesan bertubi-tubi dalam jeda $< 1.0$ detik digabungkan menjadi satu pesan utuh sebelum masuk ke LLM ReAct loop.
   2. *Multi-Bubble Splitting*: Simbol `---` di baris tersendiri memisahkan jawaban menjadi bubble pesan WhatsApp berbeda dengan typing delay natural (600ms).
   3. *Non-Intervention Protocol*: Pesan yang diawali atau bernilai `[NO_REPLY]` otomatis dibatalkan pengirimannya (menjaga etika bot di grup WhatsApp).
+
+### 3.4. Procedural Memory & Autonomous Crystallization (`src/crystallize.js`)
+* **Seam (Interface)**:
+  ```typescript
+  shouldAttemptCrystallization(executedTools: any[], userMessage: string): boolean;
+  autoCrystallizeTurn(options: {
+    senderName: string,
+    userMessage: string,
+    executedTools: any[],
+    finalReply: string,
+    store: Storage,
+    rotator: KeyRotator
+  }): Promise<Skill | null>;
+  ```
+* **Invariants**:
+  1. *Zero-Latency Fire-and-Forget*: Refleksi background dijalankan via `queueMicrotask` setelah pesan WhatsApp terkirim ke pengguna, menjamin latensi respon user tetap 0ms tambahan.
+  2. *Fast Heuristic Pre-Filter*: Turn casual atau trivial dibuang sebelum LLM critic dipanggil; hanya workflow $\ge 2$ tool non-trivial, komputasi Python kompleks (> 40 karakter), atau kalimat pengajaran eksplisit yang dievaluasi.
+  3. *Autonomous Playbook Synthesis*: Skill yang lolos kurasi otomatis disimpan dengan prefix `auto_` ke tabel SQLite `skills` dan diinjeksikan dinamis ke system prompt giliran mendatang.
 
 ---
 
