@@ -118,6 +118,14 @@ export class Storage {
         prompt_template TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        content TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(chat_id, key)
+      );
     `);
 
     try { this.db.exec("ALTER TABLE todos ADD COLUMN deadline INTEGER"); } catch {}
@@ -446,13 +454,25 @@ export class Storage {
   }
 
   // --- Skills / Auto-Crystallization ---
-  saveSkill(name, description, promptTemplate) {
+  setSkillListener(fn) {
+    this.onSkillChange = fn;
+  }
+
+  saveSkill(name, description, promptTemplate, opts = {}) {
     const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
     const stmt = this.db.prepare(
       "INSERT INTO skills (name, description, prompt_template, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET description = excluded.description, prompt_template = excluded.prompt_template"
     );
     stmt.run(cleanName, (description || "").trim(), (promptTemplate || "").trim(), Date.now());
-    return this.getSkill(cleanName);
+    const saved = this.getSkill(cleanName);
+    if (!opts.skipDisk && this.onSkillChange) {
+      try {
+        this.onSkillChange({ type: "save", skill: saved });
+      } catch (e) {
+        console.warn("[Storage] onSkillChange error:", e.message);
+      }
+    }
+    return saved;
   }
 
   getSkills() {
@@ -464,10 +484,58 @@ export class Storage {
     return this.db.prepare("SELECT * FROM skills WHERE name = ?").get(cleanName);
   }
 
-  deleteSkill(name) {
+  deleteSkill(name, opts = {}) {
     const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-    return this.db.prepare("DELETE FROM skills WHERE name = ?").run(cleanName).changes;
+    const changes = this.db.prepare("DELETE FROM skills WHERE name = ?").run(cleanName).changes;
+    if (changes > 0 && !opts.skipDisk && this.onSkillChange) {
+      try {
+        this.onSkillChange({ type: "delete", name: cleanName });
+      } catch (e) {
+        console.warn("[Storage] onSkillChange error:", e.message);
+      }
+    }
+    return changes;
   }
+
+  // --- Personal Notes & Key-Value Memory ---
+  saveNote(chatId, key, content) {
+    const cleanKey = String(key || "").trim().toLowerCase();
+    const cleanContent = String(content || "").trim();
+    const stmt = this.db.prepare(`
+      INSERT INTO notes (chat_id, key, content, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(chat_id, key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+    `);
+    stmt.run(chatId, cleanKey, cleanContent, Date.now());
+    return this.getNote(chatId, cleanKey);
+  }
+
+  getNote(chatId, key) {
+    const cleanKey = String(key || "").trim().toLowerCase();
+    const row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND key = ?").get(chatId, cleanKey);
+    if (row) return row;
+    return this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND (key LIKE ? OR content LIKE ?) LIMIT 1").get(chatId, `%${cleanKey}%`, `%${cleanKey}%`) || null;
+  }
+
+  listNotes(chatId) {
+    return this.db.prepare("SELECT key, content, updated_at FROM notes WHERE chat_id = ? ORDER BY key ASC").all(chatId);
+  }
+
+  deleteNote(chatId, key) {
+    const cleanKey = String(key || "").trim().toLowerCase();
+    return this.db.prepare("DELETE FROM notes WHERE chat_id = ? AND (key = ? OR key LIKE ?)").run(chatId, cleanKey, `%${cleanKey}%`).changes;
+  }
+}
+
+export function formatNotesList(notes = []) {
+  if (!notes || notes.length === 0) {
+    return "*[Catatan Pribadi]*\nBelum ada catatan yang tersimpan.";
+  }
+  const lines = ["*[Catatan Pribadi & Memori]*\n"];
+  notes.forEach((n) => {
+    lines.push(`• *${n.key}*:\n  ${n.content}`);
+  });
+  return lines.join("\n\n");
 }
 
 export function formatSkillList(skills = []) {
@@ -668,14 +736,24 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(vecResults[0].id, fileVec);
 
   // Auto-crystallization / Skills tests
+  const skillEvents = [];
+  store.setSkillListener((evt) => skillEvents.push(evt));
+
   const sk = store.saveSkill("rekap_malam", "Rangkum to-do list harian", "Ambil listTodos lalu buatkan ringkasan");
   assert.strictEqual(sk.name, "rekap_malam");
   assert.strictEqual(store.getSkills().length, 1);
   assert.strictEqual(store.getSkill("rekap_malam").description, "Rangkum to-do list harian");
+  assert.strictEqual(skillEvents.length, 1);
+  assert.strictEqual(skillEvents[0].type, "save");
+  assert.strictEqual(skillEvents[0].skill.name, "rekap_malam");
+
   const skFormatted = formatSkillList(store.getSkills());
   assert.ok(skFormatted.includes("rekap_malam"));
   assert.strictEqual(store.deleteSkill("rekap_malam"), 1);
   assert.strictEqual(store.getSkills().length, 0);
+  assert.strictEqual(skillEvents.length, 2);
+  assert.strictEqual(skillEvents[1].type, "delete");
+  assert.strictEqual(skillEvents[1].name, "rekap_malam");
 
   // Category & routine tests
   assert.strictEqual(detectTaskCategory("Absen kelas matematika"), "routine");
@@ -718,6 +796,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(dailyRemId > 0);
   const removedDaily = store.setDailyDigest("user1", false);
   assert.ok(removedDaily >= 1);
+
+  // Personal notes / memory test
+  const savedNote = store.saveNote("user1", "rekening_bca", "BCA 1234567890 a.n. John");
+  assert.strictEqual(savedNote.key, "rekening_bca");
+  assert.strictEqual(savedNote.content, "BCA 1234567890 a.n. John");
+  const fetchedNote = store.getNote("user1", "bca");
+  assert.strictEqual(fetchedNote.content, "BCA 1234567890 a.n. John");
+  const notesList = store.listNotes("user1");
+  assert.strictEqual(notesList.length, 1);
+  const formattedNotes = formatNotesList(notesList);
+  assert.ok(formattedNotes.includes("rekening_bca"));
+  assert.strictEqual(store.deleteNote("user1", "rekening_bca"), 1);
+  assert.strictEqual(store.listNotes("user1").length, 0);
 
   console.log("DB & Formatter self-test OK");
 }

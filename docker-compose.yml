@@ -41,6 +41,7 @@ services:
       - ./.env:/app/.env:ro
       - ./data:/app/data
       - ./vault:/app/vault
+      - ./skills:/app/skills
       - ./waha_sessions:/app/waha_sessions:ro
     networks:
       - bot-net

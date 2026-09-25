@@ -85,7 +85,7 @@ export async function sendText(chatId, text, replyTo = null) {
   return lastRes;
 }
 
-export async function sendFile(chatId, filepath, filename, caption = "") {
+export async function sendFile(chatId, filepath, filename, caption = "", asDocument = false) {
   const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
   const buffer = fs.readFileSync(filepath);
   const base64Data = buffer.toString("base64");
@@ -95,6 +95,11 @@ export async function sendFile(chatId, filepath, filename, caption = "") {
   if (ext === "pdf") mimetype = "application/pdf";
   else if (ext === "jpg" || ext === "jpeg") mimetype = "image/jpeg";
   else if (ext === "png") mimetype = "image/png";
+  else if (ext === "webp") mimetype = "image/webp";
+
+  // Native media routing: images default to /api/sendImage unless asDocument is true
+  const isImage = mimetype.startsWith("image/");
+  const endpoint = (!asDocument && isImage) ? "/api/sendImage" : "/api/sendFile";
 
   const payload = {
     chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
@@ -108,17 +113,31 @@ export async function sendFile(chatId, filepath, filename, caption = "") {
   };
 
   const apiKey = process.env.WAHA_API_KEY || "";
-  const res = await fetch(`${wahaUrl}/api/sendFile`, {
+  const res = await fetch(`${wahaUrl}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
     body: JSON.stringify(payload)
   });
 
   if (!res.ok) {
+    if (endpoint === "/api/sendImage") {
+      try {
+        const fallbackRes = await fetch(`${wahaUrl}/api/sendFile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
+          body: JSON.stringify(payload)
+        });
+        if (fallbackRes.ok) return fallbackRes.json();
+      } catch {}
+    }
     const errText = await res.text();
-    throw new Error(`WAHA sendFile failed (${res.status}): ${errText}`);
+    throw new Error(`WAHA ${endpoint} failed (${res.status}): ${errText}`);
   }
   return res.json();
+}
+
+export async function sendImage(chatId, filepath, filename, caption = "") {
+  return sendFile(chatId, filepath, filename, caption, false);
 }
 
 export async function downloadMedia(mediaUrl) {
@@ -208,5 +227,6 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.strictEqual(parseIncoming(samplePayload, "628999999999"), null);
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");
+  assert.strictEqual(typeof sendImage, "function");
   console.log("WAHA parser self-test OK");
 }

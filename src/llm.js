@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatTodoList, formatBacklogList, formatSkillList, normalizePhone, OWNER_PHONE } from "./db.js";
+import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendFile, sendText } from "./waha.js";
 
 export const TOOLS = [
@@ -97,12 +97,13 @@ export const TOOLS = [
       },
       {
         name: "sendVaultFile",
-        description: "Kirim file dokumen dari Vault langsung ke chat WhatsApp pengguna",
+        description: "Kirim file dokumen atau foto dari Vault langsung ke chat WhatsApp pengguna",
         parameters: {
           type: "OBJECT",
           properties: {
             fileId: { type: "NUMBER", description: "ID file di Document Vault" },
-            caption: { type: "STRING", description: "Keterangan/caption file" }
+            caption: { type: "STRING", description: "Keterangan/caption file" },
+            asDocument: { type: "BOOLEAN", description: "Set true jika ingin dikirim sebagai file dokumen utuh tanpa kompresi gambar (default false untuk gambar)" }
           },
           required: ["fileId"]
         }
@@ -225,6 +226,48 @@ export const TOOLS = [
           },
           required: ["name"]
         }
+      },
+      {
+        name: "saveNote",
+        description: "Simpan catatan penting, memori personal, atau info permanen pengguna (contoh: nomor rekening, NIM, alamat, preferensi)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Topik atau kata kunci catatan (contoh: rekening_bca, nim, alamat_kost)" },
+            content: { type: "STRING", description: "Isi catatan lengkap" }
+          },
+          required: ["key", "content"]
+        }
+      },
+      {
+        name: "getNote",
+        description: "Cari atau ambil catatan/memori personal pengguna berdasarkan kata kunci atau query",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Kata kunci atau topik catatan yang ingin dicari/diambil" }
+          },
+          required: ["key"]
+        }
+      },
+      {
+        name: "listNotes",
+        description: "Tampilkan seluruh daftar catatan/memori personal pengguna yang tersimpan",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
+        name: "deleteNote",
+        description: "Hapus catatan/memori personal pengguna berdasarkan kata kunci",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Kata kunci catatan yang mau dihapus" }
+          },
+          required: ["key"]
+        }
       }
     ]
   }
@@ -285,7 +328,7 @@ export async function fetchUrlContent(rawUrl) {
 const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "updateTodo", "deleteTodo",
   "addReminder", "grantFileAccess", "addBacklog", "completeBacklog",
-  "saveSkill", "deleteSkill"
+  "saveSkill", "deleteSkill", "saveNote", "deleteNote"
 ]);
 
 export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
@@ -298,7 +341,7 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
 
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -465,7 +508,7 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
         message: `Anda tidak memiliki izin mengakses file ini (Pemilik: +${normalizePhone(file.owner_id)}). Minta izin dengan perintah: 'Minta akses file ID ${file.id}'.`
       };
     } else {
-      await sendFile(chatId, file.filepath, file.filename, args.caption || file.summary);
+      await sendFile(chatId, file.filepath, file.filename, args.caption || file.summary, Boolean(args.asDocument));
       toolResult = { success: true, filename: file.filename };
     }
   } else if (name === "requestFileAccess") {
@@ -616,6 +659,37 @@ export async function executeTool(name, args, { store, chatId, rotator = null })
       success: changes > 0,
       name: args.name,
       message: changes > 0 ? `Skill '${args.name}' berhasil dihapus.` : `Skill '${args.name}' tidak ditemukan.`
+    };
+  } else if (name === "saveNote") {
+    const saved = store.saveNote(chatId, args.key, args.content);
+    toolResult = {
+      success: true,
+      key: saved.key,
+      content: saved.content,
+      message: `Catatan '${saved.key}' berhasil disimpan.`
+    };
+  } else if (name === "getNote") {
+    const note = store.getNote(chatId, args.key);
+    if (!note) {
+      toolResult = { error: `Catatan dengan kata kunci '${args.key}' tidak ditemukan.` };
+    } else {
+      toolResult = {
+        success: true,
+        key: note.key,
+        content: note.content,
+        updatedAt: note.updated_at
+      };
+    }
+  } else if (name === "listNotes") {
+    const notes = store.listNotes(chatId);
+    formattedList = formatNotesList(notes);
+    toolResult = { count: notes.length, notes, formatted: formattedList };
+  } else if (name === "deleteNote") {
+    const changes = store.deleteNote(chatId, args.key);
+    toolResult = {
+      success: changes > 0,
+      key: args.key,
+      message: changes > 0 ? `Catatan '${args.key}' berhasil dihapus.` : `Catatan '${args.key}' tidak ditemukan.`
     };
   } else {
     toolResult = { error: "Unknown function" };
@@ -830,9 +904,15 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("saveSkill"));
     assert.ok(decls.includes("listSkills"));
     assert.ok(decls.includes("deleteSkill"));
+    assert.ok(decls.includes("saveNote"));
+    assert.ok(decls.includes("getNote"));
+    assert.ok(decls.includes("listNotes"));
+    assert.ok(decls.includes("deleteNote"));
     assert.ok(decls.includes("readUrl"));
     assert.strictEqual(isActionIntent("pelajari skill rekap tugas"), true);
     assert.strictEqual(isActionIntent("baca url https://id.wikipedia.org"), true);
+    assert.strictEqual(isActionIntent("catat nomor rekening bca 12345"), true);
+    assert.strictEqual(isActionIntent("lihat catatan pribadi"), true);
 
     // SSRF Safety Tests
     assert.strictEqual(isSafeUrl("http://localhost:3000/api"), false);

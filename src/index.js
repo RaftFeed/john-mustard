@@ -7,6 +7,7 @@ import { sendText, sendFile, downloadMedia, startTyping, stopTyping } from "./wa
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
+import { initSkillsWatcher } from "./skills_sync.js";
 
 const PORT = process.env.PORT || 4000;
 const rawKeys = process.env.GEMINI_KEYS || "";
@@ -22,6 +23,10 @@ const store = new Storage(dbPath);
 
 // Jalankan runner pengingat (cek tiap 15 detik)
 startScheduler(store, { rotator });
+
+// 2-Way Skills Sync Engine (Disk Markdown <-> SQLite DB)
+const SKILLS_DIR = process.env.SKILLS_DIR || "skills";
+initSkillsWatcher(store, SKILLS_DIR);
 
 const HELP_TEXT = `*[JOHN MUSTARD]*
 Asisten WA sat-set. Kirim chat, VN, atau file langsung.
@@ -40,8 +45,9 @@ Asisten WA sat-set. Kirim chat, VN, atau file langsung.
 • #help — Tampilkan menu ini
 
 *FITUR LAIN:*
+• Catatan: Simpan & tanya memori penting (nomor rekening, NIM, alamat).
+• File: Simpan dokumen ke vault + auto OCR & kirim preview foto langsung.
 • VN: Dengerin & proses rekaman suara langsung.
-• File: Simpan dokumen ke vault + auto OCR.
 • Web: Riset info terkini & baca isi URL.
 • Python: Hitung presisi & generate chart.`;
 
@@ -248,5 +254,6 @@ app.listen(PORT, () => {
   console.log(`🔑 Terpasang ${keys.length} Gemini API Key`);
   console.log(`📱 Whitelist nomor WA: ${process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "SEMUA"}`);
   console.log(`📦 Document Vault storage siap di folder ./vault`);
+  console.log(`🧠 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
   console.log(`⚡ FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
 });
