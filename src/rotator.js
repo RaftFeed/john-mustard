@@ -12,6 +12,9 @@ export class KeyRotator {
 
   getKey() {
     const now = Date.now();
+    let bestKey = null;
+    let minUntil = Infinity;
+
     for (let i = 0; i < this.keys.length; i++) {
       const idx = (this.index + i) % this.keys.length;
       const key = this.keys[idx];
@@ -20,7 +23,17 @@ export class KeyRotator {
         this.index = (idx + 1) % this.keys.length;
         return key;
       }
+      if (until < minUntil) {
+        minUntil = until;
+        bestKey = key;
+      }
     }
+
+    // Jika semua key sedang cooldown, pakai key yang masa cooldown-nya paling cepat selesai
+    if (bestKey) {
+      return bestKey;
+    }
+
     throw new Error("Semua API key sedang cooldown atau tidak dapat diakses.");
   }
 
@@ -30,18 +43,25 @@ export class KeyRotator {
 
   async execute(requestFn) {
     let attempts = 0;
-    while (attempts < this.keys.length) {
+    const maxAttempts = this.keys.length;
+    let lastErr = null;
+
+    while (attempts < maxAttempts) {
       const key = this.getKey();
+      attempts++;
       try {
         return await requestFn(key);
       } catch (err) {
+        lastErr = err;
         const msg = err.message || "";
-        const isRateLimitOrDemand =
+        const isRateLimit =
           err.status === 429 ||
-          err.status === 503 ||
           msg.includes("429") ||
+          msg.includes("RESOURCE_EXHAUSTED");
+
+        const isDemandSpike =
+          err.status === 503 ||
           msg.includes("503") ||
-          msg.includes("RESOURCE_EXHAUSTED") ||
           msg.includes("UNAVAILABLE");
 
         const isPermissionDenied =
@@ -49,23 +69,26 @@ export class KeyRotator {
           msg.includes("403") ||
           msg.includes("PERMISSION_DENIED");
 
-        if (isRateLimitOrDemand) {
-          this.markLimited(key, 60_000); // cooldown 1 menit
-          attempts++;
+        if (isRateLimit) {
+          this.markLimited(key, 10_000); // cooldown 10 detik
+          continue;
+        }
+
+        if (isDemandSpike) {
+          this.markLimited(key, 3_000); // 503 spike sementara, cooldown 3 detik
           continue;
         }
 
         if (isPermissionDenied) {
           console.warn(`[KeyRotator] Key ${key.slice(0, 15)}... kena 403 Permission Denied. Blacklist 24 jam.`);
           this.markLimited(key, 24 * 60 * 60 * 1000); // blacklist 24 jam
-          attempts++;
           continue;
         }
 
         throw err;
       }
     }
-    throw new Error("Semua API key exhausted setelah retry.");
+    throw lastErr || new Error("Semua API key exhausted setelah retry.");
   }
 }
 

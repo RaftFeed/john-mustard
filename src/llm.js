@@ -177,11 +177,11 @@ export const TOOLS = [
       },
       {
         name: "readUrl",
-        description: "Baca dan ekstrak teks konten dari URL / tautan web publik atau artikel (dengan proteksi SSRF)",
+        description: "Baca dan ekstrak konten dari tautan publik: Google Sheets (pubhtml multi-tab / CSV), Google Docs, tabel data, artikel online, atau URL web (dengan proteksi SSRF)",
         parameters: {
           type: "OBJECT",
           properties: {
-            url: { type: "STRING", description: "URL lengkap website atau artikel online (contoh: https://...)" }
+            url: { type: "STRING", description: "URL lengkap website, artikel online, atau Google Docs/Sheets (contoh: https://...)" }
           },
           required: ["url"]
         }
@@ -227,6 +227,70 @@ export const TOOLS = [
             name: { type: "STRING", description: "Nama skill yang ingin dihapus" }
           },
           required: ["name"]
+        }
+      },
+      {
+        name: "loadSkill",
+        description: "Muat playbook operasional lengkap dari sebuah skill khusus ke konteks percakapan untuk dieksekusi",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill yang ingin dimuat" }
+          },
+          required: ["name"]
+        }
+      },
+      {
+        name: "updateSkill",
+        description: "Perbarui atau tambahkan instruksi operasional baru ke playbook skill yang sudah ada",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama skill" },
+            content: { type: "STRING", description: "Instruksi/konten baru" },
+            append: { type: "BOOLEAN", description: "Set true jika ingin menambahkan ke akhir teks playbook, false untuk menimpa" }
+          },
+          required: ["name", "content"]
+        }
+      },
+      {
+        name: "processPdf",
+        description: "Manipulasi PDF di Vault: merge (gabung), split (ekstrak halaman), render_image (render ke gambar/foto WhatsApp), images_to_pdf (kumpulan foto jadi PDF), compress (kecilkan ukuran)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            action: {
+              type: "STRING",
+              description: "Aksi PDF: merge, split, render_image, images_to_pdf, compress",
+              enum: ["merge", "split", "render_image", "images_to_pdf", "compress"]
+            },
+            targetFiles: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar ID (#1, #2) atau nama file di Vault"
+            },
+            pages: {
+              type: "STRING",
+              description: "Rentang halaman untuk aksi split (contoh: '1-3', '1,3,5', 'last')"
+            },
+            pageNumber: {
+              type: "NUMBER",
+              description: "Nomor halaman untuk render_image (1-based, default 1)"
+            },
+            outputFilename: {
+              type: "STRING",
+              description: "Nama file baru hasil proses untuk disimpan di Vault (opsional)"
+            },
+            caption: {
+              type: "STRING",
+              description: "Keterangan caption saat file/gambar dikirim ke WhatsApp"
+            },
+            sendDirectly: {
+              type: "BOOLEAN",
+              description: "Set true jika ingin hasil langsung dikirim ke WhatsApp (default true untuk render_image)"
+            }
+          },
+          required: ["action", "targetFiles"]
         }
       },
       {
@@ -291,7 +355,7 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const FALLBACK_MODEL = "gemini-3-flash-preview";
 
 export function isSafeUrl(rawUrl) {
@@ -313,16 +377,260 @@ export function isSafeUrl(rawUrl) {
   }
 }
 
+// ponytail: native regex table & csv parser for google sheets pubhtml & docs export, zero npm deps
+export function formatRowsToMarkdown(rows, { maxRows = 100 } = {}) {
+  if (!rows || rows.length === 0) return "[Tabel spreadsheet kosong]";
+
+  // Filter baris nomor urut indeks (misal 1, 2, 3...) di kolom pertama
+  const filtered = [];
+  for (const r of rows) {
+    if (r && /^\d+$/.test(r[0]) && r.length > 1) {
+      filtered.push(r.slice(1));
+    } else {
+      filtered.push(r);
+    }
+  }
+
+  if (filtered.length === 0) return "[Tabel spreadsheet kosong]";
+
+  const header = filtered[0];
+  const dataRows = filtered.slice(1);
+  const displayed = dataRows.slice(0, maxRows);
+
+  // Jika tabel sangat lebar (> 10 kolom), render format key-value list rapi
+  if (header.length > 10) {
+    const lines = [`> *Tabel Data Spreadsheet* (Total ${dataRows.length} baris)`];
+    displayed.forEach((r, idx) => {
+      lines.push(`\n--- Baris ${idx + 1} ---`);
+      header.forEach((colName, cIdx) => {
+        const val = r[cIdx] ? r[cIdx].trim() : "";
+        if (val) lines.push(`• *${colName.trim()}*: ${val}`);
+      });
+    });
+    if (dataRows.length > maxRows) {
+      lines.push(`\n_... (Dipotong ${dataRows.length - maxRows} baris tambahan karena batasan panjang)_`);
+    }
+    return lines.join("\n");
+  }
+
+  // Standard Markdown pipe table
+  const cleanHeader = header.map((h, i) => h.replace(/[\r\n|]+/g, " ").trim() || `Kolom_${i + 1}`);
+  const lines = [];
+  lines.push("| " + cleanHeader.join(" | ") + " |");
+  lines.push("| " + cleanHeader.map(() => "---").join(" | ") + " |");
+
+  for (const r of displayed) {
+    const padded = cleanHeader.map((_, i) => (r[i] ? r[i].replace(/[\r\n|]+/g, " ").trim() : ""));
+    lines.push("| " + padded.join(" | ") + " |");
+  }
+
+  if (dataRows.length > maxRows) {
+    lines.push(`\n_Menampilkan ${maxRows} dari total ${dataRows.length} baris data._`);
+  }
+
+  return lines.join("\n");
+}
+
+export function parseHtmlTableToMarkdown(htmlText, { maxRows = 100 } = {}) {
+  const trMatches = [...htmlText.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  if (trMatches.length === 0) return null;
+
+  const rows = [];
+  for (const tr of trMatches) {
+    const rowHtml = tr[1];
+    const cellMatches = [...rowHtml.matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)];
+    const row = cellMatches.map((c) => {
+      return c[1]
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/[ \t]+/g, " ")
+        .trim();
+    });
+    while (row.length > 0 && !row[row.length - 1]) {
+      row.pop();
+    }
+    if (row.length > 0 && row.some(Boolean)) {
+      rows.push(row);
+    }
+  }
+
+  if (rows.length === 0) return null;
+  return formatRowsToMarkdown(rows, { maxRows });
+}
+
+export function parseCsvToMarkdown(csvText, { maxRows = 100 } = {}) {
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+
+  const rows = lines.map((line) => {
+    const cells = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        cells.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    cells.push(current.trim());
+    return cells;
+  });
+
+  return formatRowsToMarkdown(rows, { maxRows });
+}
+
 export async function fetchUrlContent(rawUrl) {
   if (!isSafeUrl(rawUrl)) {
     throw new Error("URL tidak aman atau mengarah ke alamat lokal/privat (SSRF Protection).");
   }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    throw new Error("Format URL tidak valid.");
+  }
+
+  const href = parsedUrl.href;
+  const path = parsedUrl.pathname;
+  const gid = parsedUrl.searchParams.get("gid") || (parsedUrl.hash.match(/gid=(\d+)/)?.[1]);
+
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "*/*"
+  };
+
+  // 1. Published Google Sheets (/spreadsheets/d/e/.../pubhtml or /pub)
+  if (href.includes("/spreadsheets/") && (path.includes("/d/e/") || href.includes("/pubhtml") || href.includes("/pub"))) {
+    const pubMatch = href.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/e\/([a-zA-Z0-9_-]+)/);
+    const pubId = pubMatch ? pubMatch[1] : null;
+
+    if (pubId) {
+      const indexUrl = `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml`;
+      const res = await fetch(indexUrl, { headers, signal: AbortSignal.timeout(12000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat Google Sheet publik.`);
+      const indexHtml = await res.text();
+
+      if (res.url.includes("accounts.google.com/ServiceLogin") || indexHtml.includes("ServiceLogin")) {
+        throw new Error("Dokumen Google Sheet ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
+      }
+
+      // Check for multi-tab Javascript metadata
+      const tabMatches = [...indexHtml.matchAll(/\{\s*name:\s*"([^"]+)"[^}]*pageUrl:\s*"([^"]+)"/g)];
+      const sections = [];
+
+      if (tabMatches.length > 0) {
+        for (const match of tabMatches) {
+          const tabName = match[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+          let pageUrl = match[2].replace(/\\\//g, "/").replace(/\\x3d/g, "=").replace(/\\x26/g, "&");
+
+          if (gid && !pageUrl.includes(`gid=${gid}`) && tabMatches.length > 1) {
+            continue;
+          }
+
+          try {
+            const tabRes = await fetch(pageUrl, { headers, signal: AbortSignal.timeout(10000) });
+            if (tabRes.ok) {
+              const tabHtml = await tabRes.text();
+              const md = parseHtmlTableToMarkdown(tabHtml);
+              if (md) {
+                sections.push(`### Sheet: ${tabName}\n\n${md}`);
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // Fallback single sheet table
+      if (sections.length === 0) {
+        const directUrl = gid
+          ? `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml/sheet?headers=false&gid=${gid}`
+          : `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml/sheet?headers=false`;
+        try {
+          const sheetRes = await fetch(directUrl, { headers, signal: AbortSignal.timeout(10000) });
+          if (sheetRes.ok) {
+            const sheetHtml = await sheetRes.text();
+            const md = parseHtmlTableToMarkdown(sheetHtml);
+            if (md) sections.push(md);
+          }
+        } catch {}
+      }
+
+      if (sections.length > 0) {
+        return sections.join("\n\n").slice(0, 15000);
+      }
+    }
+  }
+
+  // 2. Standard Google Sheets (/spreadsheets/d/{docId})
+  if (href.includes("/spreadsheets/d/") && !path.includes("/d/e/")) {
+    const docMatch = href.match(/\/spreadsheets\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]+)/);
+    const docId = docMatch ? docMatch[1] : null;
+    if (docId) {
+      const gidParam = gid ? `&gid=${gid}` : "";
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv${gidParam}`;
+      const res = await fetch(csvUrl, { headers, signal: AbortSignal.timeout(12000) });
+
+      if (res.url.includes("accounts.google.com/ServiceLogin")) {
+        throw new Error("Dokumen Google Sheet ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat Google Sheet.`);
+      const csvText = await res.text();
+      if (csvText.includes("<!DOCTYPE html>") || csvText.includes("<html")) {
+        throw new Error("Dokumen Google Sheet tidak bisa diakses publik (perlu izin akses).");
+      }
+      const md = parseCsvToMarkdown(csvText);
+      return (md || csvText).slice(0, 15000);
+    }
+  }
+
+  // 3. Google Docs (/document/d/{docId})
+  if (href.includes("/document/d/")) {
+    const docMatch = href.match(/\/document\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]+)/);
+    const docId = docMatch ? docMatch[1] : null;
+    if (docId) {
+      const txtUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+      const res = await fetch(txtUrl, { headers, signal: AbortSignal.timeout(12000) });
+      if (res.url.includes("accounts.google.com/ServiceLogin")) {
+        throw new Error("Google Doc ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat Google Doc.`);
+      const txt = await res.text();
+      return txt.slice(0, 15000);
+    }
+  }
+
+  // 4. Generic Web Page Scraper
   const res = await fetch(rawUrl, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)" },
+    headers,
     signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat halaman web.`);
   const html = await res.text();
+
+  if (html.includes("<table") && html.includes("<tr")) {
+    const tableMd = parseHtmlTableToMarkdown(html);
+    if (tableMd && tableMd.length > 50) {
+      return tableMd.slice(0, 12000);
+    }
+  }
+
   const clean = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
@@ -346,20 +654,21 @@ export async function fetchUrlContent(rawUrl) {
 const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "updateTodo", "deleteTodo",
   "addReminder", "grantFileAccess", "addBacklog", "completeBacklog",
-  "saveSkill", "deleteSkill", "saveNote", "deleteNote"
+  "saveSkill", "deleteSkill", "updateSkill", "saveNote", "deleteNote",
+  "processPdf"
 ]);
 
 export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   if (!text) return false;
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
-  const claimRegex = /(sudah|berhasil|telah)\s+(di|ku|saya|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi)/i;
+  const claimRegex = /(sudah|berhasil|telah)\s+(di|ku|saya|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres)/i;
   return claimRegex.test(text);
 }
 
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|done|mark|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -391,21 +700,29 @@ async function callGemini(rotator, model, payload) {
 }
 
 export async function generateContent(rotator, payload) {
-  try {
-    return await callGemini(rotator, DEFAULT_MODEL, payload);
-  } catch (err) {
-    console.warn(`[LLM] Model ${DEFAULT_MODEL} gagal (${err.message}). Fallback ke ${FALLBACK_MODEL}...`);
+  const models = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-flash-latest", FALLBACK_MODEL, "gemini-3.5-flash-lite"];
+  let lastErr = null;
+
+  for (const model of models) {
     try {
-      return await callGemini(rotator, FALLBACK_MODEL, payload);
-    } catch (fallbackErr) {
-      if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
-        console.warn(`[LLM] Mode ANY gagal (${fallbackErr.message}). Fallback ke mode AUTO...`);
-        const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
-        return await callGemini(rotator, DEFAULT_MODEL, autoPayload);
-      }
-      throw fallbackErr;
+      return await callGemini(rotator, model, payload);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
     }
   }
+
+  if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
+    console.warn(`[LLM] Mode ANY gagal pada semua model. Mencoba fallback ke mode AUTO...`);
+    const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
+    for (const model of models) {
+      try {
+        return await callGemini(rotator, model, autoPayload);
+      } catch {}
+    }
+  }
+
+  throw lastErr || new Error("Semua model AI gagal merespons.");
 }
 
 export async function getEmbedding(rotator, text) {
@@ -686,6 +1003,151 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       name: args.name,
       message: changes > 0 ? `Skill '${args.name}' berhasil dihapus.` : `Skill '${args.name}' tidak ditemukan.`
     };
+  } else if (name === "loadSkill") {
+    const cleanName = (args.name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    const skill = store.getSkill(cleanName);
+    if (!skill) {
+      const available = store.getSkills().map((s) => s.name);
+      toolResult = {
+        error: `Skill '${args.name}' tidak ditemukan.`,
+        availableSkills: available
+      };
+    } else {
+      toolResult = {
+        success: true,
+        skill: skill.name,
+        description: skill.description,
+        playbook: skill.prompt_template,
+        message: `Playbook untuk skill *${skill.name}* berhasil dimuat ke konteks.`
+      };
+    }
+  } else if (name === "updateSkill") {
+    const cleanName = (args.name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    const existing = store.getSkill(cleanName);
+    let newTemplate = (args.content || "").trim();
+    let desc = existing ? existing.description : "Updated skill playbook.";
+    if (existing && args.append) {
+      newTemplate = `${existing.prompt_template}\n\n${newTemplate}`;
+    }
+    const saved = store.saveSkill(cleanName, desc, newTemplate);
+    toolResult = {
+      success: true,
+      name: saved.name,
+      message: `Skill '${saved.name}' berhasil diperbarui.`
+    };
+  } else if (name === "processPdf") {
+    const action = String(args.action || "").trim().toLowerCase();
+    const rawTargets = Array.isArray(args.targetFiles) ? args.targetFiles : [args.targetFiles].filter(Boolean);
+    if (rawTargets.length === 0) {
+      toolResult = { error: "Daftar targetFiles tidak boleh kosong." };
+    } else {
+      const resolvedFiles = [];
+      for (const target of rawTargets) {
+        const fileRec = store.resolveVaultFile(target, chatId);
+        if (!fileRec) {
+          toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
+          break;
+        }
+        if (!store.hasFileAccess(fileRec.id, chatId)) {
+          toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
+          break;
+        }
+        if (!fs.existsSync(fileRec.filepath)) {
+          toolResult = { error: `File fisik '${fileRec.filename}' tidak ditemukan di disk server.` };
+          break;
+        }
+        const b = fs.readFileSync(fileRec.filepath);
+        resolvedFiles.push({
+          id: fileRec.id,
+          filename: fileRec.filename,
+          data_base64: b.toString("base64")
+        });
+      }
+
+      if (!toolResult.error) {
+        const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/pdf");
+        try {
+          const resp = await fetch(runnerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action,
+              files: resolvedFiles.map((f) => ({ filename: f.filename, data_base64: f.data_base64 })),
+              pages: args.pages || "1",
+              page_number: args.pageNumber || 1,
+              dpi: args.dpi || 150,
+              format: args.format || "png",
+              rotate_deg: args.rotateDeg || 0
+            }),
+            signal: AbortSignal.timeout(30000)
+          });
+          if (!resp.ok) {
+            throw new Error(`Runner PDF error (${resp.status}): ${await resp.text()}`);
+          }
+          const data = await resp.json();
+          if (data.status !== "success") {
+            toolResult = { error: data.error || "Gagal memproses file PDF." };
+          } else {
+            const outBuf = Buffer.from(data.data_base64, "base64");
+            const isImg = data.mimetype.startsWith("image/");
+            let outName = args.outputFilename || "";
+            if (!outName) {
+              const baseName = resolvedFiles[0].filename.replace(/\.[^.]+$/, "");
+              if (action === "merge") outName = `${baseName}_merged.pdf`;
+              else if (action === "split") outName = `${baseName}_split.pdf`;
+              else if (action === "render_image") outName = `${baseName}_hal${data.page_rendered || 1}.${data.mimetype === "image/jpeg" ? "jpg" : "png"}`;
+              else if (action === "images_to_pdf") outName = `${baseName}_compiled.pdf`;
+              else if (action === "compress") outName = `${baseName}_compressed.pdf`;
+              else outName = `${baseName}_processed.pdf`;
+            }
+
+            const category = isImg ? "media" : "documents";
+            const dir = path.join("vault", category);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const savedPath = path.join(dir, `${Date.now()}_${outName}`);
+            fs.writeFileSync(savedPath, outBuf);
+
+            const fileId = store.saveVaultFile({
+              ownerId: chatId,
+              filename: outName,
+              category,
+              filepath: savedPath,
+              mimetype: data.mimetype,
+              filesize: outBuf.length,
+              summary: data.message || `File ${action} dari ${resolvedFiles.map((f) => f.filename).join(", ")}`
+            });
+
+            // Kirim langsung ke WhatsApp jika sendDirectly true atau untuk render_image
+            const shouldSend = args.sendDirectly !== undefined ? Boolean(args.sendDirectly) : (action === "render_image");
+            if (shouldSend) {
+              const caption = args.caption || data.message || `Hasil ${action} file`;
+              if (isImg) {
+                await sendFile(chatId, savedPath, outName, caption, false);
+              } else {
+                await sendFile(chatId, savedPath, outName, caption, true);
+              }
+            }
+
+            toolResult = {
+              success: true,
+              action,
+              fileId,
+              filename: outName,
+              category,
+              message: data.message,
+              stats: {
+                pageCount: data.page_count,
+                originalSize: data.original_size,
+                compressedSize: data.compressed_size,
+                savedPercent: data.saved_percent
+              }
+            };
+          }
+        } catch (err) {
+          toolResult = { error: `Gagal menjalankan runner PDF: ${err.message}` };
+        }
+      }
+    }
   } else if (name === "saveNote") {
     const saved = store.saveNote(chatId, args.key, args.content);
     toolResult = {
@@ -794,8 +1256,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   const customSkills = store?.getSkills ? store.getSkills() : [];
   const skillsContext = customSkills.length > 0
-    ? `\n\nCUSTOM SKILLS TERDAFTAR (Gunakan instruksi ini jika user memanggil skill):\n` +
-      customSkills.map((s) => `- [${s.name}]: ${s.description} -> Instruksi: ${s.prompt_template}`).join("\n")
+    ? `\n\nCUSTOM SKILLS TERDAFTAR (Panggil tool loadSkill untuk memuat SOP lengkap jika relevan):\n` +
+      customSkills.map((s) => `- [${s.name}]: ${s.description}${s.prompt_template.length <= 150 ? ` -> Instruksi: ${s.prompt_template}` : ` (Gunakan tool loadSkill untuk membaca playbook lengkap)`}`).join("\n")
     : "";
 
   // Multi-turn context: muat riwayat pesan terakhir
@@ -986,12 +1448,17 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("saveSkill"));
     assert.ok(decls.includes("listSkills"));
     assert.ok(decls.includes("deleteSkill"));
+    assert.ok(decls.includes("loadSkill"));
+    assert.ok(decls.includes("updateSkill"));
+    assert.ok(decls.includes("processPdf"));
     assert.ok(decls.includes("saveNote"));
     assert.ok(decls.includes("getNote"));
     assert.ok(decls.includes("listNotes"));
     assert.ok(decls.includes("deleteNote"));
     assert.ok(decls.includes("readUrl"));
     assert.strictEqual(isActionIntent("pelajari skill rekap tugas"), true);
+    assert.strictEqual(isActionIntent("gabung file pdf #1 dan #2"), true);
+    assert.strictEqual(isActionIntent("kompres pdf dokumen ini"), true);
     assert.strictEqual(isActionIntent("baca url https://id.wikipedia.org"), true);
     assert.strictEqual(isActionIntent("catat nomor rekening bca 12345"), true);
     assert.strictEqual(isActionIntent("lihat catatan pribadi"), true);

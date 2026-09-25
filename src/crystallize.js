@@ -8,7 +8,8 @@ export const TRIVIAL_TOOLS = new Set([
   "listBacklogs",
   "saveSkill",
   "deleteSkill",
-  "getTodosDue"
+  "getTodosDue",
+  "loadSkill"
 ]);
 
 /**

@@ -178,6 +178,15 @@ Sesuai filosofi **Deep Modules** (*a lot of behaviour behind a small interface*)
   2. *Fast Heuristic Pre-Filter*: Turn casual atau trivial dibuang sebelum LLM critic dipanggil; hanya workflow $\ge 2$ tool non-trivial, komputasi Python kompleks (> 40 karakter), atau kalimat pengajaran eksplisit yang dievaluasi.
   3. *Autonomous Playbook Synthesis*: Skill yang lolos kurasi otomatis disimpan dengan prefix `auto_` ke tabel SQLite `skills` dan diinjeksikan dinamis ke system prompt giliran mendatang.
 
+### 3.5. Universal Sandboxed Compute & PDF Toolkit (`runner/server.py`)
+* **Seam (Interface)**:
+  * `POST /run`: Arbitrary isolated Python execution (Pandas, NumPy, Matplotlib) dengan chart rendering.
+  * `POST /pdf`: PyMuPDF polymorphic document processing (`merge`, `split`, `render_image`, `images_to_pdf`, `compress`).
+* **Invariants**:
+  1. *Subprocess & Container Isolation*: Eksekusi komputasi user terisolasi di container Python runner, mencegah arbitrary code injection menyentuh credential bot atau SQLite DB.
+  2. *Direct Vault Mount*: Volume `./vault:/app/vault` memungkinkan skrip Python membaca dan memproses dokumen Vault tanpa duplikasi disk I/O.
+  3. *Dynamic WhatsApp Media Rendering*: Render halaman PDF otomatis menghasilkan gambar PNG/JPG yang dapat langsung di-dispatch ke WhatsApp sebagai preview instan.
+
 ---
 
 ## 4. End-to-End Turn Execution Lifecycle

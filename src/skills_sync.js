@@ -63,6 +63,32 @@ export function parseSkillFromMarkdown(rawText = "", fallbackName = "") {
 }
 
 /**
+ * Discover all skill files (supports flat skills/*.md and agentskills.io standard skills/<name>/SKILL.md)
+ */
+export function findSkillFiles(skillsDir = "skills") {
+  if (!fs.existsSync(skillsDir)) return [];
+  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  const results = [];
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      results.push({
+        filePath: path.join(skillsDir, entry.name),
+        fallbackName: path.basename(entry.name, ".md")
+      });
+    } else if (entry.isDirectory() && !entry.name.startsWith(".")) {
+      const subSkill = path.join(skillsDir, entry.name, "SKILL.md");
+      if (fs.existsSync(subSkill)) {
+        results.push({
+          filePath: subSkill,
+          fallbackName: entry.name
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/**
  * Write a skill object from DB to a .md file in skillsDir.
  */
 export function writeSkillToDisk(skill, skillsDir = "skills") {
@@ -72,7 +98,12 @@ export function writeSkillToDisk(skill, skillsDir = "skills") {
   }
 
   const cleanName = (skill.name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-  const filePath = path.join(skillsDir, `${cleanName}.md`);
+  const dirPath = path.join(skillsDir, cleanName);
+  const standardFilePath = path.join(dirPath, "SKILL.md");
+  const flatFilePath = path.join(skillsDir, `${cleanName}.md`);
+
+  // If already organized as directory-based agentskills.io format, keep it there
+  const filePath = fs.existsSync(standardFilePath) ? standardFilePath : flatFilePath;
   const content = serializeSkillToMarkdown(skill);
 
   if (fs.existsSync(filePath)) {
@@ -92,14 +123,24 @@ export function writeSkillToDisk(skill, skillsDir = "skills") {
 export function deleteSkillFromDisk(name, skillsDir = "skills") {
   if (!name) return false;
   const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-  const filePath = path.join(skillsDir, `${cleanName}.md`);
-  if (fs.existsSync(filePath)) {
+  const flatFilePath = path.join(skillsDir, `${cleanName}.md`);
+  const standardFilePath = path.join(skillsDir, cleanName, "SKILL.md");
+
+  let deleted = false;
+  if (fs.existsSync(flatFilePath)) {
     try {
-      fs.unlinkSync(filePath);
-      return true;
+      fs.unlinkSync(flatFilePath);
+      deleted = true;
     } catch {}
   }
-  return false;
+  if (fs.existsSync(standardFilePath)) {
+    try {
+      fs.unlinkSync(standardFilePath);
+      try { fs.rmdirSync(path.join(skillsDir, cleanName)); } catch {}
+      deleted = true;
+    } catch {}
+  }
+  return deleted;
 }
 
 /**
@@ -112,15 +153,13 @@ export function syncDiskToDb(store, skillsDir = "skills") {
     fs.mkdirSync(skillsDir, { recursive: true });
   }
 
-  const files = fs.readdirSync(skillsDir).filter((f) => f.endsWith(".md"));
+  const skillFiles = findSkillFiles(skillsDir);
   const diskSkillNames = new Set();
 
-  for (const f of files) {
-    const filePath = path.join(skillsDir, f);
+  for (const { filePath, fallbackName } of skillFiles) {
     try {
-      const fallback = path.basename(f, ".md");
       const content = fs.readFileSync(filePath, "utf-8");
-      const parsed = parseSkillFromMarkdown(content, fallback);
+      const parsed = parseSkillFromMarkdown(content, fallbackName);
       diskSkillNames.add(parsed.name);
 
       const inDb = store.getSkill(parsed.name);
@@ -133,7 +172,7 @@ export function syncDiskToDb(store, skillsDir = "skills") {
         console.log(`[SkillsSync] Disk -> DB synced: ${parsed.name}`);
       }
     } catch (err) {
-      console.warn(`[SkillsSync] Gagal membaca ${f}:`, err.message);
+      console.warn(`[SkillsSync] Gagal membaca ${filePath}:`, err.message);
     }
   }
 
@@ -170,7 +209,7 @@ export function initSkillsWatcher(store, skillsDir = "skills") {
   const pendingFiles = new Set();
 
   try {
-    const watcher = fs.watch(skillsDir, (eventType, filename) => {
+    const watcher = fs.watch(skillsDir, { recursive: true }, (eventType, filename) => {
       if (!filename || !filename.endsWith(".md")) return;
       pendingFiles.add(filename);
 
@@ -178,12 +217,15 @@ export function initSkillsWatcher(store, skillsDir = "skills") {
       debounceTimer = setTimeout(() => {
         for (const file of pendingFiles) {
           const filePath = path.join(skillsDir, file);
-          const skillName = path.basename(file, ".md").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+          const isDirSkill = path.basename(file).toLowerCase() === "skill.md";
+          const fallbackName = isDirSkill
+            ? path.basename(path.dirname(file)).toLowerCase().replace(/[^a-z0-9_-]/g, "_")
+            : path.basename(file, ".md").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 
           if (fs.existsSync(filePath)) {
             try {
               const content = fs.readFileSync(filePath, "utf-8");
-              const parsed = parseSkillFromMarkdown(content, skillName);
+              const parsed = parseSkillFromMarkdown(content, fallbackName);
               const inDb = store.getSkill(parsed.name);
 
               if (
@@ -199,9 +241,9 @@ export function initSkillsWatcher(store, skillsDir = "skills") {
             }
           } else {
             // File deleted on disk
-            const deleted = store.deleteSkill(skillName, { skipDisk: true });
+            const deleted = store.deleteSkill(fallbackName, { skipDisk: true });
             if (deleted > 0) {
-              console.log(`🗑️ [SkillsSync] Disk file deleted -> Removed from DB: ${skillName}`);
+              console.log(`🗑️ [SkillsSync] Disk file deleted -> Removed from DB: ${fallbackName}`);
             }
           }
         }
@@ -276,6 +318,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/skills_sync.js")) {
         // Test DB deletion triggers disk delete
         store.deleteSkill("skill_baru_db");
         assert.strictEqual(fs.existsSync(path.join(tmpDir, "skill_baru_db.md")), false);
+
+        // 6. agentskills.io standard subfolder test (skills/<name>/SKILL.md)
+        const subDir = path.join(tmpDir, "expert_math");
+        fs.mkdirSync(subDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(subDir, "SKILL.md"),
+          "---\nname: expert_math\ndescription: Solusi kalkulasi math kompleks\n---\n\nInstruksi math.",
+          "utf-8"
+        );
+        syncDiskToDb(store, tmpDir);
+        const mathSkill = store.getSkill("expert_math");
+        assert.ok(mathSkill);
+        assert.strictEqual(mathSkill.description, "Solusi kalkulasi math kompleks");
 
         if (watcher && typeof watcher.close === "function") {
           watcher.close();

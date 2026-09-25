@@ -422,6 +422,27 @@ export class Storage {
     return this.db.prepare("SELECT * FROM vault_files WHERE id = ?").get(id);
   }
 
+  getVaultFileByName(filename, ownerId = null) {
+    if (!filename) return null;
+    const clean = String(filename).trim();
+    if (ownerId) {
+      const norm = normalizePhone(ownerId);
+      return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? AND (owner_id = ? OR owner_id = '') ORDER BY id DESC LIMIT 1").get(`%${clean}%`, norm);
+    }
+    return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? ORDER BY id DESC LIMIT 1").get(`%${clean}%`);
+  }
+
+  resolveVaultFile(target, ownerId = null) {
+    if (!target) return null;
+    const str = String(target).trim();
+    const idMatch = str.match(/^#?(\d+)$/);
+    if (idMatch) {
+      const byId = this.getVaultFileById(parseInt(idMatch[1], 10));
+      if (byId) return byId;
+    }
+    return this.getVaultFileByName(str, ownerId);
+  }
+
   completeTodo(id, chatId) {
     const changes = this.db
       .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
@@ -741,6 +762,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   // User A grants access to User B
   store.grantFileAccess(fileA, "08999999999");
   assert.strictEqual(store.hasFileAccess(fileA, "628999999999"), true);
+
+  // File resolution tests
+  assert.strictEqual(store.resolveVaultFile(fileA).id, fileA);
+  assert.strictEqual(store.resolveVaultFile(`#${fileA}`).id, fileA);
+  assert.strictEqual(store.resolveVaultFile("ktp_user_a").id, fileA);
 
   const searchGranted = store.searchVaultFiles("KTP", null, "628999999999");
   assert.strictEqual(searchGranted.length, 1);
