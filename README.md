@@ -1,20 +1,17 @@
 # John Mustard 🤖
 
-> Autonomous AI Executive Assistant for WhatsApp powered by Node.js, WAHA, Gemini ReAct, and isolated Python Sandbox.
+Autonomous AI executive assistant for WhatsApp powered by Node.js, WAHA, Gemini ReAct, and isolated Python Sandbox.
 
 ---
 
-## 📖 About
+## ✨ Features
 
-**John Mustard** is an autonomous personal AI executive assistant for WhatsApp designed with a *zero-dependency deep modules* architecture. It integrates multi-step ReAct reasoning (Google Gemini API), isolated code execution (Python sandbox), document manipulation (PyMuPDF), SQLite-backed task and memory persistence, and deterministic offline fallback commands.
-
-### ✨ Key Features
 - **WhatsApp Bridge (WAHA)**: Webhook streaming, 1.0s burst debouncing, multi-bubble replies (`---`), and multi-contact context awareness.
-- **ReAct Loop & Multi-Key Rotator**: Multi-step agentic tool orchestration with automatic Gemini API key rotation on rate-limits (HTTP 429).
-- **Sandboxed Python & Document Engine**: Isolated script execution, data visualization, OCR, and PDF operations (merge, split, compress, render images) inside a dedicated container.
+- **ReAct Loop & Multi-Key Rotator**: Multi-step tool orchestration with automatic Gemini API key rotation on rate-limits (HTTP 429).
+- **Sandboxed Python & Doc Engine**: Isolated script execution, data analysis, OCR, and PDF manipulation (merge, split, compress, render images).
 - **Deterministic Fast Commands**: Zero-latency offline fallback shortcuts (`#todo`, `#today`, `#week`, `#done`, `#add`, `#skills`).
-- **Memory & Storage**: SQLite WAL persistence for to-dos, reminders, chat history, and a document vault with access control lists (ACL).
-- **Procedural Skills (Voyager Pattern)**: Autonomous crystallization of new skills and workflows from recurring interactions.
+- **Memory & Storage**: SQLite WAL persistence for to-dos, reminders, chat history, and document vault with access control lists (ACL).
+- **Procedural Skills (Voyager Pattern)**: Autonomous crystallization of new skills from recurring interactions.
 
 ---
 
