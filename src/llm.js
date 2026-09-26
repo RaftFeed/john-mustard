@@ -1396,7 +1396,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     toolResult = {
       count: todos.length,
       formatted: formattedList,
-      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG membuat layout sendiri."
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir (seperti 'ada yang mau dibantu?', 'mau diapain list ini?')."
     };
   } else if (name === "getTodosDue") {
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
@@ -1407,7 +1407,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       count: todos.length,
       daysAhead: days,
       formatted: formattedList,
-      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG membuat layout sendiri."
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir."
     };
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
@@ -1490,7 +1490,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       success: true,
       count: reminders.length,
       formatted: formattedList,
-      instruction: "WAJIB kembalikan persis isi teks di field 'formatted' apa adanya. DILARANG memformat ulang."
+      instruction: "WAJIB kembalikan persis isi teks di field 'formatted' apa adanya. DILARANG memformat ulang dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir."
     };
   } else if (name === "deleteReminder") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
