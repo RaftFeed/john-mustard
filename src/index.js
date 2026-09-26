@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia, startTyping, stopTyping, fetchBotNumber } from "./waha.js";
+import { sendText, sendFile, downloadMedia, startTyping, stopTyping, fetchBotNumber, getBotLid } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
@@ -276,7 +276,16 @@ app.listen(PORT, () => {
   console.log(`[Vault] Document Vault siap di folder ./vault`);
   console.log(`[Skills] 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
   console.log(`[MCP] FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
-  fetchBotNumber().then((num) => {
-    if (num) console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num}`);
-  }).catch(() => {});
+  function pollBotNumber() {
+    fetchBotNumber().then((num) => {
+      if (num) {
+        console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num}${getBotLid() ? ` (LID: ${getBotLid()})` : ""}`);
+      } else {
+        setTimeout(pollBotNumber, 5000);
+      }
+    }).catch(() => {
+      setTimeout(pollBotNumber, 5000);
+    });
+  }
+  pollBotNumber();
 });

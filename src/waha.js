@@ -61,33 +61,53 @@ export function getBotNumber() {
   return currentBotNumber;
 }
 
+export function getBotLid() {
+  return currentBotLid;
+}
+
 export function setBotNumber(num) {
   currentBotNumber = num ? String(num).replace(/\D/g, "") : null;
 }
 
 export async function fetchBotNumber() {
-  if (currentBotNumber) return currentBotNumber;
+  if (currentBotNumber && currentBotLid) return currentBotNumber;
   try {
     const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
     const apiKey = process.env.WAHA_API_KEY || "";
+    const headers = apiKey ? { "x-api-key": apiKey } : {};
+
     const res = await fetch(`${wahaUrl}/api/me?session=default`, {
-      headers: apiKey ? { "x-api-key": apiKey } : {},
+      headers,
       signal: AbortSignal.timeout(3000)
     });
     if (res.ok) {
       const data = await res.json();
       const meId = data.id || data.me?.id || "";
       const num = meId.split("@")[0].split(":")[0].replace(/\D/g, "");
-      if (num) {
+      if (num && !currentBotNumber) {
         currentBotNumber = num;
       }
       if (data.me?.lid || data.lid) {
         currentBotLid = String(data.me?.lid || data.lid).replace(/\D/g, "");
       }
-      return currentBotNumber;
+    }
+
+    if (!currentBotNumber || !currentBotLid) {
+      const sRes = await fetch(`${wahaUrl}/api/sessions/default`, {
+        headers,
+        signal: AbortSignal.timeout(3000)
+      });
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        const me = sData.me || {};
+        const meId = me.id || "";
+        const num = meId.split("@")[0].split(":")[0].replace(/\D/g, "");
+        if (num && !currentBotNumber) currentBotNumber = num;
+        if (me.lid && !currentBotLid) currentBotLid = String(me.lid).replace(/\D/g, "");
+      }
     }
   } catch {}
-  return null;
+  return currentBotNumber;
 }
 
 export function resolveLidToPhone(lid) {
@@ -334,9 +354,10 @@ export function parseIncoming(body, allowedPhone) {
   const msg = body.payload;
   if (!msg || msg.fromMe) return null;
 
-  // Auto-detect bot phone number from payload destination if available
+  // Auto-detect bot phone number from payload destination if available (DM only, ignore group JID @g.us)
   const toRaw = msg.to || body.payload?.to || msg._data?.to || "";
-  const botTo = toRaw.split("@")[0].split(":")[0].replace(/\D/g, "");
+  const isToGroup = toRaw.includes("@g.us");
+  const botTo = !isToGroup ? toRaw.split("@")[0].split(":")[0].replace(/\D/g, "") : "";
   if (botTo && !currentBotNumber) {
     currentBotNumber = botTo;
   }
@@ -355,14 +376,20 @@ export function parseIncoming(body, allowedPhone) {
   const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
 
   let isFollowUpThread = false;
-  // Grup WA: Cek apakah di-mention (@), reply ke pesan bot, atau active follow-up thread continuity (Helmis pattern)
+  // Grup WA: Cek apakah di-mention (@), nama dipanggil, fast-command (#/?), reply ke pesan bot, atau active follow-up
   if (isGroup) {
+    const contextInfo =
+      msg._data?.Message?.extendedTextMessage?.contextInfo ||
+      msg._data?.Message?.imageMessage?.contextInfo ||
+      msg._data?.Message?.videoMessage?.contextInfo ||
+      msg._data?.Message?.documentMessage?.contextInfo ||
+      msg._data?.contextInfo ||
+      msg.contextInfo;
+
     const mentionedList = [
       ...(Array.isArray(msg.mentionedIds) ? msg.mentionedIds : []),
       ...(Array.isArray(msg._data?.mentionedJidList) ? msg._data.mentionedJidList : []),
-      ...(Array.isArray(msg._data?.Message?.extendedTextMessage?.contextInfo?.mentionedJid)
-        ? msg._data.Message.extendedTextMessage.contextInfo.mentionedJid
-        : [])
+      ...(Array.isArray(contextInfo?.mentionedJid) ? contextInfo.mentionedJid : [])
     ];
 
     const bodyTextRaw = String(msg.body || "");
@@ -378,33 +405,32 @@ export function parseIncoming(body, allowedPhone) {
         bodyTextRaw.includes(`@${botNumber}`);
     }
     if (!isMentioned && currentBotLid) {
-      isMentioned = mentionedList.some((id) => String(id).includes(currentBotLid));
-    }
-
-    // 2. Mention by name, keyword, or addressing the bot
-    if (!isMentioned) {
       isMentioned =
-        /@(?:john|mustard|bot)\b/i.test(bodyTextRaw) ||
-        /\b(?:john|mustard)\b/i.test(bodyTextRaw);
+        mentionedList.some((id) => String(id).includes(currentBotLid)) ||
+        bodyTextRaw.includes(`@${currentBotLid}`);
     }
 
-    // 3. Reply to bot check
+    // 2. Mention by name, keyword, or addressing the bot ("john", "mustard", "bot")
+    const isNameCalled = /\b(?:john|mustard|bot)\b/i.test(bodyTextRaw);
+
+    // 3. Fast deterministic commands (e.g. #ping, #todo, #tugas, #dew, #help, ?help)
+    const isFastCommand = /^[#?]/.test(bodyTextRaw.trim());
+
+    // 4. Reply to bot check
     const quotedParticipant = (quoted?.sender || "").replace(/\D/g, "");
-    const toDigits = toRaw.replace(/\D/g, "");
 
     const isReplyToBot = Boolean(
       quoted?.fromMe ||
       (quoted?.id && isBotSentMessage(quoted.id)) ||
       (msg.replyTo?.id && isBotSentMessage(msg.replyTo.id)) ||
       (botNumber && quotedParticipant && (quotedParticipant === botNumber || quotedParticipant.includes(botNumber) || botNumber.includes(quotedParticipant))) ||
-      (toDigits && quotedParticipant && quotedParticipant === toDigits) ||
       (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid))
     );
 
-    // 4. Helmis pattern: Active Follow-Up Thread Continuity (within 120s of bot reply)
+    // 5. Helmis pattern: Active Follow-Up Thread Continuity (within 120s of bot reply)
     isFollowUpThread = isRecentBotThread(msg.from, 120_000);
 
-    if (!isMentioned && !isReplyToBot && !isFollowUpThread) {
+    if (!isMentioned && !isNameCalled && !isFastCommand && !isReplyToBot && !isFollowUpThread) {
       return null;
     }
   }
@@ -631,6 +657,62 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
     }
   }, "6281234567890");
   assert.strictEqual(expiredFollowUp, null, "Pesan setelah thread kadaluarsa wajib diabaikan");
+
+  // 8. Fast command without mention in group (Pattern B) -> processed
+  const groupFastCmd = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_FASTCMD",
+      from: groupChatId,
+      participant: groupUser,
+      fromMe: false,
+      body: "#ping",
+      timestamp: 1700000028
+    }
+  }, "6281234567890");
+  assert.ok(groupFastCmd !== null, "Fast command #ping di grup wajib diproses");
+  assert.strictEqual(groupFastCmd.isGroup, true);
+
+  // 9. Name calling in group without @ (Pattern C) -> processed
+  const groupNameCall = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_NAMECALL",
+      from: groupChatId,
+      participant: groupUser,
+      fromMe: false,
+      body: "bot tolong cek jadwal",
+      timestamp: 1700000029
+    }
+  }, "6281234567890");
+  assert.ok(groupNameCall !== null, "Panggil nama 'bot' tanpa @ di grup wajib diproses");
+
+  // 10. Native WA mention in contextInfo.mentionedJid (Pattern A) -> processed
+  setBotNumber("628111111111");
+  const groupNativeMention = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_NATIVE_MENTION",
+      from: groupChatId,
+      participant: groupUser,
+      fromMe: false,
+      body: "@628111111111 apa kabar",
+      _data: {
+        Message: {
+          extendedTextMessage: {
+            contextInfo: {
+              mentionedJid: ["628111111111@s.whatsapp.net"]
+            }
+          }
+        }
+      },
+      timestamp: 1700000030
+    }
+  }, "6281234567890");
+  assert.ok(groupNativeMention !== null, "Native WA mention @nomor bot di grup wajib diproses");
+
+  // 11. Group payload msg.to should not poison currentBotNumber
+  assert.notStrictEqual(getBotNumber(), groupChatId.replace(/\D/g, ""), "currentBotNumber tidak boleh keracunan ID grup");
 
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");

@@ -2015,7 +2015,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   const isGroupChat = String(chatId).endsWith("@g.us");
   const groupContext = isGroupChat
-    ? `\n\n[OBROLAN GRUP & FOLLOW-UP CONTINUITY]: Kamu saat ini berada di dalam grup WhatsApp. Jawab secara ringkas, to the point, dan santai ala anak muda/Gen Z. Jangan nimbrung kalau user murni ngobrol sesama mereka. Wajib jawab jika di-tag (@), di-reply, dipanggil ("john", "mustard", "bot"), atau jika ini lanjutan pertanyaan/follow-up dari obrolanmu sebelumnya. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
+    ? `\n\n[OBROLAN GRUP & FOLLOW-UP CONTINUITY]: Kamu saat ini berada di dalam grup WhatsApp. Pesan ini SUDAH difilter dan pasti ditujukan kepadamu (lewat mention/tag, panggil nama "john/mustard/bot", reply pesanmu, fast-command, atau obrolan aktif 2 menit terakhir). Kamu WAJIB menjawab secara langsung, santai, ringkas, dan to the point ala anak muda/Gen Z. JANGAN mengeluarkan [NO_REPLY]. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik di grup.`
     : "";
 
   const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
