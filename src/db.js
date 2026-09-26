@@ -21,6 +21,44 @@ export function detectTaskCategory(title = "") {
   return "work";
 }
 
+export const DEFAULT_CONTACT_PROFILES = [
+  {
+    name: "Rafid",
+    phone: "6285236467838",
+    role: "Master / Owner",
+    relationship: "Owner",
+    notes: "Panggilan: Lord / Mas. Tone: Gen Z santai (gw/lu, wkwk, sat-set). Segala data umum/pribadi tanpa label spesifik adalah miliknya."
+  },
+  {
+    name: "Karimah",
+    phone: "6289514718700",
+    role: "Pacar",
+    relationship: "Pacar / Pasangan",
+    notes: "Panggilan: Karimah. Tone: Gen Z santai (gw/lu, akrab, santuy). Pacar / Pasangan Rafid. Data berlabel Karimah adalah miliknya."
+  },
+  {
+    name: "Mami",
+    phone: "6282297432850",
+    role: "Ibu",
+    relationship: "Ibu / Orang Tua",
+    notes: "Panggilan: Mami (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data/rekening berlabel Mami adalah miliknya sendiri."
+  },
+  {
+    name: "Papi",
+    phone: "62819703133",
+    role: "Ayah",
+    relationship: "Ayah / Orang Tua",
+    notes: "Panggilan: Papi (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data berlabel Papi adalah miliknya sendiri."
+  },
+  {
+    name: "Razita Ndut",
+    phone: "6282217584569",
+    role: "Adik",
+    relationship: "Adik / Keluarga",
+    notes: "Panggilan: Razita / Lord santai. Tone: Gen Z santai (gw/lu, santuy). Adik Rafid. Catatan/jadwal pelajaran/PR/data sekolah berlabel Razita adalah miliknya."
+  }
+];
+
 export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || "6281234567890");
 
 export function isOwner(chatId = "", senderNumber = "") {
@@ -185,28 +223,34 @@ export class Storage {
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
 
-    // Seed default owner directory if empty and configured
-    const contactCount = this.db.prepare("SELECT count(*) as count FROM contacts").get()?.count || 0;
-    if (contactCount === 0) {
-      const pName = process.env.PRIMARY_USER_NAME || "Owner";
-      const pPhone = process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "";
-      if (pPhone) {
+    // Seed default contact & whitelist directory
+    this.initDefaultProfiles();
+  }
+
+  initDefaultProfiles() {
+    for (const p of DEFAULT_CONTACT_PROFILES) {
+      const cleanPhone = normalizePhone(p.phone);
+      const existing = this.getPerson(cleanPhone) || this.getPerson(p.name);
+      if (!existing) {
         this.addPerson({
-          name: pName,
-          phone: pPhone,
-          role: "Owner / Principal",
-          notes: "Primary user",
-          relationship: "Owner"
+          name: p.name,
+          phone: cleanPhone,
+          role: p.role,
+          notes: p.notes,
+          relationship: p.relationship
         });
-      }
-      if (process.env.SECONDARY_USER_NAME && process.env.SECONDARY_USER_PHONE) {
-        this.addPerson({
-          name: process.env.SECONDARY_USER_NAME,
-          phone: process.env.SECONDARY_USER_PHONE,
-          role: "Partner",
-          notes: "Co-principal",
-          relationship: "Partner"
-        });
+      } else {
+        const targetName = (existing.name === "simas" || existing.name === "Owner") ? p.name : existing.name;
+        this.db.prepare(`
+          UPDATE contacts SET
+            name = ?,
+            phone = CASE WHEN phone = '' OR phone IS NULL THEN ? ELSE phone END,
+            role = CASE WHEN role = '' OR role IS NULL OR role = 'Keluarga' THEN ? ELSE role END,
+            relationship = CASE WHEN relationship = '' OR relationship IS NULL OR relationship = 'Keluarga' THEN ? ELSE relationship END,
+            notes = CASE WHEN notes = '' OR notes IS NULL OR notes LIKE 'Panggilan:%' THEN ? ELSE notes END,
+            updated_at = ?
+          WHERE id = ?
+        `).run(targetName, cleanPhone, p.role, p.relationship, p.notes, Date.now(), existing.id);
       }
     }
   }
@@ -771,18 +815,56 @@ export class Storage {
 
   getNote(chatId, key) {
     const cleanKey = String(key || "").trim().toLowerCase();
-    const row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND key = ?").get(chatId, cleanKey);
-    if (row) return row;
-    return this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND (key LIKE ? OR content LIKE ?) LIMIT 1").get(chatId, `%${cleanKey}%`, `%${cleanKey}%`) || null;
+    const clean = String(chatId || "").trim();
+    const norm = normalizePhone(clean);
+    const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
+
+    for (const cid of candidates) {
+      const row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND key = ?").get(cid, cleanKey);
+      if (row) return row;
+    }
+    for (const cid of candidates) {
+      const row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND (key LIKE ? OR content LIKE ?) LIMIT 1").get(cid, `%${cleanKey}%`, `%${cleanKey}%`);
+      if (row) return row;
+    }
+
+    // Global / shared fallback: periksa catatan keluarga jika tidak ditemukan di DM
+    const globalRow = this.db.prepare("SELECT * FROM notes WHERE key = ? OR key LIKE ? OR content LIKE ? LIMIT 1").get(cleanKey, `%${cleanKey}%`, `%${cleanKey}%`);
+    if (globalRow) return globalRow;
+
+    return null;
   }
 
   listNotes(chatId) {
-    return this.db.prepare("SELECT key, content, updated_at FROM notes WHERE chat_id = ? ORDER BY key ASC").all(chatId);
+    const clean = String(chatId || "").trim();
+    const norm = normalizePhone(clean);
+    const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
+    const placeholders = candidates.map(() => "?").join(", ");
+    return this.db.prepare(`SELECT key, content, updated_at FROM notes WHERE chat_id IN (${placeholders}) ORDER BY key ASC`).all(...candidates);
   }
 
   deleteNote(chatId, key) {
     const cleanKey = String(key || "").trim().toLowerCase();
-    return this.db.prepare("DELETE FROM notes WHERE chat_id = ? AND (key = ? OR key LIKE ?)").run(chatId, cleanKey, `%${cleanKey}%`).changes;
+    const clean = String(chatId || "").trim();
+    const norm = normalizePhone(clean);
+    const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
+    const placeholders = candidates.map(() => "?").join(", ");
+    return this.db.prepare(`DELETE FROM notes WHERE chat_id IN (${placeholders}) AND (key = ? OR key LIKE ?)`).run(...candidates, cleanKey, `%${cleanKey}%`).changes;
+  }
+
+  getUserTonePreference(chatIdOrPhone) {
+    if (!chatIdOrPhone) return null;
+    const clean = String(chatIdOrPhone).trim();
+    const norm = normalizePhone(clean);
+    const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
+    const keys = ["preferensi_komunikasi", "preferensi_tone", "tone", "gaya_bicara"];
+    for (const cid of candidates) {
+      for (const k of keys) {
+        const row = this.db.prepare("SELECT content FROM notes WHERE chat_id = ? AND (key = ? OR key LIKE ?) LIMIT 1").get(cid, k, `%${k}%`);
+        if (row && row.content) return row.content.trim();
+      }
+    }
+    return null;
   }
 
   // --- Contacts & Couple Directory ---
@@ -817,10 +899,10 @@ export class Storage {
       SELECT * FROM contacts 
       WHERE LOWER(name) = LOWER(?) 
          OR LOWER(name) LIKE LOWER(?) 
-         OR (phone != '' AND phone = ?)
+         OR (phone != '' AND (phone = ? OR phone = ?))
       ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id ASC
       LIMIT 1
-    `).get(q, `%${q}%`, norm, q) || null;
+    `).get(q, `%${q}%`, q, norm, q) || null;
   }
 
   listPersons() {
@@ -1344,6 +1426,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(pFind.name, "Bunga");
   const pList = store.listPersons();
   assert.ok(pList.some((p) => p.name === "Bunga"));
+  assert.ok(pList.some((p) => p.name === "Mami"));
+  assert.ok(pList.some((p) => p.name === "Karimah"));
+  const mamiContact = store.getPerson("6282297432850");
+  assert.ok(mamiContact);
+  assert.strictEqual(mamiContact.name, "Mami");
+
+  // Tone preference test
+  store.saveNote("6282297432850", "preferensi_komunikasi", "Panggil Bunda");
+  assert.strictEqual(store.getUserTonePreference("6282297432850"), "Panggil Bunda");
+  assert.strictEqual(store.getUserTonePreference("6282297432850@c.us"), "Panggil Bunda");
+  store.deleteNote("6282297432850", "preferensi_komunikasi");
+  assert.strictEqual(store.getUserTonePreference("6282297432850"), null);
+
   const pFormatted = formatPersonList(pList);
   assert.ok(pFormatted.includes("Bunga"));
   assert.ok(pFormatted.includes("Partner"));

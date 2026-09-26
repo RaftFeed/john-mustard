@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner, DEFAULT_CONTACT_PROFILES } from "./db.js";
 import { sendFile, sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
@@ -1889,7 +1889,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       }
     }
   } else if (name === "saveNote") {
-    const saved = store.saveNote(chatId, args.key, args.content);
+    const saved = store.saveNote(callerId, args.key, args.content);
+    const cleanKey = String(args.key || "").trim().toLowerCase();
+    if (cleanKey === "preferensi_komunikasi" || cleanKey === "preferensi_tone" || cleanKey === "tone" || cleanKey === "gaya_bicara") {
+      store.saveNote(chatId, args.key, args.content);
+      const callerNorm = normalizePhone(callerId);
+      if (callerNorm) store.saveNote(callerNorm, args.key, args.content);
+    }
     toolResult = {
       success: true,
       key: saved.key,
@@ -2163,7 +2169,75 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 - MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, WAJIB gunakan format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
-  const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction;
+  // Active speaker resolution & dynamic memory context
+  const callerPhone = normalizePhone(senderNumber || chatId);
+  let speaker = null;
+  if (store?.getPerson) {
+    speaker = store.getPerson(callerPhone) || store.getPerson(senderNumber) || store.getPerson(chatId);
+  }
+  if (!speaker && DEFAULT_CONTACT_PROFILES) {
+    speaker = DEFAULT_CONTACT_PROFILES.find((p) => normalizePhone(p.phone) === callerPhone);
+  }
+
+  const customTone = store?.getUserTonePreference ? store.getUserTonePreference(callerPhone || chatId) : null;
+
+  let activeSpeakerContext = "";
+  if (speaker) {
+    const isOwnerUser = isOwner(chatId, senderNumber);
+    const speakerName = speaker.name;
+    const speakerRel = speaker.relationship || speaker.role || "Anggota Keluarga";
+
+    let defaultToneDesc = "";
+    let callNameDesc = "";
+    let ownershipGuidance = "";
+
+    if (/^mami$/i.test(speakerName)) {
+      callNameDesc = `Panggil "Mami". DILARANG KERAS memanggil Mami dengan sebutan "Lord", "Sir", atau "cuy"!`;
+      defaultToneDesc = `Gaya bahasa santai, ramah, hangat, dan akrab (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu'). Tetap santai dan luwes, jangan kaku seperti robot/customer service.`;
+      ownershipGuidance = `Catatan, nomor rekening, agenda, to-do, atau pengingat yang berlabel "Mami", "mami", atau berkaitan dengan Mami adalah MILIK DIA SENDIRI! Jika Mami bertanya "norek aku berapa" atau "catatan punyaku", itu merujuk langsung ke rekening/catatan berlabel Mami (misal rekening_bca_mami). Berikan langsung datanya dan jangan katakan bahwa rekening itu milik orang lain!`;
+    } else if (/^papi$/i.test(speakerName)) {
+      callNameDesc = `Panggil "Papi". DILARANG KERAS memanggil Papi dengan sebutan "Lord", "Sir", atau "cuy"!`;
+      defaultToneDesc = `Gaya bahasa santai, ramah, hangat, dan bersahabat (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu').`;
+      ownershipGuidance = `Catatan, nomor rekening, to-do, atau data berlabel "Papi" adalah MILIK DIA SENDIRI. Jika Papi bertanya "norek aku berapa" atau mencari datanya, berikan langsung data milik Papi!`;
+    } else if (/^karimah$/i.test(speakerName)) {
+      callNameDesc = `Panggil "Karimah".`;
+      defaultToneDesc = `Gaya bahasa Gen Z santai, ramah, akrab (luwes pakai gw/lu, santuy, wkwk).`;
+      ownershipGuidance = `Karimah adalah pacar / pasangan Rafid. Catatan atau agenda berlabel Karimah adalah miliknya.`;
+    } else if (/^razita/i.test(speakerName)) {
+      callNameDesc = `Panggil "Razita" atau "Lord" santai.`;
+      defaultToneDesc = `Gaya bahasa Gen Z santai dan luwes (gw/lu, wkwk, sat-set, santuy).`;
+      ownershipGuidance = `Razita adalah adik Rafid. Catatan, jadwal pelajaran sekolah, PR, NISN, atau data sekolah yang tersimpan adalah miliknya.`;
+    } else if (isOwnerUser || /rafid|simas/i.test(speakerName)) {
+      callNameDesc = `Panggil "Lord" atau "Mas".`;
+      defaultToneDesc = `Gaya bahasa Gen Z santai, akrab, sat-set (gw/lu, wkwk, santuy).`;
+      ownershipGuidance = `Rafid adalah Master / Owner Bot. Data pribadi/umum tanpa penanda khusus adalah miliknya.`;
+    } else {
+      callNameDesc = `Panggil "${speakerName}".`;
+      defaultToneDesc = `Gaya bahasa ramah dan santai.`;
+      ownershipGuidance = `Data berlabel nama user adalah miliknya.`;
+    }
+
+    activeSpeakerContext = `\n\n[IDENTITAS LAWAN BICARA SAAT INI (ACTIVE SPEAKER)]:
+- Nama: ${speakerName}
+- Hubungan/Peran: ${speakerRel}
+- Nomor WhatsApp: +${callerPhone}
+- Aturan Panggilan: ${callNameDesc}
+- Aturan Tone & Bahasa: ${defaultToneDesc}
+- Aturan Kepemilikan Data ("aku" / "punyaku"): ${ownershipGuidance}`;
+  } else if (!isGroupChat) {
+    activeSpeakerContext = `\n\n[IDENTITAS LAWAN BICARA SAAT INI]:
+- Nomor WhatsApp: +${callerPhone}
+- Catatan: Nomor ini terdaftar di whitelist. Jawab secara ramah dan to the point.`;
+  }
+
+  if (customTone) {
+    activeSpeakerContext += `\n- PREFERENSI GAYA BICARA KUSTOM (OVERRIDE AKTIF):
+Pengguna ini telah mengatur preferensi gaya bicara/panggilan kustom:
+"${customTone}"
+PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone default di atas! Patuhi instruksi ini secara konsisten.`;
+  }
+
+  const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction;
 
   const userParts = [];
   if (audio) {
