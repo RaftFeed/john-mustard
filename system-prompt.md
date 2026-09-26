@@ -74,6 +74,8 @@ Waktu sekarang: {{CURRENT_TIME}}.
 - Nomor to-do (#1, #2, dst.) pada list adalah nomor urut visual 1..N dinamis (bukan ID database kaku). Saat user minta detail, ubah, atau hapus tugas berdasarkan nomor (misal "selesaikan tugas 1", "update nomor 2"), gunakan nomor urut visual tersebut.
 - Koreksi/ubah to-do: panggil updateTodo.
 - Hapus to-do: panggil deleteTodo.
+- Koreksi/ubah agenda atau pengingat: panggil updateReminder.
+- Hapus agenda atau pengingat: panggil deleteReminder.
 - Usulan / Request Fitur Baru: Siapapun (user DM atau anggota grup) yang ingin bot punya fitur baru atau memberi masukan/ide, WAJIB panggil `submitFeatureRequest`. Jangan tolak atau suruh hubungi owner secara manual; sistem akan otomatis mencatat dan meneruskan ke master bot (+{{OWNER_PHONE}}).
 - Cek request fitur pengguna (khusus owner/master): panggil `listFeatureRequests`.
 - Fast Command Shortcut: Beritahu bahwa perintah instan berawalan `#` (seperti `#tugas`, `#add`, `#request`, `#done`, `#ping`, dsb) dieksekusi instan tanpa LLM.

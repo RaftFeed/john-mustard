@@ -426,6 +426,41 @@ export class Storage {
     return res.changes;
   }
 
+  updateReminder(chatId, idOrQuery, { message, remindAt, recurrence, taskType } = {}) {
+    const scope = getUserTodoScope(chatId, this);
+    const cidCond = scope.isGroup
+      ? "chat_id = ?"
+      : `chat_id IN (${scope.chatIds.map(() => "?").join(", ")})`;
+    const params = scope.isGroup ? [chatId] : [...scope.chatIds];
+
+    let row = null;
+    if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
+      const num = Number(idOrQuery);
+      const list = this.listReminders(chatId);
+      if (num >= 1 && num <= list.length) {
+        row = list[num - 1];
+      } else {
+        row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ?`).get(...params, num);
+      }
+    } else {
+      const clean = `%${String(idOrQuery || "").trim()}%`;
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending' ORDER BY id DESC LIMIT 1`).get(...params, clean);
+    }
+
+    if (!row) return null;
+
+    const newMessage = message !== undefined && message !== null ? message : row.message;
+    const newRemindAt = remindAt !== undefined && remindAt !== null ? remindAt : row.remind_at;
+    const newRecurrence = recurrence !== undefined ? recurrence : row.recurrence;
+    const newTaskType = taskType !== undefined ? taskType : (row.task_type || "reminder");
+
+    const changes = this.db
+      .prepare("UPDATE reminders SET message = ?, remind_at = ?, recurrence = ?, task_type = ? WHERE id = ?")
+      .run(newMessage, newRemindAt, newRecurrence, newTaskType, row.id).changes;
+
+    return changes > 0 ? { id: row.id, message: newMessage, remindAt: newRemindAt, recurrence: newRecurrence, taskType: newTaskType } : null;
+  }
+
   addTodo(chatId, task, deadline = null, tag = null, category = null, assignee = "") {
     const cat = category || detectTaskCategory(task);
     const stmt = this.db.prepare(
@@ -1553,6 +1588,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(formattedRems.includes("🗓️ [Daftar Acara & Pengingat]"));
   assert.ok(formattedRems.includes("├── "));
   assert.ok(formattedRems.includes("└── "));
+
+  // updateReminder test
+  const updRem = store.updateReminder("rem_user", testRemId1, { message: "Jemput adik di terminal" });
+  assert.ok(updRem);
+  assert.strictEqual(updRem.message, "Jemput adik di terminal");
 
   assert.strictEqual(store.deleteReminder("rem_user", testRemId1), 1);
   assert.strictEqual(store.deleteReminder("rem_user", "listrik"), 1);

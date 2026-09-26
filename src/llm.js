@@ -133,6 +133,20 @@ export const TOOLS = [
         }
       },
       {
+        name: "updateReminder",
+        description: "Ubah/edit nama agenda, tanggal/jam, atau jadwal acara pengingat yang sudah ada",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            reminderId: { type: "NUMBER", description: "Nomor urut visual atau ID agenda yang mau diubah (opsional jika query diisi)" },
+            query: { type: "STRING", description: "Kata kunci nama agenda lama yang mau diubah" },
+            newMessage: { type: "STRING", description: "Nama atau pesan agenda yang baru" },
+            newRemindAtIso: { type: "STRING", description: "Jadwal/jam baru dalam format ISO 8601 (opsional)" },
+            recurrence: { type: "STRING", description: "Perulangan baru: daily, weekly, atau null jika sekali" }
+          }
+        }
+      },
+      {
         name: "setDailyDigest",
         description: "Aktifkan atau nonaktifkan pengiriman rekap to-do harian otomatis setiap pukul 07:00 WIB",
         parameters: {
@@ -644,19 +658,19 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.8-flash";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.5-flash-lite",
-  "gemini-3.1-flash-lite",
-  "gemini-flash-latest"
+  "gemini-flash-latest",
+  "gemini-3.5-flash",
+  "gemini-flash-lite-latest"
 ];
 
 export const SMART_CASCADE = [
-  "gemini-3.5-flash-lite",
-  DEFAULT_MODEL,
+  "gemini-3.8-flash",
+  "gemini-pro-latest",
   "gemini-flash-latest"
 ];
 
@@ -1083,7 +1097,7 @@ export async function fetchUrlContent(rawUrl) {
 
 const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "updateTodo", "deleteTodo", "undoLastTodo",
-  "addReminder", "deleteReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
+  "addReminder", "deleteReminder", "updateReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
   "submitFeatureRequest",
   "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",
   "processPdf", "mergePdf", "splitPdf", "compressPdf", "convertDocument",
@@ -1412,8 +1426,38 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     } else {
       const changes = store.deleteReminder(queryChatId, target);
       const remaining = store.listReminders(queryChatId);
-      formattedList = formatRemindersList(remaining);
-      toolResult = { success: changes > 0, deletedCount: changes, formattedList };
+      formattedList = remaining.length > 0 ? formatRemindersList(remaining) : null;
+      toolResult = {
+        success: changes > 0,
+        deletedCount: changes,
+        remainingCount: remaining.length,
+        message: changes > 0 ? "Pengingat/agenda berhasil dihapus." : "Pengingat tidak ditemukan."
+      };
+    }
+  } else if (name === "updateReminder") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const target = args.reminderId || args.query;
+    if (!target) {
+      toolResult = { error: "reminderId atau query wajib diisi untuk mengubah agenda/pengingat." };
+    } else {
+      const remindAt = args.newRemindAtIso ? new Date(args.newRemindAtIso).getTime() : undefined;
+      const updated = store.updateReminder(queryChatId, target, {
+        message: args.newMessage,
+        remindAt: isNaN(remindAt) ? undefined : remindAt,
+        recurrence: args.recurrence
+      });
+      if (!updated) {
+        toolResult = { error: `Agenda/pengingat '${target}' tidak ditemukan.` };
+      } else {
+        const remaining = store.listReminders(queryChatId);
+        formattedList = formatRemindersList(remaining);
+        toolResult = {
+          success: true,
+          updated,
+          message: `Agenda berhasil diubah menjadi '${updated.message}'.`,
+          formattedList
+        };
+      }
     }
   } else if (name === "setDailyDigest") {
     const enable = Boolean(args.enable);
@@ -2518,6 +2562,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("addReminder"));
     assert.ok(decls.includes("listReminders"));
     assert.ok(decls.includes("deleteReminder"));
+    assert.ok(decls.includes("updateReminder"));
     assert.ok(decls.includes("saveNote"));
     assert.ok(decls.includes("appendNote"));
     assert.ok(decls.includes("getNote"));
@@ -2595,11 +2640,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
 
     // Dynamic Model Tier Selection Tests
-    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-flash-lite-latest");
-    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-flash-lite-latest");
-    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.5-flash-lite");
-    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.5-flash-lite");
-    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.8-flash");
 
     // Mid-Turn Mailbox Steering Tests
     const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];
