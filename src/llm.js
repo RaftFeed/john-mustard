@@ -658,19 +658,19 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.8-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-flash-latest",
-  "gemini-3.5-flash",
-  "gemini-flash-lite-latest"
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-latest"
 ];
 
 export const SMART_CASCADE = [
-  "gemini-3.8-flash",
-  "gemini-pro-latest",
+  "gemini-3.5-flash-lite",
+  DEFAULT_MODEL,
   "gemini-flash-latest"
 ];
 
@@ -1260,10 +1260,15 @@ export async function generateContent(rotator, payload, baseCascade = null) {
       const isTimeout = msg.includes("timeout") || msg.includes("aborted");
       const is404 = err.status === 404 || msg.includes("404") || msg.includes("NOT_FOUND");
 
-      if (is503 || isTimeout || is404) {
+      if (is404) {
+        markModelUnavailable(model, 24 * 60 * 60 * 1000); // 404 model dead -> demote 24 jam
+        console.warn(`[LLM] Model ${model} NOT FOUND (404). Demoted 24 jam.`);
+      } else if (is503 || isTimeout) {
         markModelUnavailable(model, 120_000);
+        console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 120s. Mencoba model berikutnya...`);
+      } else {
+        console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
       }
-      console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 120s. Mencoba model berikutnya...`);
     }
   }
 
@@ -2640,11 +2645,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
 
     // Dynamic Model Tier Selection Tests
-    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-3.8-flash");
-    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-3.8-flash");
-    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.8-flash");
-    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.8-flash");
-    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-flash-lite-latest");
+    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-flash-lite-latest");
+    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.5-flash-lite");
 
     // Mid-Turn Mailbox Steering Tests
     const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];
