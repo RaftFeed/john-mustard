@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, normalizePhone, OWNER_PHONE } from "./db.js";
-import { sendText, getWhitelistPhones } from "./waha.js";
+import { sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
@@ -134,6 +134,15 @@ export function parseFastCommand(text = "") {
 
   if (/^#whitelist\b/i.test(trimmed)) {
     return { type: "whitelist" };
+  }
+
+  const pcMatch = trimmed.match(/^#(pc|japri|dm|pm)\s+(\S+)\s+(.+)$/is);
+  if (pcMatch) {
+    return {
+      type: "sendDirectMessage",
+      recipient: pcMatch[2],
+      message: pcMatch[3].trim()
+    };
   }
 
   if (/^#(health|server|sys|system)\b/i.test(trimmed)) {
@@ -349,6 +358,33 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return lines.join("\n");
     }
 
+    case "sendDirectMessage": {
+      const rawTarget = String(cmd.recipient || "").trim();
+      const rawMsg = String(cmd.message || "").trim();
+      if (!rawTarget || !rawMsg) {
+        return "[!] Format salah. Contoh: `#pc karimah tolong beli beras`";
+      }
+      const res = resolveWhitelistRecipient(rawTarget, store);
+      if (!res) {
+        return `[!] Kontak atau nomor '${rawTarget}' tidak valid.`;
+      }
+      if (res.error) {
+        return `[!] ${res.error}`;
+      }
+      const senderDisplay = formatSenderDisplay(senderNumber || chatId, senderName, store);
+      const outboundText = `📩 *[Pesan dari ${senderDisplay}]*\n\n${rawMsg}`;
+      try {
+        await sendText(`${res.targetPhone}@c.us`, outboundText);
+      } catch (err) {
+        if (err.cause?.code === "ECONNREFUSED" || err.message?.includes("ECONNREFUSED")) {
+          console.warn(`[WAHA] Offline dev/test mode - message not dispatched: ${err.message}`);
+        } else {
+          return `[!] Gagal mengirim pesan ke WhatsApp: ${err.message}`;
+        }
+      }
+      return `[OK] Pesan berhasil dikirimkan ke ${res.recipientDisplayName} (+${res.targetPhone}) via chat pribadi (PC).`;
+    }
+
     case "proposals": {
       const props = listSkillProposals();
       if (!props.pending || props.pending.length === 0) {
@@ -460,6 +496,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #rollback <skill> [v] — Kembalikan versi skill
 - #kontak — Direktori koordinasi pasangan & keluarga
 - #whitelist — Cek daftar nomor yang di-whitelist
+- #pc <nama/nomor> <pesan> — Kirim pesan pribadi (PC) langsung ke kontak whitelist (alias: #japri)
 
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
@@ -587,6 +624,17 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(reqDoneCmd.type, "requestDone");
       const reqDoneRes = await executeFastCommand(reqDoneCmd, { store, chatId, isOwner: true });
       assert.ok(reqDoneRes.includes("selesai"));
+
+      // Fast command #pc test
+      const pcCmd = parseFastCommand("#pc karimah tolong beli garam");
+      assert.strictEqual(pcCmd.type, "sendDirectMessage");
+      assert.strictEqual(pcCmd.recipient, "karimah");
+      assert.strictEqual(pcCmd.message, "tolong beli garam");
+
+      const japriCmd = parseFastCommand("#japri 628999999999 halo");
+      assert.strictEqual(japriCmd.type, "sendDirectMessage");
+      const japriDenied = await executeFastCommand(japriCmd, { store, chatId });
+      assert.ok(japriDenied.includes("tidak terdaftar dalam whitelist"));
 
       console.log("Commands module self-test OK");
     });

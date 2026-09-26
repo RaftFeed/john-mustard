@@ -175,6 +175,99 @@ export function getWhitelistPhones(rawList) {
   return Array.from(phones);
 }
 
+export function resolveWhitelistRecipient(rawTarget, store = null) {
+  if (!rawTarget) return null;
+  const targetStr = String(rawTarget).trim();
+  const whitelist = getWhitelistPhones();
+  let targetPhone = "";
+  let recipientDisplayName = targetStr;
+
+  // 1. Nomor telepon langsung / digit / LID
+  const digits = targetStr.replace(/\D/g, "");
+  if (digits.length >= 9 && digits.length <= 15) {
+    targetPhone = digits.startsWith("0") ? "62" + digits.slice(1) : digits;
+  } else if (digits.length > 15) {
+    const fromLid = resolveLidToPhone(digits);
+    if (fromLid) targetPhone = fromLid;
+  }
+
+  // 2. Alias nama pengguna utama / sekunder dari environment
+  if (!targetPhone) {
+    const lower = targetStr.toLowerCase();
+    const primaryName = (process.env.PRIMARY_USER_NAME || "rafid").toLowerCase();
+    const secondaryName = (process.env.SECONDARY_USER_NAME || "karimah").toLowerCase();
+
+    if (lower.includes(primaryName) || lower === "owner" || lower === "master") {
+      targetPhone = (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "");
+      recipientDisplayName = process.env.PRIMARY_USER_NAME || "Rafid";
+    } else if (lower.includes(secondaryName) || lower === "istri" || lower === "pasangan") {
+      targetPhone = (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "");
+      recipientDisplayName = process.env.SECONDARY_USER_NAME || "Karimah";
+    }
+  }
+
+  // 3. Direktori kontak SQLite (getPerson)
+  if (!targetPhone && store?.getPerson) {
+    const p = store.getPerson(targetStr);
+    if (p?.phone) {
+      targetPhone = String(p.phone).replace(/\D/g, "");
+      recipientDisplayName = p.name;
+    }
+  }
+
+  // 4. Pencarian fleksibel pada listPersons SQLite
+  if (!targetPhone && store?.listPersons) {
+    const allP = store.listPersons();
+    const found = allP.find((c) =>
+      c.name.toLowerCase().includes(targetStr.toLowerCase()) ||
+      targetStr.toLowerCase().includes(c.name.toLowerCase())
+    );
+    if (found?.phone) {
+      targetPhone = String(found.phone).replace(/\D/g, "");
+      recipientDisplayName = found.name;
+    }
+  }
+
+  if (!targetPhone) {
+    return {
+      error: `Kontak atau nomor '${targetStr}' tidak ditemukan di direktori kontak maupun whitelist.`
+    };
+  }
+
+  if (targetPhone.startsWith("0")) targetPhone = "62" + targetPhone.slice(1);
+
+  if (!whitelist.includes(targetPhone)) {
+    return {
+      error: `Nomor +${targetPhone} (${recipientDisplayName}) tidak terdaftar dalam whitelist akses bot. Bot hanya diizinkan mengirim pesan pribadi ke nomor yang ada di whitelist.`,
+      targetPhone,
+      recipientDisplayName,
+      isWhitelisted: false
+    };
+  }
+
+  return {
+    targetPhone,
+    recipientDisplayName,
+    isWhitelisted: true
+  };
+}
+
+export function formatSenderDisplay(senderNumber, senderName = "", store = null) {
+  const senderClean = String(senderNumber || "").replace(/\D/g, "");
+  if (senderClean === (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "")) {
+    return process.env.PRIMARY_USER_NAME || "Rafid";
+  }
+  if (senderClean === (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "")) {
+    return process.env.SECONDARY_USER_NAME || "Karimah";
+  }
+  if (store?.listPersons && senderClean) {
+    const p = store.listPersons().find((c) => String(c.phone).replace(/\D/g, "") === senderClean);
+    if (p?.name) return p.name;
+  }
+  if (senderName && senderName.trim()) return senderName.trim();
+  return senderClean ? `+${senderClean}` : "Pengguna";
+}
+
 export function normalizeMentionsInText(text) {
   if (!text || typeof text !== "string") return text;
   return text.replace(/@(\d{8,20})\b/g, (match, digits) => {
@@ -861,6 +954,34 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.ok(testWl.includes("6282297432850"));
   assert.ok(testWl.includes("6282217584569"));
   assert.ok(testWl.includes("62819703133"));
+
+  // 14. Whitelist recipient resolver tests
+  const prevWlEnv = process.env.WHITELIST_PHONE;
+  process.env.WHITELIST_PHONE = "+6285236467838,+6289514718700,+6282297432850";
+  process.env.PRIMARY_USER_PHONE = "6285236467838";
+  process.env.PRIMARY_USER_NAME = "Rafid";
+  process.env.SECONDARY_USER_PHONE = "6289514718700";
+  process.env.SECONDARY_USER_NAME = "Karimah";
+
+  const resolvedAlias = resolveWhitelistRecipient("karimah");
+  assert.strictEqual(resolvedAlias.targetPhone, "6289514718700");
+  assert.strictEqual(resolvedAlias.isWhitelisted, true);
+
+  const mockStore = {
+    getPerson: (name) => (name.toLowerCase() === "mami" ? { name: "Mami", phone: "6282297432850" } : null),
+    listPersons: () => [{ name: "Mami", phone: "6282297432850" }]
+  };
+  const resolvedContact = resolveWhitelistRecipient("mami", mockStore);
+  assert.strictEqual(resolvedContact.targetPhone, "6282297432850");
+  assert.strictEqual(resolvedContact.isWhitelisted, true);
+
+  const blockedStranger = resolveWhitelistRecipient("628999999999");
+  assert.strictEqual(blockedStranger.isWhitelisted, false);
+  assert.ok(blockedStranger.error.includes("tidak terdaftar dalam whitelist"));
+
+  const senderNameOwner = formatSenderDisplay("6285236467838");
+  assert.strictEqual(senderNameOwner, "Rafid");
+  process.env.WHITELIST_PHONE = prevWlEnv || "";
 
   assert.strictEqual(typeof resolvePhoneToLid, "function");
   assert.strictEqual(typeof startTyping, "function");

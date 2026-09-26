@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
-import { sendFile, sendText, getWhitelistPhones } from "./waha.js";
+import { sendFile, sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { formatServerHealth } from "./commands.js";
@@ -621,6 +621,24 @@ export const TOOLS = [
           type: "OBJECT",
           properties: {}
         }
+      },
+      {
+        name: "sendDirectMessage",
+        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. Gunakan saat pengguna minta tolong PC/japri/DM/kirim link/pesan ke orang lain di whitelist (misal: 'tolong pc rafli link video tadi', 'japri karimah tolong beli beras', 'pc razita ndut ingetin pr'). Target penerima WAJIB terdaftar di whitelist bot.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            recipient: {
+              type: "STRING",
+              description: "Nama kontak tujuan (misal: 'Karimah', 'Mami', 'Papi', 'Razita Ndut', 'Rafid') atau nomor telepon tujuan (format 628... / +628...)."
+            },
+            message: {
+              type: "STRING",
+              description: "Isi pesan lengkap, catatan, atau tautan/link yang ingin dikirimkan langsung ke nomor tujuan via chat pribadi (PC)."
+            }
+          },
+          required: ["recipient", "message"]
+        }
       }
     ]
   }
@@ -1181,7 +1199,7 @@ export function formatForWhatsApp(text = "") {
 
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|pc|japri|pm|dm|chat|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
@@ -2014,6 +2032,43 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       formattedList = formatted;
       toolResult = { success: true, status, formatted };
     }
+  } else if (name === "sendDirectMessage") {
+    const rawTarget = String(args.recipient || "").trim();
+    const rawMsg = String(args.message || "").trim();
+    if (!rawTarget || !rawMsg) {
+      toolResult = { error: "Penerima (recipient) dan isi pesan (message) wajib diisi." };
+      return { toolResult, formattedList };
+    }
+
+    const res = resolveWhitelistRecipient(rawTarget, store);
+    if (!res) {
+      toolResult = { error: `Kontak atau nomor '${rawTarget}' tidak valid.` };
+      return { toolResult, formattedList };
+    }
+    if (res.error) {
+      toolResult = { error: res.error };
+      return { toolResult, formattedList };
+    }
+
+    const senderDisplay = formatSenderDisplay(senderNumber || chatId, "", store);
+    const outboundText = `📩 *[Pesan dari ${senderDisplay}]*\n\n${rawMsg}`;
+    try {
+      await sendText(`${res.targetPhone}@c.us`, outboundText);
+    } catch (err) {
+      if (err.cause?.code === "ECONNREFUSED" || err.message?.includes("ECONNREFUSED")) {
+        console.warn(`[WAHA] Offline dev/test mode - message not dispatched: ${err.message}`);
+      } else {
+        toolResult = { error: `Gagal mengirimkan pesan ke WhatsApp: ${err.message}` };
+        return { toolResult, formattedList };
+      }
+    }
+
+    toolResult = {
+      success: true,
+      recipient: res.recipientDisplayName,
+      phone: `+${res.targetPhone}`,
+      message: `Pesan berhasil dikirimkan ke ${res.recipientDisplayName} (+${res.targetPhone}) via chat pribadi (PC).`
+    };
   } else {
     toolResult = { error: "Unknown function" };
   }
@@ -2380,8 +2435,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("gimana kondisi server bot"), true);
     assert.strictEqual(isActionIntent("cek server menkrep"), true);
     assert.strictEqual(isActionIntent("ada yang online mc gak"), true);
+    assert.strictEqual(isActionIntent("tolong pc karimah link video ini"), true);
+    assert.strictEqual(isActionIntent("japri razita tugas tadi"), true);
     assert.ok(decls.includes("checkServerHealth"));
     assert.ok(decls.includes("checkMinecraftServer"));
+    assert.ok(decls.includes("sendDirectMessage"));
 
     // SSRF Safety Tests
     assert.strictEqual(isSafeUrl("http://localhost:3000/api"), false);
@@ -2483,6 +2541,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     // Group Vault Isolation test
     executeTool("searchVault", { query: "KTP" }, { store: null, chatId: "1203630234567890@g.us" }).then((res) => {
       assert.ok(res.toolResult.error?.includes("dinonaktifkan di obrolan grup"));
+    });
+
+    // sendDirectMessage Whitelist barrier tests
+    process.env.WHITELIST_PHONE = "+6285236467838,+6289514718700";
+    process.env.SECONDARY_USER_NAME = "Karimah";
+    process.env.SECONDARY_USER_PHONE = "6289514718700";
+
+    executeTool("sendDirectMessage", { recipient: "628999999999", message: "halo" }, { store: null, chatId: OWNER_PHONE }).then((res) => {
+      assert.ok(res.toolResult.error?.includes("tidak terdaftar dalam whitelist"));
+    });
+    executeTool("sendDirectMessage", { recipient: "karimah", message: "halo" }, { store: null, chatId: OWNER_PHONE }).then((res) => {
+      assert.strictEqual(res.toolResult.success, true);
+      assert.ok(res.toolResult.message?.includes("Karimah"));
     });
 
     // processChat sanity & TDZ regression tests
