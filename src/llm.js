@@ -2008,12 +2008,12 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   // Multi-turn context: muat riwayat pesan terakhir
   const history = store ? store.getRecentChatHistory(chatId, 6) : [];
+  const isGroupChat = String(chatId).endsWith("@g.us");
   const isGreeting = isGreetingIntent(userText) && !isGroupChat;
   const greetingInstruction = isGreeting
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
 
-  const isGroupChat = String(chatId).endsWith("@g.us");
   const groupContext = isGroupChat
     ? `\n\n[OBROLAN GRUP KELUARGA]:
 - TONE & BAHASA: Kamu saat ini berbicara di obrolan grup keluarga. Gunakan gaya bahasa yang sopan, ramah, hangat, dan santun (pakai kata 'aku/kamu' atau netral santun). DILARANG KERAS menggunakan kata 'gw/gua', 'lu/lo', atau slang kasar di grup ini.
@@ -2214,7 +2214,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 }
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
-  import("node:assert").then(({ default: assert }) => {
+  import("node:assert").then(async ({ default: assert }) => {
     assert.strictEqual(typeof processChat, "function");
     assert.strictEqual(typeof executeTool, "function");
     assert.strictEqual(isActionIntent("tambahkan tugas"), true);
@@ -2381,6 +2381,15 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     executeTool("searchVault", { query: "KTP" }, { store: null, chatId: "1203630234567890@g.us" }).then((res) => {
       assert.ok(res.toolResult.error?.includes("dinonaktifkan di obrolan grup"));
     });
+
+    // processChat sanity & TDZ regression tests
+    const mockRotator = {
+      execute: async () => ({
+        candidates: [{ content: { parts: [{ text: "Halo juga!" }] } }]
+      })
+    };
+    await processChat(mockRotator, "halo", { chatId: "628123456789@c.us" });
+    await processChat(mockRotator, "halo", { chatId: "1203630234567890@g.us" });
 
     console.log("LLM module self-test OK");
   });
