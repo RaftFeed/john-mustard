@@ -40,7 +40,8 @@ export const TOOLS = [
           type: "OBJECT",
           properties: {
             includeRoutine: { type: "BOOLEAN", description: "Set true untuk menyertakan tugas rutin/kuliah/absen (default false)" },
-            assignee: { type: "STRING", description: "Filter to-do list berdasarkan orang yang ditugaskan (opsional)" }
+            assignee: { type: "STRING", description: "Filter to-do list berdasarkan orang yang ditugaskan (opsional)" },
+            includeDone: { type: "BOOLEAN", description: "Set true jika user minta melihat tugas yang sudah selesai atau meminta semua tugas termasuk yang sudah dikerjakan (default false)" }
           }
         }
       },
@@ -1330,7 +1331,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null);
+    const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null, Boolean(args.includeDone));
     formattedList = formatTodoList(todos, isGroup);
     toolResult = {
       count: todos.length,
@@ -1351,7 +1352,9 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const changes = store.completeTodo(args.todoId, queryChatId);
-    toolResult = { success: changes > 0, todoId: args.todoId };
+    const remaining = store.getTodos(queryChatId, false);
+    formattedList = formatTodoList(remaining, isGroup);
+    toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
   } else if (name === "undoLastTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const undone = store.undoLastDone(queryChatId);

@@ -469,13 +469,28 @@ export class Storage {
     return stmt.run(chatId, task, deadline, tag, cat, assignee || "", Date.now()).lastInsertRowid;
   }
 
-  getTodos(chatId, includeRoutine = false, assignee = null) {
+  getTodos(chatId, includeRoutine = false, assignee = null, includeDone = false) {
     const scope = getUserTodoScope(chatId, this);
+    let showDone = Boolean(includeDone);
+
+    // Auto-enable completed tasks if user preference note explicitly requests it
+    if (!showDone && this.getNote) {
+      try {
+        const pref = this.getNote(chatId, "preferensi_reminder_pr");
+        if (pref && /selesai/i.test(pref.content || pref)) {
+          showDone = true;
+        }
+      } catch {}
+    }
+
     let sql = `
-      SELECT id, task, deadline, tag, category, assignee 
+      SELECT id, task, deadline, tag, category, assignee, done 
       FROM todos 
-      WHERE done = 0
+      WHERE 1=1
     `;
+    if (!showDone) {
+      sql += " AND done = 0";
+    }
     const params = [];
 
     const isExplicitAll = assignee && /^(all|semua|keluarga|household)$/i.test(assignee.trim());
@@ -512,6 +527,7 @@ export class Storage {
       sql += " AND (category != 'routine' OR category IS NULL)";
     }
     sql += ` ORDER BY 
+      done ASC,
       CASE 
         WHEN tag LIKE '%[P1]%' OR tag LIKE '%#p1%' OR LOWER(tag) LIKE '%p1%' OR LOWER(tag) LIKE '%urgent%' OR LOWER(tag) LIKE '%darurat%' THEN 1
         WHEN tag LIKE '%[P2]%' OR tag LIKE '%#p2%' OR LOWER(tag) LIKE '%p2%' OR LOWER(tag) LIKE '%high%' THEN 2
@@ -1287,8 +1303,11 @@ export function formatTodoList(todos, isGroup = false) {
   todos.forEach((item, index) => {
     let badge = "⚪";
     let deadlineStr = "Tanpa deadline";
+    const isDone = Boolean(item.done);
 
-    if (item.deadline) {
+    if (isDone) {
+      badge = "✅";
+    } else if (item.deadline) {
       const dl = new Date(item.deadline);
       const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
 
@@ -1318,6 +1337,22 @@ export function formatTodoList(todos, isGroup = false) {
       }
     }
 
+    if (isDone) {
+      if (item.deadline) {
+        const dl = new Date(item.deadline);
+        const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+        const dayName = daysId[dlWib.getUTCDay()];
+        const dateNum = dlWib.getUTCDate();
+        const monthName = monthsId[dlWib.getUTCMonth()];
+        const year = dlWib.getUTCFullYear();
+        const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+        const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+        deadlineStr = `${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes} (Selesai)`;
+      } else {
+        deadlineStr = "Selesai";
+      }
+    }
+
     const tagBase = item.tag ? item.tag.trim() : "#tugas";
     const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
       const clean = t.replace(/^`+|`+$/g, "");
@@ -1327,13 +1362,17 @@ export function formatTodoList(todos, isGroup = false) {
     if (item.category === "routine") {
       tagTokens.push("[Rutin]");
     }
+    if (isDone) {
+      tagTokens.push("[Selesai]");
+    }
     if (isGroup && item.assignee) {
       tagTokens.push(`[👤 ${item.assignee}]`);
     }
 
     const tagLine = tagTokens.length > 0 ? `\`${tagTokens.join(" ")}\`` : "`#tugas`";
+    const titleText = isDone ? `*[${index + 1}] [SELESAI] ${item.task}*` : `*[${index + 1}] ${item.task}*`;
 
-    lines.push(`${badge} *[${index + 1}] ${item.task}*`);
+    lines.push(`${badge} ${titleText}`);
     lines.push(`├── ${deadlineStr}`);
     lines.push(`└── ${tagLine}\n`);
   });
@@ -1700,6 +1739,16 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   // Explicit target check: Rafid asks for Razita's tasks
   const checkedRazita = store.getTodos(rafidPhone, false, "Razita");
   assert.ok(checkedRazita.some((t) => t.id === taskRazita));
+
+  // Completed task test with includeDone & formatTodoList
+  store.completeTodo(taskRazita, razitaPhone);
+  assert.strictEqual(store.getTodos(razitaPhone, false, null, false).length, 0);
+  const razitaWithDone = store.getTodos(razitaPhone, false, null, true);
+  assert.strictEqual(razitaWithDone.length, 1);
+  assert.strictEqual(razitaWithDone[0].done, 1);
+  const formattedDone = formatTodoList(razitaWithDone);
+  assert.ok(formattedDone.includes("[SELESAI]"));
+  assert.ok(formattedDone.includes("✅"));
 
   // Reminders Isolation tests
   const remRafid = store.addReminder(rafidPhone, "Meeting Rafid", Date.now() + 3600_000);
