@@ -39,6 +39,8 @@ services:
       - PYTHON_RUNNER_URL=http://runner:8000/run
     volumes:
       - ./.env:/app/.env:ro
+      - ./config:/app/config:ro
+      - ./system-prompt.md:/app/system-prompt.md:ro
       - ./data:/app/data
       - ./vault:/app/vault
       - ./skills:/app/skills

@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY skills/ ./skills/
+COPY system-prompt.md ./
 
 RUN mkdir -p /app/data /app/vault/documents /app/vault/receipts /app/vault/id_cards /app/vault/media
 

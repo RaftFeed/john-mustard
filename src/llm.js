@@ -605,8 +605,15 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = "gemini-3.1-flash-lite";
-const FALLBACK_MODEL = "gemini-3-flash-preview";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const FALLBACK_MODEL = "gemini-2.0-flash";
+
+const DEFAULT_CASCADE = [
+  DEFAULT_MODEL,
+  "gemini-2.5-pro",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash"
+];
 
 const modelCooldowns = new Map(); // model -> timestamp
 
@@ -619,12 +626,15 @@ export function clearModelCooldowns() {
   modelCooldowns.clear();
 }
 
-export function getActiveModels(baseModels = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-flash-latest", FALLBACK_MODEL, "gemini-3.5-flash-lite"]) {
+export function getActiveModels(baseModels = DEFAULT_CASCADE) {
+  const models = process.env.GEMINI_MODELS
+    ? process.env.GEMINI_MODELS.split(",").map((m) => m.trim()).filter(Boolean)
+    : baseModels;
   const now = Date.now();
   const healthy = [];
   const cooling = [];
 
-  for (const m of baseModels) {
+  for (const m of models) {
     const until = modelCooldowns.get(m) || 0;
     if (until <= now) {
       healthy.push(m);
@@ -2005,7 +2015,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   const isGroupChat = String(chatId).endsWith("@g.us");
   const groupContext = isGroupChat
-    ? `\n\n[OBROLAN GRUP]: Kamu saat ini berada di dalam grup WhatsApp. Jawab secara ringkas, to the point, dan santai ala anak muda/Gen Z. Jangan nimbrung kalau user ngobrol sesama mereka. Wajib jawab jika di-tag (@), di-reply, atau dipanggil ("john", "mustard", "bot"). DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
+    ? `\n\n[OBROLAN GRUP & FOLLOW-UP CONTINUITY]: Kamu saat ini berada di dalam grup WhatsApp. Jawab secara ringkas, to the point, dan santai ala anak muda/Gen Z. Jangan nimbrung kalau user murni ngobrol sesama mereka. Wajib jawab jika di-tag (@), di-reply, dipanggil ("john", "mustard", "bot"), atau jika ini lanjutan pertanyaan/follow-up dari obrolanmu sebelumnya. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
     : "";
 
   const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
@@ -2052,8 +2062,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     contents.push({ role: "user", parts: userParts });
   }
 
-  const isAction = isActionIntent(userText);
-  let toolConfig = isAction ? { functionCallingConfig: { mode: "ANY" } } : undefined;
+  // LLM Autonomy: biarkan Gemini menentukan sendiri secara native (mode AUTO) apakah perlu eksekusi tool atau cukup teks
+  let toolConfig = { functionCallingConfig: { mode: "AUTO" } };
 
   const toolsCalled = [];
   const executedTrajectory = [];

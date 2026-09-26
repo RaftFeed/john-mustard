@@ -5,6 +5,33 @@ import path from "node:path";
 let currentBotNumber = (process.env.BOT_PHONE || "").replace(/\D/g, "") || null;
 let currentBotLid = null;
 const botSentMessageIds = new Set();
+const lastBotMessageTimePerChat = new Map(); // chatId -> timestamp ms
+
+export function recordBotActivity(chatId) {
+  if (!chatId) return;
+  const now = Date.now();
+  const strId = String(chatId);
+  lastBotMessageTimePerChat.set(strId, now);
+  const clean = strId.split("@")[0];
+  lastBotMessageTimePerChat.set(clean, now);
+}
+
+export function isRecentBotThread(chatId, windowMs = 120_000) {
+  if (!chatId) return false;
+  const now = Date.now();
+  const strId = String(chatId);
+  const t1 = lastBotMessageTimePerChat.get(strId) || 0;
+  const t2 = lastBotMessageTimePerChat.get(strId.split("@")[0]) || 0;
+  const lastTime = Math.max(t1, t2);
+  return (now - lastTime) <= windowMs;
+}
+
+export function setLastBotMessageTime(chatId, timestamp) {
+  if (!chatId) return;
+  const strId = String(chatId);
+  lastBotMessageTimePerChat.set(strId, timestamp);
+  lastBotMessageTimePerChat.set(strId.split("@")[0], timestamp);
+}
 
 export function recordBotSentMessage(msgId) {
   if (!msgId) return;
@@ -131,6 +158,7 @@ export async function sendSingleText(chatId, text, replyTo = null) {
   if (resData?.id) {
     recordBotSentMessage(resData.id);
   }
+  recordBotActivity(chatId);
   return resData;
 }
 
@@ -195,6 +223,7 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
           if (fallbackData?.id) recordBotSentMessage(fallbackData.id);
+          recordBotActivity(chatId);
           return fallbackData;
         }
       } catch {}
@@ -204,6 +233,7 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
   }
   const fileResData = await res.json();
   if (fileResData?.id) recordBotSentMessage(fileResData.id);
+  recordBotActivity(chatId);
   return fileResData;
 }
 
@@ -324,7 +354,8 @@ export function parseIncoming(body, allowedPhone) {
   const quoted = extractQuotedInfo(msg);
   const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
 
-  // Grup WA: Cek apakah di-mention (@) atau reply ke pesan bot
+  let isFollowUpThread = false;
+  // Grup WA: Cek apakah di-mention (@), reply ke pesan bot, atau active follow-up thread continuity (Helmis pattern)
   if (isGroup) {
     const mentionedList = [
       ...(Array.isArray(msg.mentionedIds) ? msg.mentionedIds : []),
@@ -370,7 +401,10 @@ export function parseIncoming(body, allowedPhone) {
       (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid))
     );
 
-    if (!isMentioned && !isReplyToBot) {
+    // 4. Helmis pattern: Active Follow-Up Thread Continuity (within 120s of bot reply)
+    isFollowUpThread = isRecentBotThread(msg.from, 120_000);
+
+    if (!isMentioned && !isReplyToBot && !isFollowUpThread) {
       return null;
     }
   }
@@ -415,7 +449,8 @@ export function parseIncoming(body, allowedPhone) {
     mimetype,
     timestamp: msg.timestamp,
     quoted,
-    isGroup
+    isGroup,
+    isFollowUpThread
   };
 }
 
@@ -561,6 +596,41 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
     }
   }, "6281234567890");
   assert.ok(replyTracked !== null, "Reply ke pesan bot dengan ID terlacak wajib diproses");
+
+  // 7. Active Follow-Up Thread Continuity in group -> processed
+  assert.strictEqual(isRecentBotThread("nonexistent_chat@g.us"), false);
+  recordBotActivity(groupChatId);
+  assert.strictEqual(isRecentBotThread(groupChatId), true);
+
+  const followUpMessage = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_FOLLOWUP",
+      from: groupChatId,
+      participant: "628999999999@c.us",
+      fromMe: false,
+      body: "yang besok apa aja?",
+      timestamp: 1700000026
+    }
+  }, "6281234567890");
+  assert.ok(followUpMessage !== null, "Pesan lanjutan (follow-up) di grup dalam 2 menit wajib diproses");
+  assert.strictEqual(followUpMessage.isFollowUpThread, true);
+
+  // Expired follow-up thread (> 120s) -> ignored if no mention
+  setLastBotMessageTime(groupChatId, Date.now() - 130_000);
+  assert.strictEqual(isRecentBotThread(groupChatId), false);
+  const expiredFollowUp = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_EXPIRED",
+      from: groupChatId,
+      participant: "628999999999@c.us",
+      fromMe: false,
+      body: "ngobrol biasa setelah lewat batas",
+      timestamp: 1700000027
+    }
+  }, "6281234567890");
+  assert.strictEqual(expiredFollowUp, null, "Pesan setelah thread kadaluarsa wajib diabaikan");
 
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");
