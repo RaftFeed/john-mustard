@@ -1095,10 +1095,11 @@ export function isActionIntent(text = "") {
 
 export function isGreetingIntent(text = "") {
   if (!text) return false;
-  const t = text.trim();
+  const t = text.trim().replace(/^@\S+\s*/, "").trim();
   return (
-    /^(p|halo|hai|hey|hei|woi|oi|tes|test|assalamualaikum|pagi|siang|sore|malam|mustard|john)\b/i.test(t) ||
-    /(siapa\s+(kamu|lu)|nama\s+(kamu|lu)|kamu\s+siapa|lu\s+siapa|perkenal|kenalan|dew\s*dew|john\s+mustard)/i.test(t)
+    /^(p+|halo+|helo+|hello+|hai+|hi+|hey+|hei+|woi+|woy+|oi+|oy+|we+|euy+|uy+|alo+|yo+|wasap+|wassup+|what'?s\s*up|sup|howdy|hola|tes+|test|assalam\w*|salam\w*|samlekom|mikum|shalom|sampurasun|punten|permisi|kula\s*nuwun|pagi|siang|sore|malam|morning|afternoon|evening|selamat\s+(pagi|siang|sore|malam|datang)|met\s+(pagi|siang|sore|malam)|mustard|john|bot)\b/i.test(t) ||
+    /^(bro|bang|kak|om|mas|mbak|pak|bu)\s+(john|mustard|bot|halo|hai|hey|hei|p|pagi|siang|sore|malam|yo|wasap|wassup)\b/i.test(t) ||
+    /(siapa\s+(kamu|lu|anda)|nama\s+(kamu|lu|anda)|kamu\s+siapa|lu\s+siapa|perkenal|kenalan|dew\s*dew|john\s+mustard)/i.test(t)
   );
 }
 
@@ -2156,6 +2157,14 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(isActionIntent("halo bro"), false);
     assert.strictEqual(isGreetingIntent("halo"), true);
     assert.strictEqual(isGreetingIntent("p"), true);
+    assert.strictEqual(isGreetingIntent("yo wasap"), true);
+    assert.strictEqual(isGreetingIntent("@john halo"), true);
+    assert.strictEqual(isGreetingIntent("selamat pagi"), true);
+    assert.strictEqual(isGreetingIntent("samlekom"), true);
+    assert.strictEqual(isGreetingIntent("sup"), true);
+    assert.strictEqual(isGreetingIntent("bang john"), true);
+    assert.strictEqual(isGreetingIntent("haloooo"), true);
+    assert.strictEqual(isGreetingIntent("morning bro"), true);
     assert.strictEqual(isGreetingIntent("tambahkan tugas"), false);
     const decls = TOOLS[0].functionDeclarations.map((d) => d.name);
     assert.ok(decls.includes("addBacklog"));
