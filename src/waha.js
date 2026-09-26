@@ -124,6 +124,71 @@ export function resolveLidToPhone(lid) {
   return null;
 }
 
+export function resolvePhoneToLid(phone) {
+  try {
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (!cleanPhone) return null;
+    const sessionDir = process.env.WAHA_SESSIONS_DIR || "/app/waha_sessions/noweb/default";
+    const mappingFile = path.join(sessionDir, `lid-mapping-${cleanPhone}.json`);
+    if (fs.existsSync(mappingFile)) {
+      const data = fs.readFileSync(mappingFile, "utf8");
+      return JSON.parse(data).replace(/\D/g, "");
+    }
+  } catch {}
+  return null;
+}
+
+export function normalizeMentionsInText(text) {
+  if (!text || typeof text !== "string") return text;
+  return text.replace(/@(\d{8,20})\b/g, (match, digits) => {
+    if ((currentBotLid && digits === currentBotLid) || (currentBotNumber && digits === currentBotNumber)) {
+      return "@bot";
+    }
+    const phone = resolveLidToPhone(digits);
+    if (phone) {
+      if (currentBotNumber && phone === currentBotNumber) {
+        return "@bot";
+      }
+      return `@${phone}`;
+    }
+    return match;
+  });
+}
+
+export function formatOutboundMentions(text) {
+  if (!text || typeof text !== "string") return { text: "", mentions: [] };
+
+  // Convert unmapped/raw LID mentions in text into phone number if resolvable
+  const formattedText = text.replace(/@(\d{8,20})\b/g, (match, digits) => {
+    const phone = resolveLidToPhone(digits);
+    return phone ? `@${phone}` : match;
+  });
+
+  const mentionsSet = new Set();
+  const matches = formattedText.match(/@(\d{8,20})\b/g);
+  if (matches) {
+    for (const m of matches) {
+      const num = m.slice(1);
+      mentionsSet.add(`${num}@c.us`);
+
+      const lid = resolvePhoneToLid(num);
+      if (lid) {
+        mentionsSet.add(`${lid}@lid`);
+      }
+      const phone = resolveLidToPhone(num);
+      if (phone) {
+        mentionsSet.add(`${phone}@c.us`);
+        mentionsSet.add(`${num}@lid`);
+      }
+    }
+  }
+
+  return {
+    text: formattedText,
+    mentions: Array.from(mentionsSet)
+  };
+}
+
 export async function startTyping(chatId) {
   try {
     const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
@@ -156,12 +221,14 @@ export async function stopTyping(chatId) {
 
 export async function sendSingleText(chatId, text, replyTo = null) {
   const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
+  const { text: formattedText, mentions } = formatOutboundMentions(text);
   const payload = {
     chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
-    text,
+    text: formattedText,
     session: "default"
   };
   if (replyTo) payload.reply_to = replyTo;
+  if (mentions.length > 0) payload.mentions = mentions;
 
   const apiKey = process.env.WAHA_API_KEY || "";
   const res = await fetch(`${wahaUrl}/api/sendText`, {
@@ -214,6 +281,8 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
   const isImage = mimetype.startsWith("image/");
   const endpoint = (!asDocument && isImage) ? "/api/sendImage" : "/api/sendFile";
 
+  const { text: formattedCaption, mentions } = formatOutboundMentions(caption);
+
   const payload = {
     chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
     file: {
@@ -221,9 +290,10 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
       filename,
       url: `data:${mimetype};base64,${base64Data}`
     },
-    caption,
+    caption: formattedCaption,
     session: "default"
   };
+  if (mentions.length > 0) payload.mentions = mentions;
 
   const apiKey = process.env.WAHA_API_KEY || "";
   const res = await fetch(`${wahaUrl}${endpoint}`, {
@@ -412,6 +482,14 @@ export function parseIncoming(body, allowedPhone) {
     if (!isMentioned) {
       isMentioned = /@(?:bot|john|mustard)\b/i.test(bodyTextRaw);
     }
+    if (!isMentioned && botNumber) {
+      isMentioned =
+        mentionedList.some((id) => {
+          const digits = String(id).replace(/\D/g, "");
+          return resolveLidToPhone(digits) === botNumber;
+        }) ||
+        Array.from(bodyTextRaw.matchAll(/@(\d{8,20})\b/g)).some((m) => resolveLidToPhone(m[1]) === botNumber);
+    }
 
     // 2. Reply to bot check
     const quotedParticipant = (quoted?.sender || "").replace(/\D/g, "");
@@ -453,9 +531,10 @@ export function parseIncoming(body, allowedPhone) {
   const mimetype = msg.media?.mimetype || msg.mimetype || "application/octet-stream";
   const filename = extractMediaFilename(msg);
 
-  let bodyText = msg.body || "";
+  let bodyText = normalizeMentionsInText(msg.body || "");
   if (quoted?.text) {
-    bodyText = `${bodyText}\n\n[MEMBALAS PESAN]: "${quoted.text}"`.trim();
+    const normQuoted = normalizeMentionsInText(quoted.text);
+    bodyText = `${bodyText}\n\n[MEMBALAS PESAN]: "${normQuoted}"`.trim();
   }
 
   return {
@@ -701,6 +780,16 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   // 11. Group payload msg.to should not poison currentBotNumber
   assert.notStrictEqual(getBotNumber(), groupChatId.replace(/\D/g, ""), "currentBotNumber tidak boleh keracunan ID grup");
 
+  // 12. Mention resolution & formatting tests
+  const outFormatted = formatOutboundMentions("Halo @6281234567890 dan @628999999999 tolong cek");
+  assert.strictEqual(outFormatted.text, "Halo @6281234567890 dan @628999999999 tolong cek");
+  assert.ok(outFormatted.mentions.includes("6281234567890@c.us"));
+  assert.ok(outFormatted.mentions.includes("628999999999@c.us"));
+
+  const normalized = normalizeMentionsInText("@628111111111 halo apa kabar");
+  assert.strictEqual(normalized, "@bot halo apa kabar");
+
+  assert.strictEqual(typeof resolvePhoneToLid, "function");
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");
   assert.strictEqual(typeof sendImage, "function");

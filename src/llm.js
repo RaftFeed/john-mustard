@@ -2083,7 +2083,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 - TUGAS BERSAMA & PENANGGUNG JAWAB: To-do list di obrolan ini adalah daftar tugas bersama keluarga. Jika ada nama penanggung jawab yang disebut (contoh: "Mas", "Mama", "Kakak", "Ayah"), WAJIB sertakan pada parameter 'assignee' di tool addTodo/updateTodo.
 - PENGINGAT (REMINDER): Setiap pengingat/reminder yang dibuat di grup ini akan dikirimkan langsung ke obrolan grup saat jatuh tempo.
 - DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
-- PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.`
+- PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.
+- MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, WAJIB gunakan format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
   const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
