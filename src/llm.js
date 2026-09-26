@@ -645,7 +645,7 @@ export const TOOLS = [
 ];
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.1-pro-preview";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
@@ -655,9 +655,9 @@ export const FAST_CASCADE = [
 ];
 
 export const SMART_CASCADE = [
-  PRO_MODEL,
+  "gemini-3.5-flash-lite",
   DEFAULT_MODEL,
-  "gemini-3.5-flash-lite"
+  "gemini-flash-latest"
 ];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;
@@ -2569,9 +2569,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     // Dynamic Model Tier Selection Tests
     assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-flash-lite-latest");
     assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-flash-lite-latest");
-    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.1-pro-preview");
-    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.1-pro-preview");
-    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.1-pro-preview");
+    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.5-flash-lite");
 
     // Mid-Turn Mailbox Steering Tests
     const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];
