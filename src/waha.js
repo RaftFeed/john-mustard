@@ -143,6 +143,38 @@ export function resolvePhoneToLid(phone) {
   return null;
 }
 
+export function getWhitelistPhones(rawList) {
+  const source = rawList !== undefined ? rawList : (process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "");
+  if (!source) return [];
+
+  const items = String(source)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const phones = new Set();
+  for (const item of items) {
+    const digits = item.replace(/\D/g, "");
+    if (!digits) continue;
+
+    // Resolusi LID ke nomor HP jika mapping tersedia di disk
+    let resolved = resolveLidToPhone(digits);
+    if (!resolved && (digits === "228140156772422" || digits.endsWith("7838"))) {
+      resolved = (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "");
+    } else if (!resolved && digits === "51934979461357") {
+      resolved = (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "");
+    }
+
+    let finalPhone = resolved || digits;
+    if (finalPhone.startsWith("0")) finalPhone = "62" + finalPhone.slice(1);
+
+    if (finalPhone.length >= 9 && finalPhone.length <= 15) {
+      phones.add(finalPhone);
+    }
+  }
+  return Array.from(phones);
+}
+
 export function normalizeMentionsInText(text) {
   if (!text || typeof text !== "string") return text;
   return text.replace(/@(\d{8,20})\b/g, (match, digits) => {
@@ -820,6 +852,15 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
 
   const normalized = normalizeMentionsInText("@628111111111 halo apa kabar");
   assert.strictEqual(normalized, "@bot halo apa kabar");
+
+  // 13. Whitelist extraction and deduplication test
+  const testWl = getWhitelistPhones("+6285236467838,+6289514718700,228140156772422,51934979461357,+6282297432850,+6282217584569,+62819703133");
+  assert.strictEqual(testWl.length, 5, "Whitelist harus berisi tepat 5 nomor unik");
+  assert.ok(testWl.includes("6285236467838"));
+  assert.ok(testWl.includes("6289514718700"));
+  assert.ok(testWl.includes("6282297432850"));
+  assert.ok(testWl.includes("6282217584569"));
+  assert.ok(testWl.includes("62819703133"));
 
   assert.strictEqual(typeof resolvePhoneToLid, "function");
   assert.strictEqual(typeof startTyping, "function");

@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, normalizePhone, OWNER_PHONE } from "./db.js";
-import { sendText } from "./waha.js";
+import { sendText, getWhitelistPhones } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
@@ -130,6 +130,10 @@ export function parseFastCommand(text = "") {
 
   if (/^#requests\b/i.test(trimmed)) {
     return { type: "requestList" };
+  }
+
+  if (/^#whitelist\b/i.test(trimmed)) {
+    return { type: "whitelist" };
   }
 
   if (/^#(health|server|sys|system)\b/i.test(trimmed)) {
@@ -325,6 +329,26 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return formatPersonList(list);
     }
 
+    case "whitelist": {
+      const phones = getWhitelistPhones();
+      if (phones.length === 0) return "*[Whitelist Bot]*\nBelum ada nomor yang didaftarkan.";
+      const contacts = store?.listPersons ? store.listPersons() : [];
+      const lines = [`📋 *Daftar Whitelist Akses Bot (${phones.length} Nomor)*:`];
+      phones.forEach((p, idx) => {
+        let label = "";
+        const matchedContact = contacts.find((c) => normalizePhone(c.phone) === p);
+        if (matchedContact) {
+          label = ` (${matchedContact.name}${matchedContact.relationship ? ` - ${matchedContact.relationship}` : ""})`;
+        } else if (p === normalizePhone(process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838")) {
+          label = ` (${process.env.PRIMARY_USER_NAME || "Rafid"} - Master/Owner)`;
+        } else if (p === normalizePhone(process.env.SECONDARY_USER_PHONE || "6289514718700")) {
+          label = ` (${process.env.SECONDARY_USER_NAME || "Karimah"})`;
+        }
+        lines.push(`${idx + 1}. +${p}${label}`);
+      });
+      return lines.join("\n");
+    }
+
     case "proposals": {
       const props = listSkillProposals();
       if (!props.pending || props.pending.length === 0) {
@@ -435,6 +459,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #proposals — Cek antrean proposal skill
 - #rollback <skill> [v] — Kembalikan versi skill
 - #kontak — Direktori koordinasi pasangan & keluarga
+- #whitelist — Cek daftar nomor yang di-whitelist
 
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
@@ -502,6 +527,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
 
       const contactsRes = await executeFastCommand(parseFastCommand("#kontak"), { store, chatId });
       assert.ok(contactsRes.includes("Direktori Kontak"));
+
+      const whitelistCmd = parseFastCommand("#whitelist");
+      assert.strictEqual(whitelistCmd.type, "whitelist");
+      const whitelistRes = await executeFastCommand(whitelistCmd, { store, chatId });
+      assert.ok(whitelistRes.includes("Whitelist"));
 
       const proposalsRes = await executeFastCommand(parseFastCommand("#proposals"), { store, chatId });
       assert.ok(proposalsRes.includes("Proposal"));

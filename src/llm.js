@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
-import { sendFile, sendText } from "./waha.js";
+import { sendFile, sendText, getWhitelistPhones } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { formatServerHealth } from "./commands.js";
@@ -2067,6 +2067,26 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       contactsList.map((p) => `- ${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.role ? ` [${p.role}]` : ""}${p.notes ? `: ${p.notes}` : ""}`).join("\n")
     : "";
 
+  const whitelistPhones = getWhitelistPhones();
+  const whitelistContext = whitelistPhones.length > 0
+    ? `\n\n[DAFTAR WHITELIST AKSES BOT]:
+Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memiliki izin akses (whitelist):
+` +
+      whitelistPhones.map((p, idx) => {
+        let label = "";
+        const matchedContact = contactsList.find((c) => normalizePhone(c.phone) === p);
+        if (matchedContact) {
+          label = ` (${matchedContact.name}${matchedContact.relationship ? ` - ${matchedContact.relationship}` : ""})`;
+        } else if (p === normalizePhone(process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838")) {
+          label = ` (${process.env.PRIMARY_USER_NAME || "Rafid"} - Master/Owner)`;
+        } else if (p === normalizePhone(process.env.SECONDARY_USER_PHONE || "6289514718700")) {
+          label = ` (${process.env.SECONDARY_USER_NAME || "Karimah"})`;
+        }
+        return `${idx + 1}. +${p}${label}`;
+      }).join("\n") +
+      `\nATURAN RESPON WHITELIST: Jika pengguna menanyakan siapa saja yang masuk whitelist atau siapa saja yang memiliki izin akses bot, sebutkan secara lengkap dan jelas ${whitelistPhones.length} nomor di atas (beserta nama/labelnya jika ada). JANGAN mengatakan hanya nomor master/owner yang di-whitelist.`
+    : "";
+
   // Multi-turn context: muat riwayat pesan terakhir
   const history = store?.getRecentChatHistory ? store.getRecentChatHistory(chatId, 6) : [];
   const isGroupChat = String(chatId).endsWith("@g.us");
@@ -2087,7 +2107,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 - MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, WAJIB gunakan format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
-  const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
+  const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction;
 
   const userParts = [];
   if (audio) {
