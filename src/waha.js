@@ -376,7 +376,7 @@ export function parseIncoming(body, allowedPhone) {
   const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
 
   let isFollowUpThread = false;
-  // Grup WA: Cek apakah di-mention (@), nama dipanggil, fast-command (#/?), reply ke pesan bot, atau active follow-up
+  // Grup WA: Strictly hanya jika di-mention (@) atau reply ke pesan bot
   if (isGroup) {
     const contextInfo =
       msg._data?.Message?.extendedTextMessage?.contextInfo ||
@@ -392,9 +392,9 @@ export function parseIncoming(body, allowedPhone) {
       ...(Array.isArray(contextInfo?.mentionedJid) ? contextInfo.mentionedJid : [])
     ];
 
-    const bodyTextRaw = String(msg.body || "");
+    const bodyTextRaw = String(msg.body || msg.caption || "");
 
-    // 1. Native WhatsApp @ mention matching bot number or LID
+    // 1. WhatsApp @ mention matching bot number, LID, or @bot / @john
     let isMentioned = false;
     if (botNumber) {
       isMentioned =
@@ -409,14 +409,11 @@ export function parseIncoming(body, allowedPhone) {
         mentionedList.some((id) => String(id).includes(currentBotLid)) ||
         bodyTextRaw.includes(`@${currentBotLid}`);
     }
+    if (!isMentioned) {
+      isMentioned = /@(?:bot|john|mustard)\b/i.test(bodyTextRaw);
+    }
 
-    // 2. Mention by name, keyword, or addressing the bot ("john", "mustard", "bot")
-    const isNameCalled = /\b(?:john|mustard|bot)\b/i.test(bodyTextRaw);
-
-    // 3. Fast deterministic commands (e.g. #ping, #todo, #tugas, #dew, #help, ?help)
-    const isFastCommand = /^[#?]/.test(bodyTextRaw.trim());
-
-    // 4. Reply to bot check
+    // 2. Reply to bot check
     const quotedParticipant = (quoted?.sender || "").replace(/\D/g, "");
 
     const isReplyToBot = Boolean(
@@ -427,10 +424,7 @@ export function parseIncoming(body, allowedPhone) {
       (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid))
     );
 
-    // 5. Helmis pattern: Active Follow-Up Thread Continuity (within 120s of bot reply)
-    isFollowUpThread = isRecentBotThread(msg.from, 120_000);
-
-    if (!isMentioned && !isNameCalled && !isFastCommand && !isReplyToBot && !isFollowUpThread) {
+    if (!isMentioned && !isReplyToBot) {
       return null;
     }
   }
@@ -623,11 +617,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   }, "6281234567890");
   assert.ok(replyTracked !== null, "Reply ke pesan bot dengan ID terlacak wajib diproses");
 
-  // 7. Active Follow-Up Thread Continuity in group -> processed
-  assert.strictEqual(isRecentBotThread("nonexistent_chat@g.us"), false);
+  // 7. Group message without mention or reply -> ignored (strictly mention/reply only)
   recordBotActivity(groupChatId);
-  assert.strictEqual(isRecentBotThread(groupChatId), true);
-
   const followUpMessage = parseIncoming({
     event: "message",
     payload: {
@@ -639,26 +630,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
       timestamp: 1700000026
     }
   }, "6281234567890");
-  assert.ok(followUpMessage !== null, "Pesan lanjutan (follow-up) di grup dalam 2 menit wajib diproses");
-  assert.strictEqual(followUpMessage.isFollowUpThread, true);
+  assert.strictEqual(followUpMessage, null, "Pesan tanpa tag/reply di grup wajib diabaikan meskipun ada riwayat bot");
 
-  // Expired follow-up thread (> 120s) -> ignored if no mention
-  setLastBotMessageTime(groupChatId, Date.now() - 130_000);
-  assert.strictEqual(isRecentBotThread(groupChatId), false);
-  const expiredFollowUp = parseIncoming({
-    event: "message",
-    payload: {
-      id: "GRP_EXPIRED",
-      from: groupChatId,
-      participant: "628999999999@c.us",
-      fromMe: false,
-      body: "ngobrol biasa setelah lewat batas",
-      timestamp: 1700000027
-    }
-  }, "6281234567890");
-  assert.strictEqual(expiredFollowUp, null, "Pesan setelah thread kadaluarsa wajib diabaikan");
-
-  // 8. Fast command without mention in group (Pattern B) -> processed
+  // 8. Fast command without mention in group -> ignored
   const groupFastCmd = parseIncoming({
     event: "message",
     payload: {
@@ -670,10 +644,23 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
       timestamp: 1700000028
     }
   }, "6281234567890");
-  assert.ok(groupFastCmd !== null, "Fast command #ping di grup wajib diproses");
-  assert.strictEqual(groupFastCmd.isGroup, true);
+  assert.strictEqual(groupFastCmd, null, "Fast command tanpa tag/reply di grup wajib diabaikan");
 
-  // 9. Name calling in group without @ (Pattern C) -> processed
+  // Fast command WITH tag in group -> processed
+  const groupFastCmdTagged = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_FASTCMD_TAGGED",
+      from: groupChatId,
+      participant: groupUser,
+      fromMe: false,
+      body: "@bot #ping",
+      timestamp: 1700000028
+    }
+  }, "6281234567890");
+  assert.ok(groupFastCmdTagged !== null, "Fast command dengan @bot di grup wajib diproses");
+
+  // 9. Name calling in group without @ -> ignored
   const groupNameCall = parseIncoming({
     event: "message",
     payload: {
@@ -685,7 +672,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
       timestamp: 1700000029
     }
   }, "6281234567890");
-  assert.ok(groupNameCall !== null, "Panggil nama 'bot' tanpa @ di grup wajib diproses");
+  assert.strictEqual(groupNameCall, null, "Panggil nama 'bot' tanpa @ di grup wajib diabaikan");
 
   // 10. Native WA mention in contextInfo.mentionedJid (Pattern A) -> processed
   setBotNumber("628111111111");

@@ -333,19 +333,57 @@ export class Storage {
     if (!includeRoutine) {
       sql += " AND (category != 'routine' OR category IS NULL)";
     }
-    sql += " ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, id ASC";
+    sql += ` ORDER BY 
+      CASE 
+        WHEN tag LIKE '%[P1]%' OR tag LIKE '%#p1%' OR LOWER(tag) LIKE '%p1%' OR LOWER(tag) LIKE '%urgent%' OR LOWER(tag) LIKE '%darurat%' THEN 1
+        WHEN tag LIKE '%[P2]%' OR tag LIKE '%#p2%' OR LOWER(tag) LIKE '%p2%' OR LOWER(tag) LIKE '%high%' THEN 2
+        WHEN tag LIKE '%[P3]%' OR tag LIKE '%#p3%' OR LOWER(tag) LIKE '%p3%' THEN 3
+        WHEN tag LIKE '%[P4]%' OR tag LIKE '%#p4%' OR LOWER(tag) LIKE '%p4%' THEN 4
+        ELSE 5
+      END ASC,
+      CASE WHEN deadline IS NULL THEN 1 ELSE 0 END,
+      deadline ASC,
+      id ASC`;
     return this.db.prepare(sql).all(...params);
   }
 
+  resolveTodoId(idOrIndex, chatId) {
+    const num = parseInt(idOrIndex, 10);
+    if (isNaN(num)) return null;
+
+    if (!chatId) {
+      return num;
+    }
+
+    const active = this.getTodos(chatId, true);
+    if (!active || active.length === 0) {
+      return num;
+    }
+
+    // 1. Jika angka 1-based index dalam rentang active list (1..active.length)
+    if (num >= 1 && num <= active.length) {
+      return active[num - 1].id;
+    }
+
+    // 2. Jika angka cocok langsung dengan id DB asli dari salah satu active todo
+    const byId = active.find((t) => t.id === num);
+    if (byId) {
+      return byId.id;
+    }
+
+    return num;
+  }
+
   getTodoById(id, chatId) {
+    const realId = this.resolveTodoId(id, chatId);
     if (!chatId || isOwner(chatId)) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(id);
+      return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(realId);
     }
     const person = this.getPerson ? this.getPerson(chatId) : null;
     if (person) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))").get(id, chatId, person.name.trim());
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))").get(realId, chatId, person.name.trim());
     }
-    return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(id, chatId);
+    return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(realId, chatId);
   }
 
   getTodosDue(chatId, daysAhead = 0) {
@@ -355,7 +393,16 @@ export class Storage {
       SELECT id, task, deadline, tag, category, done
       FROM todos
       WHERE chat_id = ? AND done = 0 AND deadline IS NOT NULL AND deadline <= ?
-      ORDER BY deadline ASC, id ASC
+      ORDER BY 
+        CASE 
+          WHEN tag LIKE '%[P1]%' OR tag LIKE '%#p1%' OR LOWER(tag) LIKE '%p1%' OR LOWER(tag) LIKE '%urgent%' OR LOWER(tag) LIKE '%darurat%' THEN 1
+          WHEN tag LIKE '%[P2]%' OR tag LIKE '%#p2%' OR LOWER(tag) LIKE '%p2%' OR LOWER(tag) LIKE '%high%' THEN 2
+          WHEN tag LIKE '%[P3]%' OR tag LIKE '%#p3%' OR LOWER(tag) LIKE '%p3%' THEN 3
+          WHEN tag LIKE '%[P4]%' OR tag LIKE '%#p4%' OR LOWER(tag) LIKE '%p4%' THEN 4
+          ELSE 5
+        END ASC,
+        deadline ASC,
+        id ASC
     `).all(chatId, targetEnd);
   }
 
@@ -518,21 +565,22 @@ export class Storage {
   }
 
   completeTodo(id, chatId) {
+    const realId = this.resolveTodoId(id, chatId);
     const person = this.getPerson ? this.getPerson(chatId) : null;
     let changes = 0;
     if (isOwner(chatId)) {
-      changes = this.db.prepare("UPDATE todos SET done = 1 WHERE id = ?").run(id).changes;
+      changes = this.db.prepare("UPDATE todos SET done = 1 WHERE id = ?").run(realId).changes;
     } else if (person) {
       changes = this.db.prepare(
         "UPDATE todos SET done = 1 WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))"
-      ).run(id, chatId, person.name.trim()).changes;
+      ).run(realId, chatId, person.name.trim()).changes;
     } else {
       changes = this.db
         .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
-        .run(id, chatId).changes;
+        .run(realId, chatId).changes;
     }
     if (changes > 0) {
-      this.lastDoneByChat.set(chatId, id);
+      this.lastDoneByChat.set(chatId, realId);
     }
     return changes;
   }
@@ -847,7 +895,7 @@ export function formatTodoList(todos) {
     `🌄 [Pengingat Tugas]\n_${salam}!_\n`
   ];
 
-  todos.forEach((item) => {
+  todos.forEach((item, index) => {
     let badge = "⚪";
     let deadlineStr = "Tanpa deadline";
 
@@ -893,7 +941,7 @@ export function formatTodoList(todos) {
       tagTokens.push(`\`[👤 ${item.assignee}]\``);
     }
 
-    lines.push(`${badge} *[${item.id}] ${item.task}*`);
+    lines.push(`${badge} *[${index + 1}] ${item.task}*`);
     lines.push(`   ⏰ ${deadlineStr} • ${tagTokens.join(" ")}\n`);
   });
 
@@ -1176,6 +1224,23 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
 
   assert.strictEqual(store.deletePerson("Bunga"), 1);
   assert.strictEqual(store.getPerson("Bunga"), null);
+
+  // Sequential display indexing & resolveTodoId test
+  const t1 = store.addTodo("user_seq", "Task 1", null, "#low");
+  const t2 = store.addTodo("user_seq", "Task 2", null, "#low");
+  const t3 = store.addTodo("user_seq", "Task 3", null, "#low");
+  const t4 = store.addTodo("user_seq", "Nyapu ngepel", null, "[P1]");
+  store.deleteTodo(t1, "user_seq");
+  store.deleteTodo(t2, "user_seq");
+  store.deleteTodo(t3, "user_seq");
+  const seqTodos = store.getTodos("user_seq");
+  assert.strictEqual(seqTodos.length, 1);
+  assert.strictEqual(seqTodos[0].id, t4);
+  const seqFormatted = formatTodoList(seqTodos);
+  assert.ok(seqFormatted.includes("[1] Nyapu ngepel"), "Single remaining task must display [1], not DB id [4]");
+  assert.ok(!seqFormatted.includes(`[${t4}] Nyapu ngepel`));
+  assert.strictEqual(store.completeTodo(1, "user_seq"), 1);
+  assert.strictEqual(store.getTodos("user_seq").length, 0);
 
   console.log("DB & Formatter self-test OK");
 }
