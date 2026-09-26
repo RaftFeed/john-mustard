@@ -2138,7 +2138,9 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
           toolConfig = { functionCallingConfig: { mode: "ANY" } };
           continue;
         } else {
-          return "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik cuy.";
+          return isGroupChat
+            ? "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik."
+            : "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik, Lord.";
         }
       }
       break;
@@ -2199,7 +2201,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       finalReply = text;
     }
   } else {
-    finalReply = lastFormattedList || "Beres cuy.";
+    finalReply = lastFormattedList || (isGroupChat ? "Beres." : "Beres, Lord.");
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);
