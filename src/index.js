@@ -192,9 +192,11 @@ async function handleIncomingMessage(msg) {
         return;
       }
 
-      // 3. Di DM Pribadi: Jika user menyertakan teks permintaan baca/ringkas, proses via LLM
-      const hasSummaryQuery = msg.body && /\b(ringkas|rangkum|baca|summary|simpulkan|jelaskan|analisis|apa\s+isi)\b/i.test(msg.body);
-      if (hasSummaryQuery) {
+      // 3. Di DM Pribadi: Jika user menyertakan teks pertanyaan/diskusi (dan bukan perintah simpan ke vault), proses langsung via LLM
+      const isExplicitVaultSave = msg.body && /\b(simpan|save|arsip|#vault|masukkan\s+ke\s+vault|catat\s+ke\s+vault)\b/i.test(msg.body);
+      const hasUserCaption = Boolean(msg.body && msg.body.trim());
+
+      if (hasUserCaption && !isExplicitVaultSave) {
         console.log(`>> Memproses dokumen/media DM untuk analisis langsung: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
         const mediaTrajectory = [];
@@ -211,7 +213,7 @@ async function handleIncomingMessage(msg) {
         if (reply && reply.trim() !== "[NO_REPLY]") {
           await sendText(msg.from, reply);
           console.log(`>> Sent DM media analysis reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-          store.saveChatMessage(msg.from, "user", msg.body ? `[Dokumen: ${msg.filename}] ${msg.body}` : `[Dokumen: ${msg.filename}]`);
+          store.saveChatMessage(msg.from, "user", `[Media: ${msg.filename}] ${msg.body}`);
           store.saveChatMessage(msg.from, "model", reply);
         }
 

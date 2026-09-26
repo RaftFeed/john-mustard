@@ -1,10 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert";
+import { resolveLidToPhone } from "./waha.js";
 
 export function normalizePhone(raw) {
   if (!raw) return "";
   let digits = String(raw).split("@")[0].replace(/\D/g, "");
   if (digits.startsWith("0")) digits = "62" + digits.slice(1);
+  const resolved = resolveLidToPhone(digits);
+  if (resolved) return resolved;
   return digits;
 }
 

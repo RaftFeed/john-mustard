@@ -1288,6 +1288,7 @@ export async function getEmbedding(rotator, text) {
 export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null }) {
   let toolResult = {};
   let formattedList = null;
+  const callerId = senderNumber || chatId;
 
   const isGroup = String(chatId).endsWith("@g.us");
   if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess")) {
@@ -1412,7 +1413,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         console.warn("[Vault] Semantic embedding search failed, fallback to keyword:", embErr.message);
       }
     }
-    const files = store.searchVaultFiles(args.query || "", args.category || null, chatId, queryEmbedding);
+    const files = store.searchVaultFiles(args.query || "", args.category || null, callerId, queryEmbedding);
     toolResult = {
       count: files.length,
       files: files.map((f) => ({
@@ -1426,7 +1427,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const file = store.getVaultFileById(args.fileId);
     if (!file) {
       toolResult = { error: "File tidak ditemukan di vault" };
-    } else if (!store.hasFileAccess(file.id, chatId)) {
+    } else if (!store.hasFileAccess(file.id, callerId)) {
       toolResult = {
         error: "Akses ditolak",
         message: `Anda tidak memiliki izin mengakses file ini (Pemilik: +${normalizePhone(file.owner_id)}). Minta izin dengan perintah: 'Minta akses file ID ${file.id}'.`
@@ -1439,13 +1440,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const file = store.getVaultFileById(args.fileId);
     if (!file) {
       toolResult = { error: "File tidak ditemukan di vault" };
-    } else if (store.hasFileAccess(file.id, chatId)) {
+    } else if (store.hasFileAccess(file.id, callerId)) {
       toolResult = { success: true, message: "Anda sudah memiliki izin akses ke file ini." };
     } else if (!file.owner_id) {
       toolResult = { error: "File ini tidak memiliki pemilik terdaftar." };
     } else {
-      const reqId = store.createFileRequest(file.id, chatId, file.owner_id);
-      const reqNum = normalizePhone(chatId);
+      const reqId = store.createFileRequest(file.id, callerId, file.owner_id);
+      const reqNum = normalizePhone(callerId);
       await sendText(
         file.owner_id,
         `*[Permintaan Akses Dokumen]*\nPengguna *+${reqNum}* meminta akses ke file:\n*${file.filename}* (ID: #${file.id})${args.reason ? `\nAlasan: ${args.reason}` : ""}\n\nBalas:\n*SETUJU ${reqId}*\n*TOLAK ${reqId}*`
@@ -1458,7 +1459,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }
   } else if (name === "grantFileAccess") {
     const file = store.getVaultFileById(args.fileId);
-    const callerNorm = normalizePhone(chatId);
+    const callerNorm = normalizePhone(callerId);
     if (!file) {
       toolResult = { error: "File tidak ditemukan di vault" };
     } else if (file.owner_id && normalizePhone(file.owner_id) !== callerNorm) {
@@ -1666,12 +1667,12 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     } else {
       const resolvedFiles = [];
       for (const target of rawTargets) {
-        const fileRec = store.resolveVaultFile(target, chatId);
+        const fileRec = store.resolveVaultFile(target, callerId);
         if (!fileRec) {
           toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
           break;
         }
-        if (!store.hasFileAccess(fileRec.id, chatId)) {
+        if (!store.hasFileAccess(fileRec.id, callerId)) {
           toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
           break;
         }
@@ -1776,10 +1777,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (!target) {
       toolResult = { error: "Parameter targetFile wajib diisi." };
     } else {
-      const fileRec = store.resolveVaultFile(target, chatId);
+      const fileRec = store.resolveVaultFile(target, callerId);
       if (!fileRec) {
         toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
-      } else if (!store.hasFileAccess(fileRec.id, chatId)) {
+      } else if (!store.hasFileAccess(fileRec.id, callerId)) {
         toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
       } else if (!fs.existsSync(fileRec.filepath)) {
         toolResult = { error: `File fisik '${fileRec.filename}' tidak ditemukan di disk server.` };
@@ -1846,10 +1847,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (!target) {
       toolResult = { error: "Parameter targetFile wajib diisi." };
     } else {
-      const fileRec = store.resolveVaultFile(target, chatId);
+      const fileRec = store.resolveVaultFile(target, callerId);
       if (!fileRec) {
         toolResult = { error: `File '${target}' tidak ditemukan di Vault dokumen.` };
-      } else if (!store.hasFileAccess(fileRec.id, chatId)) {
+      } else if (!store.hasFileAccess(fileRec.id, callerId)) {
         toolResult = { error: `Anda tidak memiliki izin mengakses file ID #${fileRec.id} (${fileRec.filename}).` };
       } else if (!fs.existsSync(fileRec.filepath)) {
         toolResult = { error: `File fisik '${fileRec.filename}' tidak ditemukan di disk server.` };
