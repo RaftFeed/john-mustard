@@ -276,6 +276,7 @@ export class Storage {
     try { this.db.exec("ALTER TABLE todos ADD COLUMN tag TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN category TEXT DEFAULT 'work'"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN assignee TEXT DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE todos ADD COLUMN reminded INTEGER DEFAULT 0"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
@@ -870,9 +871,23 @@ export class Storage {
     const newTag = tag !== undefined ? tag : existing.tag;
     const newCategory = category !== undefined ? category : existing.category;
     const newAssignee = assignee !== undefined ? assignee : (existing.assignee || "");
+    const resetReminded = deadline !== undefined && deadline !== existing.deadline ? 0 : (existing.reminded || 0);
     return this.db
-      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ? WHERE id = ?")
-      .run(newTask, newDeadline, newTag, newCategory, newAssignee, id).changes;
+      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ?, reminded = ? WHERE id = ?")
+      .run(newTask, newDeadline, newTag, newCategory, newAssignee, resetReminded, id).changes;
+  }
+
+  getPendingTodoDeadlines(limit = 20) {
+    const now = Date.now();
+    return this.db
+      .prepare(
+        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND (reminded = 0 OR reminded IS NULL) ORDER BY deadline ASC LIMIT ?"
+      )
+      .all(now, limit);
+  }
+
+  markTodoReminded(id) {
+    return this.db.prepare("UPDATE todos SET reminded = 1 WHERE id = ?").run(id).changes;
   }
 
   deleteTodo(id, chatId) {
@@ -1304,9 +1319,12 @@ export function formatTodoList(todos, isGroup = false) {
     let badge = "⚪";
     let deadlineStr = "Tanpa deadline";
     const isDone = Boolean(item.done);
+    const isOverdue = !isDone && item.deadline && item.deadline < now.getTime();
 
     if (isDone) {
       badge = "✅";
+    } else if (isOverdue) {
+      badge = "🔴";
     } else if (item.deadline) {
       const dl = new Date(item.deadline);
       const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
@@ -1337,6 +1355,25 @@ export function formatTodoList(todos, isGroup = false) {
       }
     }
 
+    if (isOverdue) {
+      const dl = new Date(item.deadline);
+      const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
+      const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[dlWib.getUTCDay()];
+      const dateNum = dlWib.getUTCDate();
+      const monthName = monthsId[dlWib.getUTCMonth()];
+      const year = dlWib.getUTCFullYear();
+      const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 0) {
+        deadlineStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
     if (isDone) {
       if (item.deadline) {
         const dl = new Date(item.deadline);
@@ -1364,13 +1401,20 @@ export function formatTodoList(todos, isGroup = false) {
     }
     if (isDone) {
       tagTokens.push("[Selesai]");
+    } else if (isOverdue) {
+      tagTokens.push("[Terlewat]");
     }
     if (isGroup && item.assignee) {
       tagTokens.push(`[👤 ${item.assignee}]`);
     }
 
     const tagLine = tagTokens.length > 0 ? `\`${tagTokens.join(" ")}\`` : "`#tugas`";
-    const titleText = isDone ? `*[${index + 1}] [SELESAI] ${item.task}*` : `*[${index + 1}] ${item.task}*`;
+    let titleText = `*[${index + 1}] ${item.task}*`;
+    if (isDone) {
+      titleText = `*[${index + 1}] [SELESAI] ${item.task}*`;
+    } else if (isOverdue) {
+      titleText = `*[${index + 1}] [TERLEWAT] ${item.task}*`;
+    }
 
     lines.push(`${badge} ${titleText}`);
     lines.push(`├── ${deadlineStr}`);
@@ -1749,6 +1793,21 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   const formattedDone = formatTodoList(razitaWithDone);
   assert.ok(formattedDone.includes("[SELESAI]"));
   assert.ok(formattedDone.includes("✅"));
+
+  // Overdue task test
+  const overdueTaskId = store.addTodo(rafidPhone, "Tugas Telat", Date.now() - 3600_000);
+  const overdueList = store.getTodos(rafidPhone);
+  const formattedOverdue = formatTodoList(overdueList);
+  assert.ok(formattedOverdue.includes("[TERLEWAT]"));
+  assert.ok(formattedOverdue.includes("🔴"));
+
+  // getPendingTodoDeadlines test
+  const pendingDeadlines = store.getPendingTodoDeadlines();
+  assert.ok(pendingDeadlines.some((t) => t.id === overdueTaskId));
+  assert.strictEqual(store.markTodoReminded(overdueTaskId), 1);
+  const pendingAfter = store.getPendingTodoDeadlines();
+  assert.ok(!pendingAfter.some((t) => t.id === overdueTaskId));
+  store.deleteTodo(overdueTaskId, rafidPhone);
 
   // Reminders Isolation tests
   const remRafid = store.addReminder(rafidPhone, "Meeting Rafid", Date.now() + 3600_000);

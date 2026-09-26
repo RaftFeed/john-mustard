@@ -114,6 +114,24 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
     }
   }
 
+  // 3. Scan pending to-do deadlines yang sudah jatuh tempo / overdue
+  if (typeof store.getPendingTodoDeadlines === "function") {
+    const dueTodos = store.getPendingTodoDeadlines();
+    for (const todo of dueTodos) {
+      if (typeof store.markTodoReminded === "function") {
+        const marked = store.markTodoReminded(todo.id);
+        if (!marked) continue;
+      }
+      try {
+        const msg = `⏰ *[PENGINGAT DEADLINE TUGAS]*\nTenggat waktu tugas sudah tiba:\n• *${todo.task}*`;
+        await textSender(todo.chat_id, msg);
+        count++;
+      } catch (err) {
+        console.error(`Gagal kirim reminder deadline to-do #${todo.id}:`, err.message);
+      }
+    }
+  }
+
   return { ticked: true, sent: count };
 }
 
@@ -174,13 +192,19 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/scheduler.js")) {
       },
       getReminderById(id) {
         return reminders.find((r) => r.id === id);
+      },
+      getPendingTodoDeadlines() {
+        return [{ id: 99, chat_id: "user1", task: "PR Tes Deadline" }];
+      },
+      markTodoReminded(id) {
+        return id === 99 ? 1 : 0;
       }
     };
 
-    // 1. Tick should execute overdue reminder (#1) and schedule near horizon (#2)
+    // 1. Tick should execute overdue reminder (#1), overdue todo (#99), and schedule near horizon (#2)
     const tickResult = await tickScheduler(mockStore, { textSender: mockSender });
     assert.strictEqual(tickResult.ticked, true);
-    assert.strictEqual(tickResult.sent, 1);
+    assert.strictEqual(tickResult.sent, 2);
     assert.strictEqual(reminders[0].status, "sent");
     assert.strictEqual(getActiveTimersCount(), 1); // #2 is scheduled
 
@@ -192,7 +216,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/scheduler.js")) {
     await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(reminders[1].status, "sent");
     assert.strictEqual(getActiveTimersCount(), 0);
-    assert.strictEqual(sentMessages.length, 2);
+    assert.strictEqual(sentMessages.length, 3);
 
     clearActiveTimers();
     console.log("Scheduler near-horizon timers self-test OK");

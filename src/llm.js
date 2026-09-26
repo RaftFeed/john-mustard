@@ -639,7 +639,7 @@ export const TOOLS = [
       },
       {
         name: "sendDirectMessage",
-        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. Gunakan saat pengguna minta tolong PC/japri/DM/kirim link/pesan ke orang lain di whitelist (misal: 'tolong pc rafli link video tadi', 'japri karimah tolong beli beras', 'pc razita ndut ingetin pr'). Target penerima WAJIB terdaftar di whitelist bot.",
+        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. Gunakan saat pengguna minta tolong PC/japri/DM/kirim link/pesan ke orang lain di whitelist, ATAU minta tolong semangatin, titip pesan, sampaikan ucapan selamat/semangat, atau bilangin ke orang lain di whitelist (misal: 'tolong semangatin Rafid ya, semangat pitchingnya', 'bilangin Mami...', 'pc karimah link ini', 'japri rafid tolong...', 'pc razita ndut ingetin pr'). Target penerima WAJIB terdaftar di whitelist bot.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -649,7 +649,7 @@ export const TOOLS = [
             },
             message: {
               type: "STRING",
-              description: "Isi pesan lengkap, catatan, atau tautan/link yang ingin dikirimkan langsung ke nomor tujuan via chat pribadi (PC)."
+              description: "Isi pesan lengkap, catatan, ucapan semangat, atau tautan/link yang ingin dikirimkan langsung ke nomor tujuan via chat pribadi (PC)."
             }
           },
           required: ["recipient", "message"]
