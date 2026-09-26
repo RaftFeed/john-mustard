@@ -342,8 +342,12 @@ app.listen(PORT, () => {
   console.log(`[MCP] FastMCP SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
   function pollBotNumber() {
     fetchBotNumber().then((num) => {
-      if (num) {
-        console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num}${getBotLid() ? ` (LID: ${getBotLid()})` : ""}`);
+      const lid = getBotLid();
+      if (num && lid) {
+        console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num} (LID: ${lid})`);
+      } else if (num && !lid) {
+        console.log(`[WAHA] Bot identity nomor WA terdeteksi: +${num}, menunggu sync LID...`);
+        setTimeout(pollBotNumber, 5000);
       } else {
         setTimeout(pollBotNumber, 5000);
       }

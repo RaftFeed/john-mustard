@@ -106,6 +106,11 @@ export async function fetchBotNumber() {
         if (me.lid && !currentBotLid) currentBotLid = String(me.lid).replace(/\D/g, "");
       }
     }
+
+    if (currentBotNumber && !currentBotLid) {
+      const diskLid = resolvePhoneToLid(currentBotNumber);
+      if (diskLid) currentBotLid = diskLid;
+    }
   } catch {}
   return currentBotNumber;
 }
@@ -444,6 +449,10 @@ export function parseIncoming(body, allowedPhone) {
 
   const quoted = extractQuotedInfo(msg);
   const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
+  if (!currentBotLid && botNumber) {
+    const diskLid = resolvePhoneToLid(botNumber);
+    if (diskLid) currentBotLid = diskLid;
+  }
 
   let isFollowUpThread = false;
   // Grup WA: Strictly hanya jika di-mention (@) atau reply ke pesan bot
@@ -499,7 +508,10 @@ export function parseIncoming(body, allowedPhone) {
       (quoted?.id && isBotSentMessage(quoted.id)) ||
       (msg.replyTo?.id && isBotSentMessage(msg.replyTo.id)) ||
       (botNumber && quotedParticipant && (quotedParticipant === botNumber || quotedParticipant.includes(botNumber) || botNumber.includes(quotedParticipant))) ||
-      (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid))
+      (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid)) ||
+      (botNumber && quotedParticipant && resolveLidToPhone(quotedParticipant) === botNumber) ||
+      (botNumber && quotedParticipant && resolvePhoneToLid(botNumber) === quotedParticipant) ||
+      (currentBotLid && quotedParticipant && resolvePhoneToLid(quotedParticipant) === currentBotLid)
     );
 
     if (!isMentioned && !isReplyToBot) {
@@ -647,6 +659,26 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   }, "6281234567890");
   assert.ok(groupReply !== null, "Reply ke pesan bot di grup wajib diproses");
   assert.strictEqual(groupReply.isGroup, true);
+
+  // 3b. Group message replying to bot with participant matching botNumber -> processed
+  setBotNumber("6281234567890");
+  const groupReplyParticipant = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_REPLY_PARTICIPANT",
+      from: groupChatId,
+      participant: "628999999999@c.us",
+      fromMe: false,
+      body: "ini lanjutan tugasnya",
+      replyTo: {
+        id: "false_1203630234567890@g.us_ANY_OLD_ID",
+        participant: "6281234567890@c.us",
+        body: "List tugas belanja"
+      },
+      timestamp: 1700000022
+    }
+  }, "6281234567890");
+  assert.ok(groupReplyParticipant !== null, "Reply ke pesan bot via participant matching botNumber wajib diproses");
 
   // 4. Group message with @bot mention from group member -> processed
   const groupMemberMention = parseIncoming({
