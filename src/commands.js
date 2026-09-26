@@ -194,13 +194,13 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false }
     case "today": {
       const todos = store.getTodosDue(chatId, 0);
       if (todos.length === 0) return "*[Tugas Hari Ini]*\nGak ada tugas dengan deadline hari ini. Aman.";
-      return `*[Tugas Deadline Hari Ini]*\n\n${formatTodoList(todos)}`;
+      return formatTodoList(todos);
     }
 
     case "week": {
       const todos = store.getTodosDue(chatId, 7);
       if (todos.length === 0) return "*[Tugas 7 Hari Ke Depan]*\nGak ada tugas dalam 7 hari ke depan. Santai.";
-      return `*[Tugas 7 Hari Ke Depan]*\n\n${formatTodoList(todos)}`;
+      return formatTodoList(todos);
     }
 
     case "done": {

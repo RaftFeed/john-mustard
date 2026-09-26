@@ -73,7 +73,7 @@ async function handleIncomingMessage(msg) {
   const typingTimer = setInterval(() => startTyping(msg.from), 6000);
   const watchdogTimer = setTimeout(async () => {
     try {
-      await sendText(msg.from, "_Sedang memproses permintaanmu... (mohon tunggu sebentar)_");
+      await sendText(msg.from, "_Bentar ya, lagi diproses..._");
     } catch {}
   }, 12000);
 
@@ -253,7 +253,7 @@ async function handleIncomingMessage(msg) {
     });
   } catch (err) {
     console.error("Gagal proses chat:", err.message);
-    await sendText(msg.from, "[!] Gagal memproses permintaan.");
+    await sendText(msg.from, "[!] Waduh, gagal proses nih. Coba lagi bentar ya.");
 
     logInteraction(store.db, {
       prompt: msg.body || "[No Body]",

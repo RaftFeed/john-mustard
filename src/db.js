@@ -829,40 +829,77 @@ export function formatTodoList(todos) {
   const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
   const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
-  let lines = ["*[Pengingat Tugas]*\n"];
+  // WIB (UTC+7) midnight helper for exact calendar-day countdown
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  const nowWib = new Date(now.getTime() + WIB_OFFSET_MS);
+  const hour = nowWib.getUTCHours();
+  let salam = "Selamat pagi";
+  if (hour >= 11 && hour < 15) salam = "Selamat siang";
+  else if (hour >= 15 && hour < 18) salam = "Selamat sore";
+  else if (hour >= 18 || hour < 4) salam = "Selamat malam";
+
+  const lines = [
+    `🌄 [Pengingat Tugas]\n_${salam} Ilkomers!_\n`
+  ];
 
   todos.forEach((item) => {
-    let badge = "•";
+    let badge = "⚪";
     let deadlineStr = "Tanpa deadline";
 
     if (item.deadline) {
       const dl = new Date(item.deadline);
-      const diffMs = dl.getTime() - now.getTime();
-      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
 
-      if (diffDays <= 0) badge = "[!]";
-      else if (diffDays <= 2) badge = "[~]";
-      else badge = "•";
+      if (diffDays <= 0) badge = "🔴";
+      else if (diffDays === 1) badge = "🟠";
+      else if (diffDays <= 3) badge = "🟡";
+      else badge = "🟢";
 
-      const dayName = daysId[dl.getDay()];
-      const dateNum = dl.getDate();
-      const monthName = monthsId[dl.getMonth()];
-      const year = dl.getFullYear();
-      const hours = String(dl.getHours()).padStart(2, "0");
-      const minutes = String(dl.getMinutes()).padStart(2, "0");
+      const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[dlWib.getUTCDay()];
+      const dateNum = dlWib.getUTCDate();
+      const monthName = monthsId[dlWib.getUTCMonth()];
+      const year = dlWib.getUTCFullYear();
+      const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
 
-      const hText = diffDays <= 0 ? "Hari ini / Terlewat" : `H-${diffDays}`;
-      deadlineStr = `${hText} (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+      if (diffDays === 1) {
+        deadlineStr = `Besok (${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+      } else if (diffDays === 0) {
+        deadlineStr = `Hari ini (${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+      } else if (diffDays < 0) {
+        deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+      } else {
+        deadlineStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+      }
     }
 
     lines.push(`${badge} *[${item.id}] ${item.task}*`);
     lines.push(`├── ${deadlineStr}`);
-    const assigneeStr = item.assignee ? ` [👤 ${item.assignee}]` : "";
-    const tagBase = item.tag ? (item.tag.startsWith("#") ? item.tag : `#${item.tag}`) : "#tugas";
-    const tagStr = item.category === "routine" ? `${tagBase} [Rutin]${assigneeStr}` : `${tagBase}${assigneeStr}`;
-    lines.push(`└── ${tagStr}\n`);
+
+    // WhatsApp inline monospace code pill formatting: `#analgor` `[P2]`
+    const tagBase = item.tag ? item.tag.trim() : "#tugas";
+    const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
+      const clean = t.replace(/^`+|`+$/g, "");
+      return `\`${clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`}\``;
+    });
+
+    if (item.category === "routine") {
+      tagTokens.push("`[Rutin]`");
+    }
+    if (item.assignee) {
+      tagTokens.push(`\`[👤 ${item.assignee}]\``);
+    }
+
+    lines.push(`└── ${tagTokens.join(" ")}\n`);
   });
 
+  lines.push("_Semangat!_ 💪");
   return lines.join("\n").trim();
 }
 
@@ -898,7 +935,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(todos.length, 1);
   const formatted = formatTodoList(todos);
   assert.ok(formatted.includes("[1] LKP 6 Analisis Algoritme"));
-  assert.ok(formatted.includes("#analgor [P2]"));
+  assert.ok(formatted.includes("`#analgor` `[P2]`"));
+  assert.ok(formatted.includes("🌄 [Pengingat Tugas]"));
+  assert.ok(formatted.includes("_Semangat!_ 💪"));
 
   const found = store.findTodo("user1", "LKP 6");
   assert.strictEqual(found.id, id);

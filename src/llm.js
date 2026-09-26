@@ -1088,6 +1088,39 @@ export function sanitizeLatexForWhatsApp(text = "") {
     .replace(/\$([^$]+)\$/g, replaceMath);
 }
 
+export function formatForWhatsApp(text = "") {
+  if (!text) return "";
+
+  // 1. Preserve code blocks and inline code
+  const codeBlocks = [];
+  let s = text.replace(/```[\s\S]*?```|`[^`\n]+`/g, (match) => {
+    const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+    codeBlocks.push(match);
+    return placeholder;
+  });
+
+  // 2. Convert markdown headers (### Header -> *Header*)
+  s = s.replace(/^[ \t]*#{1,6}[ \t]+(.*)$/gm, "*$1*");
+
+  // 3. Convert markdown bold (**text** or __text__ -> *text*)
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+  s = s.replace(/__([^_\n]+)__/g, "*$1*");
+
+  // 4. Convert markdown links: [Title](url) -> Title (url)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)");
+
+  // 5. Convert bullet points (* item, - item, + item -> • item)
+  s = s.replace(/^[ \t]*[-*+][ \t]+/gm, "• ");
+
+  // 6. Convert blockquotes (> quote -> _quote_)
+  s = s.replace(/^[ \t]*>[ \t]+(.*)$/gm, "_$1_");
+
+  // 7. Restore code blocks
+  s = s.replace(/__CODE_BLOCK_(\d+)__/g, (_, idx) => codeBlocks[Number(idx)]);
+
+  return s;
+}
+
 export function isActionIntent(text = "") {
   if (!text) return false;
   return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
@@ -1972,7 +2005,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   const isGroupChat = String(chatId).endsWith("@g.us");
   const groupContext = isGroupChat
-    ? `\n\n[OBROLAN GRUP KELUARGA]: Kamu saat ini berada di dalam grup obrolan keluarga. Jawab secara ringkas, to the point, dan bersahabat. To-do list di obrolan ini adalah daftar tugas bersama keluarga. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
+    ? `\n\n[OBROLAN GRUP]: Kamu saat ini berada di dalam grup WhatsApp. Jawab secara ringkas, to the point, dan santai ala anak muda/Gen Z. Jangan nimbrung kalau user ngobrol sesama mereka. Wajib jawab jika di-tag (@), di-reply, atau dipanggil ("john", "mustard", "bot"). DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik.`
     : "";
 
   const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
@@ -2058,7 +2091,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
           toolConfig = { functionCallingConfig: { mode: "ANY" } };
           continue;
         } else {
-          return "Mohon maaf, tindakan tersebut belum berhasil diproses di sistem database. Silakan ulangi perintah secara spesifik.";
+          return "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik cuy.";
         }
       }
       break;
@@ -2112,11 +2145,12 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       finalReply = text;
     }
   } else {
-    finalReply = lastFormattedList || "Aksi berhasil diselesaikan.";
+    finalReply = lastFormattedList || "Beres cuy.";
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);
   finalReply = sanitizeLatexForWhatsApp(finalReply);
+  finalReply = formatForWhatsApp(finalReply);
 
   const noFluff = isNoFluffRequest(userText);
 
@@ -2126,8 +2160,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     finalReply = `${finalReply}\n\n_${chips}_`;
   }
 
-  // Anti-slop: strip decorative emojis from reply except cowboy and wilted flower
-  finalReply = finalReply.replace(/(?!🤠|🥀)[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "").trim();
+  // Anti-slop: strip decorative AI slop emojis while preserving functional UI emojis
+  finalReply = finalReply.replace(/(?!🤠|🥀|🌄|🟠|🟡|🟢|🔴|⚪|💪|👤|✅|❌|⚠️|📌)[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "").trim();
 
   // Hook meme awal chat: 🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀
   if (isGreeting && finalReply && finalReply !== "[NO_REPLY]") {
@@ -2291,6 +2325,18 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(cleanMath.includes("O(n log₂ n)"));
     assert.ok(cleanMath.includes("x² + y₁ ≤ 10"));
     assert.ok(!cleanMath.includes("$"));
+
+    // WhatsApp Markdown Converter Tests
+    const rawMarkdown = "### Heading Judul\nBerikut list:\n* Item 1\n* Item 2\n**Teks tebal** dan [Link Web](https://example.com)\n> ini kutipan";
+    const waFormatted = formatForWhatsApp(rawMarkdown);
+    assert.ok(waFormatted.includes("*Heading Judul*"));
+    assert.ok(waFormatted.includes("• Item 1"));
+    assert.ok(waFormatted.includes("• Item 2"));
+    assert.ok(waFormatted.includes("*Teks tebal*"));
+    assert.ok(waFormatted.includes("Link Web (https://example.com)"));
+    assert.ok(waFormatted.includes("_ini kutipan_"));
+    assert.ok(!waFormatted.includes("###"));
+    assert.ok(!waFormatted.includes("**"));
 
     // Tool permission tests
     executeTool("checkServerHealth", {}, { store: null, chatId: "628999999999" }).then((res) => {

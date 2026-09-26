@@ -3,6 +3,32 @@ import fs from "node:fs";
 import path from "node:path";
 
 let currentBotNumber = (process.env.BOT_PHONE || "").replace(/\D/g, "") || null;
+let currentBotLid = null;
+const botSentMessageIds = new Set();
+
+export function recordBotSentMessage(msgId) {
+  if (!msgId) return;
+  const strId = String(msgId);
+  botSentMessageIds.add(strId);
+  for (const part of strId.split("_")) {
+    if (part) botSentMessageIds.add(part);
+  }
+  if (botSentMessageIds.size > 2000) {
+    const first = botSentMessageIds.values().next().value;
+    botSentMessageIds.delete(first);
+  }
+}
+
+export function isBotSentMessage(msgId) {
+  if (!msgId) return false;
+  const strId = String(msgId);
+  if (botSentMessageIds.has(strId)) return true;
+  const parts = strId.split("_");
+  for (const part of parts) {
+    if (part && botSentMessageIds.has(part)) return true;
+  }
+  return false;
+}
 
 export function getBotNumber() {
   return currentBotNumber;
@@ -27,8 +53,11 @@ export async function fetchBotNumber() {
       const num = meId.split("@")[0].split(":")[0].replace(/\D/g, "");
       if (num) {
         currentBotNumber = num;
-        return num;
       }
+      if (data.me?.lid || data.lid) {
+        currentBotLid = String(data.me?.lid || data.lid).replace(/\D/g, "");
+      }
+      return currentBotNumber;
     }
   } catch {}
   return null;
@@ -98,7 +127,11 @@ export async function sendSingleText(chatId, text, replyTo = null) {
     const errText = await res.text();
     throw new Error(`WAHA sendText failed (${res.status}): ${errText}`);
   }
-  return res.json();
+  const resData = await res.json();
+  if (resData?.id) {
+    recordBotSentMessage(resData.id);
+  }
+  return resData;
 }
 
 // Multi-Bubble Splitting (Helmis pattern)
@@ -159,13 +192,19 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
           headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
           body: JSON.stringify(payload)
         });
-        if (fallbackRes.ok) return fallbackRes.json();
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData?.id) recordBotSentMessage(fallbackData.id);
+          return fallbackData;
+        }
       } catch {}
     }
     const errText = await res.text();
     throw new Error(`WAHA ${endpoint} failed (${res.status}): ${errText}`);
   }
-  return res.json();
+  const fileResData = await res.json();
+  if (fileResData?.id) recordBotSentMessage(fileResData.id);
+  return fileResData;
 }
 
 export async function sendImage(chatId, filepath, filename, caption = "") {
@@ -208,27 +247,33 @@ export function extractMediaFilename(msg) {
 
 export function extractQuotedInfo(msg) {
   if (!msg) return null;
+  const replyId =
+    msg.replyTo?.id ||
+    msg._data?.quotedMsg?.id ||
+    msg._data?.quotedMsg?.key?.id ||
+    msg._data?.Message?.extendedTextMessage?.contextInfo?.stanzaId;
+
   const isFromMe = Boolean(
     msg.replyTo?.fromMe ||
     msg._data?.quotedMsg?.fromMe ||
     msg._data?.quotedMsg?.key?.fromMe ||
     msg._data?.Message?.extendedTextMessage?.contextInfo?.isFromMe ||
-    (typeof msg.replyTo?.id === "string" && msg.replyTo.id.startsWith("true_")) ||
-    (typeof msg._data?.quotedMsg?.id === "string" && msg._data.quotedMsg.id.startsWith("true_"))
+    (typeof replyId === "string" && replyId.startsWith("true_")) ||
+    (replyId && isBotSentMessage(replyId))
   );
 
   // 1. Top-level replyTo
   if (msg.replyTo) {
     const text = String(msg.replyTo.body || msg.replyTo.caption || "").trim();
     const sender = String(msg.replyTo.participant || msg.replyTo.from || "").trim();
-    if (text) return { text, sender, fromMe: isFromMe };
+    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
   }
   // 2. _data.quotedMsg
   const dataQuoted = msg._data?.quotedMsg || msg.quotedMsg;
   if (dataQuoted) {
     const text = String(dataQuoted.body || dataQuoted.caption || "").trim();
     const sender = String(msg._data?.quotedParticipant || dataQuoted.participant || "").trim();
-    if (text) return { text, sender, fromMe: isFromMe };
+    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
   }
   // 3. Protobuf contextInfo (GOWS/NOWEB)
   const contextInfo =
@@ -248,7 +293,7 @@ export function extractQuotedInfo(msg) {
       else if (qMsg.imageMessage) text = `[Foto]`;
       else if (qMsg.audioMessage) text = `[Pesan Suara VN]`;
     }
-    if (text) return { text, sender, fromMe: isFromMe };
+    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
   }
   return null;
 }
@@ -258,6 +303,13 @@ export function parseIncoming(body, allowedPhone) {
 
   const msg = body.payload;
   if (!msg || msg.fromMe) return null;
+
+  // Auto-detect bot phone number from payload destination if available
+  const toRaw = msg.to || body.payload?.to || msg._data?.to || "";
+  const botTo = toRaw.split("@")[0].split(":")[0].replace(/\D/g, "");
+  if (botTo && !currentBotNumber) {
+    currentBotNumber = botTo;
+  }
 
   const isGroup = Boolean(msg.from && String(msg.from).endsWith("@g.us"));
   const rawSender = isGroup
@@ -269,26 +321,10 @@ export function parseIncoming(body, allowedPhone) {
   const altNumber = altJid ? altJid.split("@")[0].replace(/\D/g, "") : null;
   const resolvedPhone = resolveLidToPhone(senderNumber);
 
-  const allowedList = (allowedPhone || "")
-    .split(",")
-    .map((p) => p.replace(/\D/g, "").trim())
-    .filter(Boolean);
-
-  const isAllowed =
-    allowedList.length === 0 ||
-    allowedList.includes(senderNumber) ||
-    (altNumber && allowedList.includes(altNumber)) ||
-    (resolvedPhone && allowedList.includes(resolvedPhone));
-
-  if (!isAllowed) {
-    console.log(`[Whitelist] Pesan dari ${rawSender} (${senderNumber}) diabaikan (Bukan whitelist: ${allowedList.join(", ")})`);
-    return null;
-  }
-
   const quoted = extractQuotedInfo(msg);
-  const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "");
+  const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
 
-  // Grup WA: HANYA proses jika di-mention (@) atau reply ke bot
+  // Grup WA: Cek apakah di-mention (@) atau reply ke pesan bot
   if (isGroup) {
     const mentionedList = [
       ...(Array.isArray(msg.mentionedIds) ? msg.mentionedIds : []),
@@ -299,21 +335,64 @@ export function parseIncoming(body, allowedPhone) {
     ];
 
     const bodyTextRaw = String(msg.body || "");
-    const isMentioned =
-      (botNumber && (
-        mentionedList.some((id) => String(id).replace(/\D/g, "").includes(botNumber)) ||
-        bodyTextRaw.includes(`@${botNumber}`)
-      )) ||
-      /@(?:john|mustard|bot)\b/i.test(bodyTextRaw);
+
+    // 1. Native WhatsApp @ mention matching bot number or LID
+    let isMentioned = false;
+    if (botNumber) {
+      isMentioned =
+        mentionedList.some((id) => {
+          const digits = String(id).replace(/\D/g, "");
+          return digits && (digits === botNumber || digits.includes(botNumber) || botNumber.includes(digits));
+        }) ||
+        bodyTextRaw.includes(`@${botNumber}`);
+    }
+    if (!isMentioned && currentBotLid) {
+      isMentioned = mentionedList.some((id) => String(id).includes(currentBotLid));
+    }
+
+    // 2. Mention by name, keyword, or addressing the bot
+    if (!isMentioned) {
+      isMentioned =
+        /@(?:john|mustard|bot)\b/i.test(bodyTextRaw) ||
+        /\b(?:john|mustard)\b/i.test(bodyTextRaw);
+    }
+
+    // 3. Reply to bot check
+    const quotedParticipant = (quoted?.sender || "").replace(/\D/g, "");
+    const toDigits = toRaw.replace(/\D/g, "");
 
     const isReplyToBot = Boolean(
       quoted?.fromMe ||
-      (botNumber && quoted?.sender && quoted.sender.replace(/\D/g, "").includes(botNumber))
+      (quoted?.id && isBotSentMessage(quoted.id)) ||
+      (msg.replyTo?.id && isBotSentMessage(msg.replyTo.id)) ||
+      (botNumber && quotedParticipant && (quotedParticipant === botNumber || quotedParticipant.includes(botNumber) || botNumber.includes(quotedParticipant))) ||
+      (toDigits && quotedParticipant && quotedParticipant === toDigits) ||
+      (currentBotLid && quoted?.sender && quoted.sender.includes(currentBotLid))
     );
 
     if (!isMentioned && !isReplyToBot) {
       return null;
     }
+  }
+
+  // Whitelist check:
+  // - Direct Message (DM): Whitelist ketat (hanya nomor terdaftar yg boleh chat).
+  // - Grup WhatsApp: Jika bot di-tag atau di-reply di grup, respon ke anggota grup tersebut.
+  const allowedList = (allowedPhone || "")
+    .split(",")
+    .map((p) => p.replace(/\D/g, "").trim())
+    .filter(Boolean);
+
+  const isAllowed =
+    allowedList.length === 0 ||
+    isGroup ||
+    allowedList.includes(senderNumber) ||
+    (altNumber && allowedList.includes(altNumber)) ||
+    (resolvedPhone && allowedList.includes(resolvedPhone));
+
+  if (!isAllowed) {
+    console.log(`[Whitelist] Pesan dari ${rawSender} (${senderNumber}) diabaikan (Bukan whitelist: ${allowedList.join(", ")})`);
+    return null;
   }
 
   const mediaUrl = msg.media?.url || msg.mediaUrl || (typeof msg.media === "string" ? msg.media : null);
@@ -435,11 +514,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.ok(groupReply !== null, "Reply ke pesan bot di grup wajib diproses");
   assert.strictEqual(groupReply.isGroup, true);
 
-  // 4. Group message from non-whitelisted sender -> dropped
-  const groupStranger = parseIncoming({
+  // 4. Group message with @bot mention from group member -> processed
+  const groupMemberMention = parseIncoming({
     event: "message",
     payload: {
-      id: "GRP_STRANGER",
+      id: "GRP_MEMBER",
       from: groupChatId,
       participant: "628999999999@c.us",
       fromMe: false,
@@ -447,7 +526,41 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
       timestamp: 1700000023
     }
   }, "6281234567890");
-  assert.strictEqual(groupStranger, null, "Sender non-whitelist di grup wajib diabaikan");
+  assert.ok(groupMemberMention !== null, "Pesan mention @bot dari member grup wajib diproses");
+  assert.strictEqual(groupMemberMention.isGroup, true);
+
+  // 5. DM message from non-whitelisted sender -> dropped
+  const dmStranger = parseIncoming({
+    event: "message",
+    payload: {
+      id: "DM_STRANGER",
+      from: "628999999999@c.us",
+      fromMe: false,
+      body: "halo bot",
+      timestamp: 1700000024
+    }
+  }, "6281234567890");
+  assert.strictEqual(dmStranger, null, "Pesan DM dari non-whitelist wajib diabaikan");
+
+  // 6. Reply to bot tracked message ID -> processed
+  recordBotSentMessage("BOT_MSG_TRACKED_123");
+  const replyTracked = parseIncoming({
+    event: "message",
+    payload: {
+      id: "GRP_REPLY_TRACKED",
+      from: groupChatId,
+      participant: "628999999999@c.us",
+      fromMe: false,
+      body: "oke siap",
+      replyTo: {
+        id: "false_1203630234567890@g.us_BOT_MSG_TRACKED_123",
+        participant: "6281234567890@c.us",
+        body: "List tugas"
+      },
+      timestamp: 1700000025
+    }
+  }, "6281234567890");
+  assert.ok(replyTracked !== null, "Reply ke pesan bot dengan ID terlacak wajib diproses");
 
   assert.strictEqual(typeof startTyping, "function");
   assert.strictEqual(typeof stopTyping, "function");
