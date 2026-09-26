@@ -258,7 +258,14 @@ async function handleIncomingMessage(msg) {
     if (fastCmd) {
       console.log(`>> Fast command [${fastCmd.type}] from ${msg.from}`);
       const isOwnerUser = isOwner(msg.from, msg.senderNumber);
-      const cmdReply = await executeFastCommand(fastCmd, { store, chatId: msg.from, isOwner: isOwnerUser });
+      const person = store.getPerson ? store.getPerson(msg.senderNumber || msg.from) : null;
+      const cmdReply = await executeFastCommand(fastCmd, {
+        store,
+        chatId: msg.from,
+        isOwner: isOwnerUser,
+        senderNumber: msg.senderNumber,
+        senderName: person?.name || ""
+      });
       if (cmdReply) {
         await sendText(msg.from, cmdReply);
         console.log(`>> Sent fast command reply to ${msg.from}: ${cmdReply.slice(0, 60).replace(/\n/g, " ")}`);

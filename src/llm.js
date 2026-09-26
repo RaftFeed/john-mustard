@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatTodoList, formatBacklogList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner } from "./db.js";
 import { sendFile, sendText } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
@@ -222,6 +222,27 @@ export const TOOLS = [
             backlogId: { type: "NUMBER", description: "ID backlog yang selesai" }
           },
           required: ["backlogId"]
+        }
+      },
+      {
+        name: "submitFeatureRequest",
+        description: "Catat dan laporkan usulan / request fitur baru dari pengguna (bisa dipanggil oleh siapa saja). Otomatis mengirimkan notifikasi ke master/owner.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            requestText: { type: "STRING", description: "Rincian fitur atau saran perbaikan yang diminta oleh pengguna" }
+          },
+          required: ["requestText"]
+        }
+      },
+      {
+        name: "listFeatureRequests",
+        description: "Lihat daftar request fitur yang masuk dari para pengguna (khusus owner/master)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            status: { type: "STRING", description: "Filter status: 'pending', 'done', atau 'all'. Default 'pending'." }
+          }
         }
       },
       {
@@ -1044,6 +1065,7 @@ export async function fetchUrlContent(rawUrl) {
 const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "updateTodo", "deleteTodo", "undoLastTodo",
   "addReminder", "deleteReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
+  "submitFeatureRequest",
   "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",
   "processPdf", "mergePdf", "splitPdf", "compressPdf", "convertDocument",
   "proposeSkill", "approveSkill", "rejectSkill", "rollbackSkill",
@@ -1456,6 +1478,32 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     } else {
       const changes = store.completeBacklog(args.backlogId, chatId);
       toolResult = { success: changes > 0, backlogId: args.backlogId };
+    }
+  } else if (name === "submitFeatureRequest") {
+    const senderPhone = senderNumber || chatId;
+    const person = store?.getPerson ? store.getPerson(senderPhone) : null;
+    const senderName = person?.name || "";
+    const id = store.addFeatureRequest(senderPhone, senderName, args.requestText);
+    try {
+      const normSender = normalizePhone(senderPhone);
+      const who = senderName ? `${senderName} (+${normSender})` : `+${normSender}`;
+      await sendText(
+        `${OWNER_PHONE}@c.us`,
+        `💡 *[Feature Request Baru]*\n• ID: #${id}\n• Dari: ${who}\n• Request:\n"${args.requestText}"`
+      );
+    } catch {}
+    toolResult = {
+      success: true,
+      requestId: id,
+      message: `Request fitur #${id} berhasil dicatat di sistem dan dilaporkan ke master.`
+    };
+  } else if (name === "listFeatureRequests") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: `Daftar request fitur hanya bisa diakses oleh master (+${OWNER_PHONE}).` };
+    } else {
+      const list = store.getFeatureRequests(args.status || "pending");
+      formattedList = formatFeatureRequestsList(list);
+      toolResult = { count: list.length, requests: list, formatted: formattedList };
     }
   } else if (name === "searchWeb") {
     const apiKey = process.env.TAVILY_API_KEY;
@@ -2260,6 +2308,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("addBacklog"));
     assert.ok(decls.includes("listBacklogs"));
     assert.ok(decls.includes("completeBacklog"));
+    assert.ok(decls.includes("submitFeatureRequest"));
+    assert.ok(decls.includes("listFeatureRequests"));
     assert.ok(decls.includes("executePython"));
     assert.ok(decls.includes("saveSkill"));
     assert.ok(decls.includes("listSkills"));

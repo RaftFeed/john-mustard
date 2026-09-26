@@ -139,6 +139,14 @@ export class Storage {
         status TEXT DEFAULT 'pending',
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS feature_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_phone TEXT NOT NULL,
+        sender_name TEXT DEFAULT '',
+        request_text TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS skills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
@@ -667,6 +675,26 @@ export class Storage {
     ).run(id, norm).changes;
   }
 
+  // --- Feature Requests (User Requests -> Master) ---
+  addFeatureRequest(senderPhone, senderName, requestText) {
+    const norm = normalizePhone(senderPhone);
+    const stmt = this.db.prepare(
+      "INSERT INTO feature_requests (sender_phone, sender_name, request_text, status, created_at) VALUES (?, ?, ?, 'pending', ?)"
+    );
+    return stmt.run(norm, senderName || "", requestText.trim(), Date.now()).lastInsertRowid;
+  }
+
+  getFeatureRequests(status = "pending") {
+    if (status === "all") {
+      return this.db.prepare("SELECT * FROM feature_requests ORDER BY id DESC").all();
+    }
+    return this.db.prepare("SELECT * FROM feature_requests WHERE status = ? ORDER BY id ASC").all(status);
+  }
+
+  completeFeatureRequest(id) {
+    return this.db.prepare("UPDATE feature_requests SET status = 'done' WHERE id = ?").run(id).changes;
+  }
+
   // --- Skills / Auto-Crystallization ---
   setSkillListener(fn) {
     this.onSkillChange = fn;
@@ -866,6 +894,22 @@ export function formatBacklogList(backlogs) {
   });
   lines.push("\n_Tandai selesai: #backlog done <id>_");
   return lines.join("\n");
+}
+
+export function formatFeatureRequestsList(requests) {
+  if (!requests || requests.length === 0) {
+    return "*[Request Fitur]*\nBelum ada request fitur dari pengguna.";
+  }
+  const lines = ["💡 *[Request Fitur Pengguna]*\n"];
+  requests.forEach((r) => {
+    const d = new Date(r.created_at);
+    const dateStr = `${d.getDate()}/${d.getMonth() + 1}`;
+    const who = r.sender_name ? `${r.sender_name} (+${r.sender_phone})` : `+${r.sender_phone}`;
+    lines.push(`• *[#${r.id}]* ${r.request_text}`);
+    lines.push(`   👤 Dari: ${who} _(${dateStr})_\n`);
+  });
+  lines.push("_Tandai selesai: #request done <id>_");
+  return lines.join("\n").trim();
 }
 
 export function formatTodoList(todos) {
@@ -1241,6 +1285,18 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(!seqFormatted.includes(`[${t4}] Nyapu ngepel`));
   assert.strictEqual(store.completeTodo(1, "user_seq"), 1);
   assert.strictEqual(store.getTodos("user_seq").length, 0);
+
+  // Feature requests test
+  const frId = store.addFeatureRequest("628123456789", "User Test", "Tolong tambahin fitur dark mode");
+  const frList = store.getFeatureRequests("pending");
+  assert.strictEqual(frList.length, 1);
+  assert.strictEqual(frList[0].id, frId);
+  assert.strictEqual(frList[0].request_text, "Tolong tambahin fitur dark mode");
+  const frFormatted = formatFeatureRequestsList(frList);
+  assert.ok(frFormatted.includes("dark mode"));
+  assert.ok(frFormatted.includes("User Test"));
+  assert.strictEqual(store.completeFeatureRequest(frId), 1);
+  assert.strictEqual(store.getFeatureRequests("pending").length, 0);
 
   console.log("DB & Formatter self-test OK");
 }

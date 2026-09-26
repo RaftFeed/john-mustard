@@ -1,6 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatSkillList, formatPersonList, formatRemindersList, OWNER_PHONE } from "./db.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, normalizePhone, OWNER_PHONE } from "./db.js";
+import { sendText } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
@@ -114,6 +115,23 @@ export function parseFastCommand(text = "") {
     return { type: "backlogAdd", idea: sub };
   }
 
+  const requestMatch = trimmed.match(/^#(request|feedback)(\s+(.*))?$/is);
+  if (requestMatch) {
+    const sub = (requestMatch[3] || "").trim();
+    const rDoneMatch = sub.match(/^done\s+(\d+)$/i);
+    if (!sub || sub.toLowerCase() === "list") {
+      return { type: "requestList" };
+    }
+    if (rDoneMatch) {
+      return { type: "requestDone", id: parseInt(rDoneMatch[1], 10) };
+    }
+    return { type: "requestAdd", text: sub };
+  }
+
+  if (/^#requests\b/i.test(trimmed)) {
+    return { type: "requestList" };
+  }
+
   if (/^#(health|server|sys|system)\b/i.test(trimmed)) {
     return { type: "health" };
   }
@@ -171,7 +189,7 @@ export function formatServerHealth(store) {
 • Disk: ${diskInfo}${dbLine}`;
 }
 
-export async function executeFastCommand(cmd, { store, chatId, isOwner = false }) {
+export async function executeFastCommand(cmd, { store, chatId, isOwner = false, senderName = "", senderNumber = "" } = {}) {
   if (!cmd) return null;
 
   switch (cmd.type) {
@@ -348,6 +366,36 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false }
       return `*[Backlog]*\nDicatat.\n• ID: #${bId}\n• Ide: ${cmd.idea}`;
     }
 
+    case "requestAdd": {
+      if (!cmd.text) {
+        return "[!] Tuliskan ide fitur yang diminta. Contoh: #request integrasi google calendar";
+      }
+      const senderPhone = senderNumber || chatId;
+      const id = store.addFeatureRequest(senderPhone, senderName, cmd.text);
+      try {
+        const normSender = normalizePhone(senderPhone);
+        const who = senderName ? `${senderName} (+${normSender})` : `+${normSender}`;
+        sendText(
+          `${OWNER_PHONE}@c.us`,
+          `💡 *[Feature Request Baru]*\n• ID: #${id}\n• Dari: ${who}\n• Request:\n"${cmd.text}"`
+        ).catch(() => {});
+      } catch {}
+      return `[OK] Request fitur #${id} berhasil dicatat & dilaporkan ke master. Nuhun masukannya!`;
+    }
+
+    case "requestList": {
+      if (!isOwner) return `[!] Daftar request fitur hanya bisa diakses oleh master (+${OWNER_PHONE}).`;
+      const list = store.getFeatureRequests("pending");
+      return formatFeatureRequestsList(list);
+    }
+
+    case "requestDone": {
+      if (!isOwner) return `[!] Hanya master (+${OWNER_PHONE}) yang bisa menandai request selesai.`;
+      const changed = store.completeFeatureRequest(cmd.id);
+      if (changed > 0) return `[OK] Request fitur #${cmd.id} ditandai selesai.`;
+      return `[!] Request fitur #${cmd.id} gak ketemu.`;
+    }
+
     case "health": {
       if (!isOwner) return `[!] Fitur #health khusus owner (+${OWNER_PHONE}).`;
       return formatServerHealth(store);
@@ -381,6 +429,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #del <id> — Hapus tugas (misal: #del 1)
 
 *Perintah Otomasi & Pengaturan:*
+- #request <ide> — Kirim ide/request fitur ke master bot
 - #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
 - #skills — Lihat daftar skill & macro otomatis
 - #proposals — Cek antrean proposal skill
@@ -390,6 +439,8 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
 - #mc / #minecraft — Cek status server Minecraft & player aktif
+- #requests — Lihat daftar request fitur dari pengguna
+- #request done <id> — Tandai request selesai
 - #backlog <ide> — Catat ide fitur/perbaikan
 - #backlog list — Lihat daftar backlog ide
 - #backlog done <id> — Tandai backlog selesai
@@ -487,6 +538,25 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
 
       const delRes = await executeFastCommand(parseFastCommand("#del 1"), { store, chatId });
       assert.ok(delRes.includes("[OK] Tugas #1 berhasil dihapus"));
+
+      // Fast command feature request test
+      const reqCmd = parseFastCommand("#request bikin bot bisa kirim sticker");
+      assert.strictEqual(reqCmd.type, "requestAdd");
+      assert.strictEqual(reqCmd.text, "bikin bot bisa kirim sticker");
+      const reqAddRes = await executeFastCommand(reqCmd, { store, chatId, senderName: "Siti" });
+      assert.ok(reqAddRes.includes("[OK] Request fitur"));
+
+      const reqListCmd = parseFastCommand("#requests");
+      assert.strictEqual(reqListCmd.type, "requestList");
+      const reqListDenied = await executeFastCommand(reqListCmd, { store, chatId, isOwner: false });
+      assert.ok(reqListDenied.includes("master"));
+      const reqListAllowed = await executeFastCommand(reqListCmd, { store, chatId, isOwner: true });
+      assert.ok(reqListAllowed.includes("kirim sticker"));
+
+      const reqDoneCmd = parseFastCommand("#request done 1");
+      assert.strictEqual(reqDoneCmd.type, "requestDone");
+      const reqDoneRes = await executeFastCommand(reqDoneCmd, { store, chatId, isOwner: true });
+      assert.ok(reqDoneRes.includes("selesai"));
 
       console.log("Commands module self-test OK");
     });
