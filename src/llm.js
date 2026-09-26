@@ -1234,15 +1234,12 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   if (name === "addTodo") {
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
     const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee);
-    const allTodos = store.getTodos(chatId, args.category === "routine");
-    formattedList = formatTodoList(allTodos);
     toolResult = {
       success: true,
       id,
       task: args.task,
       category: args.category || "auto",
-      assignee: args.assignee || null,
-      formattedList
+      assignee: args.assignee || null
     };
   } else if (name === "listTodos") {
     const todos = store.getTodos(chatId, Boolean(args.includeRoutine), args.assignee || null);
@@ -1255,20 +1252,15 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     toolResult = { count: todos.length, daysAhead: days, todos, formattedList };
   } else if (name === "completeTodo") {
     const changes = store.completeTodo(args.todoId, chatId);
-    const allTodos = store.getTodos(chatId);
-    formattedList = formatTodoList(allTodos);
-    toolResult = { success: changes > 0, formattedList };
+    toolResult = { success: changes > 0, todoId: args.todoId };
   } else if (name === "undoLastTodo") {
     const undone = store.undoLastDone(chatId);
     if (!undone) {
       toolResult = { error: "Tidak ada tugas selesai yang bisa dibatalkan (undo)." };
     } else {
-      const allTodos = store.getTodos(chatId);
-      formattedList = formatTodoList(allTodos);
       toolResult = {
         success: true,
         undoneTodo: undone,
-        formattedList,
         message: `Tugas #${undone.id} ('${undone.task}') berhasil dikembalikan ke status belum selesai.`
       };
     }
@@ -1288,12 +1280,9 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         tag: args.tag,
         assignee: args.assignee
       });
-      const allTodos = store.getTodos(chatId);
-      formattedList = formatTodoList(allTodos);
       toolResult = {
         success: changes > 0,
-        todoId: targetId,
-        formattedList
+        todoId: targetId
       };
     }
   } else if (name === "deleteTodo") {
@@ -1306,11 +1295,9 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
     } else {
       const changes = store.deleteTodo(targetId, chatId);
-      const allTodos = store.getTodos(chatId);
-      formattedList = formatTodoList(allTodos);
       toolResult = {
         success: changes > 0,
-        formattedList
+        deletedId: targetId
       };
     }
   } else if (name === "addReminder") {
@@ -2007,7 +1994,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     : "";
 
   // Multi-turn context: muat riwayat pesan terakhir
-  const history = store ? store.getRecentChatHistory(chatId, 6) : [];
+  const history = store?.getRecentChatHistory ? store.getRecentChatHistory(chatId, 6) : [];
   const isGroupChat = String(chatId).endsWith("@g.us");
   const isGreeting = isGreetingIntent(userText) && !isGroupChat;
   const greetingInstruction = isGreeting
@@ -2106,8 +2093,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     currentCandidate = responseData.candidates?.[0];
     if (!currentCandidate?.content) break;
 
-    const fnCallPart = currentCandidate.content.parts?.find((p) => p.functionCall);
-    if (!fnCallPart?.functionCall) {
+    const fnCallParts = currentCandidate.content.parts?.filter((p) => p.functionCall) || [];
+    if (fnCallParts.length === 0) {
       // Anti-Hallucination & Mutation Guardrail Check
       const candidateText = currentCandidate.content.parts?.find((p) => p.text)?.text || "";
       if (detectUnexecutedMutationClaim(candidateText, toolsCalled)) {
@@ -2130,31 +2117,38 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     }
 
     turns++;
-    const { name, args } = fnCallPart.functionCall;
-    toolsCalled.push(name);
-    if (onToolCall) onToolCall(name);
+    const userResponseParts = [];
+    for (const part of fnCallParts) {
+      const { name, args } = part.functionCall;
+      toolsCalled.push(name);
+      if (onToolCall) onToolCall(name);
 
-    let resultObj = {};
-    try {
-      resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
-    } catch (toolErr) {
-      resultObj = { toolResult: { error: toolErr.message } };
-    }
+      let resultObj = {};
+      try {
+        resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
+      } catch (toolErr) {
+        resultObj = { toolResult: { error: toolErr.message } };
+      }
 
-    executedTrajectory.push({
-      name,
-      args,
-      result: resultObj.toolResult
-    });
+      executedTrajectory.push({
+        name,
+        args,
+        result: resultObj.toolResult
+      });
 
-    if (resultObj.formattedList) {
-      lastFormattedList = resultObj.formattedList;
+      if (resultObj.formattedList) {
+        lastFormattedList = resultObj.formattedList;
+      }
+
+      userResponseParts.push({
+        functionResponse: { name, response: { result: resultObj.toolResult } }
+      });
     }
 
     contents.push(currentCandidate.content);
     contents.push({
       role: "user",
-      parts: [{ functionResponse: { name, response: { result: resultObj.toolResult } } }]
+      parts: userResponseParts
     });
 
     // Revert toolConfig to AUTO for subsequent steps in the ReAct loop
@@ -2171,7 +2165,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
   let finalReply = "";
 
   if (text) {
-    if (lastFormattedList && !text.includes("─") && !text.includes("[")) {
+    if (lastFormattedList && !text.includes(lastFormattedList) && !text.includes("⏰") && !text.includes("[")) {
       finalReply = `${text}\n\n${lastFormattedList}`;
     } else {
       finalReply = text;
@@ -2186,8 +2180,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   const noFluff = isNoFluffRequest(userText);
 
-  // Footnote Chips for transparent engine calls (suppressed on no-fluff / copy-only turns)
-  if (toolsCalled.length > 0 && finalReply !== "[NO_REPLY]" && !noFluff) {
+  // Footnote Chips for transparent engine calls (suppressed by default; enabled only with SHOW_TOOL_CHIPS=true)
+  if (process.env.SHOW_TOOL_CHIPS === "true" && toolsCalled.length > 0 && finalReply !== "[NO_REPLY]" && !noFluff) {
     const chips = [...new Set(toolsCalled)].map((t) => `↳ ${t}`).join("  ");
     finalReply = `${finalReply}\n\n_${chips}_`;
   }
@@ -2390,6 +2384,43 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     };
     await processChat(mockRotator, "halo", { chatId: "628123456789@c.us" });
     await processChat(mockRotator, "halo", { chatId: "1203630234567890@g.us" });
+
+    // Multi-function call in single turn test
+    let multiToolsCalled = [];
+    const multiFnMockRotator = {
+      turn: 0,
+      execute: async () => {
+        multiFnMockRotator.turn++;
+        if (multiFnMockRotator.turn === 1) {
+          return {
+            candidates: [{
+              content: {
+                parts: [
+                  { functionCall: { name: "addTodo", args: { task: "Tugas 1" } } },
+                  { functionCall: { name: "addTodo", args: { task: "Tugas 2" } } }
+                ]
+              }
+            }]
+          };
+        }
+        return {
+          candidates: [{ content: { parts: [{ text: "Dua tugas berhasil dicatat." }] } }]
+        };
+      }
+    };
+    const mockStore = {
+      addTodo: () => 1,
+      getTodos: () => []
+    };
+    const multiRes = await processChat(multiFnMockRotator, "catat 2 tugas", {
+      store: mockStore,
+      chatId: "628123456789@c.us",
+      onToolCall: (name) => multiToolsCalled.push(name)
+    });
+    assert.strictEqual(multiToolsCalled.length, 2);
+    assert.strictEqual(multiToolsCalled[0], "addTodo");
+    assert.strictEqual(multiToolsCalled[1], "addTodo");
+    assert.ok(multiRes.includes("Dua tugas berhasil dicatat."));
 
     console.log("LLM module self-test OK");
   });

@@ -844,7 +844,7 @@ export function formatTodoList(todos) {
   else if (hour >= 18 || hour < 4) salam = "Selamat malam";
 
   const lines = [
-    `🌄 [Pengingat Tugas]\n_${salam} Ilkomers!_\n`
+    `🌄 [Pengingat Tugas]\n_${salam}!_\n`
   ];
 
   todos.forEach((item) => {
@@ -879,9 +879,6 @@ export function formatTodoList(todos) {
       }
     }
 
-    lines.push(`${badge} *[${item.id}] ${item.task}*`);
-    lines.push(`├── ${deadlineStr}`);
-
     // WhatsApp inline monospace code pill formatting: `#analgor` `[P2]`
     const tagBase = item.tag ? item.tag.trim() : "#tugas";
     const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
@@ -896,7 +893,8 @@ export function formatTodoList(todos) {
       tagTokens.push(`\`[👤 ${item.assignee}]\``);
     }
 
-    lines.push(`└── ${tagTokens.join(" ")}\n`);
+    lines.push(`${badge} *[${item.id}] ${item.task}*`);
+    lines.push(`   ⏰ ${deadlineStr} • ${tagTokens.join(" ")}\n`);
   });
 
   lines.push("_Semangat!_ 💪");
