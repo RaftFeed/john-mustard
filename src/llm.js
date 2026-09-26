@@ -610,12 +610,14 @@ const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.1-pro-preview";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
+  "gemini-3.7-flash",
   "gemini-3-flash-preview"
 ];
 
 export const SMART_CASCADE = [
   PRO_MODEL,
-  DEFAULT_MODEL
+  DEFAULT_MODEL,
+  "gemini-3.7-flash"
 ];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;
