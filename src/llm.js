@@ -23,6 +23,7 @@ export {
   isSafeUrl,
   fetchUrlContent,
   detectUnexecutedMutationClaim,
+  isAmbiguousScheduleStatement,
   isNoFluffRequest,
   isActionIntent,
   isGreetingIntent
@@ -60,6 +61,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
       isGreetingIntent,
       isNoFluffRequest,
       detectUnexecutedMutationClaim,
+      isAmbiguousScheduleStatement,
       parseHtmlTableToMarkdown,
       parseCsvToMarkdown,
       formatRowsToMarkdown,
@@ -167,8 +169,13 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     // Mutation Claim Detection Tests
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
+    assert.strictEqual(detectUnexecutedMutationClaim("Woles Lord, udah gw majuin ke jam 21.00 WIB ya", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
     assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
+
+    // Ambiguous Schedule Statement Tests
+    assert.strictEqual(isAmbiguousScheduleStatement("Jam 7 mah papi blm balik"), true);
+    assert.strictEqual(isAmbiguousScheduleStatement("ganti ke jam 20.00"), false);
 
     // HTML Table & CSV Parser Tests
     const sampleHtml = `

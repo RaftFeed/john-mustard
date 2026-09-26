@@ -165,12 +165,34 @@ async function handleIncomingMessage(msg) {
         return;
       }
 
-      // 2. Di Grup Keluarga: Dokumen/Foto/PDF langsung dianalisis & diringkas lewat LLM
+      // 2. Di Grup Keluarga: Video/Foto/Dokumen langsung dianalisis lewat LLM
       if (isGroup) {
-        console.log(`>> Memproses dokumen/media grup dari ${msg.from}: ${msg.filename} (${msg.mimetype})`);
+        console.log(`>> Memproses media grup dari ${msg.from}: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
         const mediaTrajectory = [];
-        const reply = await processChat(rotator, msg.body, {
+
+        // Bersihkan mention tag bot dari caption
+        const cleanCaption = (msg.body || "")
+          .replace(/@([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)\b/g, (m, name) => {
+            if (/john|mustard|bot/i.test(name)) return "";
+            return m;
+          })
+          .trim();
+
+        let effectiveMediaPrompt = cleanCaption;
+        const mime = (msg.mimetype || "").toLowerCase();
+
+        if (mime.startsWith("video/")) {
+          effectiveMediaPrompt = cleanCaption
+            ? `[Video WhatsApp diterima]. Instruksi pengirim: "${cleanCaption}". Perhatikan video ini (visual, teks di layar, suara). Berikan tanggapan akrab, santai, atau celetukan lucu yang nyambung untuk obrolan keluarga.`
+            : `[Video WhatsApp diterima]. Perhatikan video ini (visual, teks di layar, suara). Tonton dan berikan respon santai, ramah, atau celetukan lucu yang relevan dengan isi video untuk obrolan grup keluarga (1-2 kalimat). JANGAN bahas to-do/jadwal kecuali ada di video.`;
+        } else if (mime.startsWith("image/")) {
+          effectiveMediaPrompt = cleanCaption
+            ? `[Gambar/Foto diterima]. Pesan pengirim: "${cleanCaption}". Respon gambar ini secara relevan dan santai untuk keluarga.`
+            : `[Gambar/Foto diterima]. Lihat gambar ini dan berikan komentar santai, ramah, atau lucu yang relevan untuk obrolan grup keluarga (1-2 kalimat).`;
+        }
+
+        const reply = await processChat(rotator, effectiveMediaPrompt, {
           store,
           chatId: msg.from,
           senderNumber: msg.senderNumber,
@@ -183,12 +205,13 @@ async function handleIncomingMessage(msg) {
         if (reply && reply.trim() !== "[NO_REPLY]") {
           await sendText(msg.from, reply);
           console.log(`>> Sent group media reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-          store.saveChatMessage(msg.from, "user", msg.body ? `${senderLabel}[Dokumen: ${msg.filename}] ${msg.body}` : `${senderLabel}[Dokumen: ${msg.filename}]`);
+          const labelPrefix = mime.startsWith("video/") ? "[Video]" : mime.startsWith("image/") ? "[Foto]" : `[Dokumen: ${msg.filename}]`;
+          store.saveChatMessage(msg.from, "user", cleanCaption ? `${senderLabel}${labelPrefix} ${cleanCaption}` : `${senderLabel}${labelPrefix}`);
           store.saveChatMessage(msg.from, "model", reply);
         }
 
         logInteraction(store.db, {
-          prompt: `[MEDIA: ${msg.filename}] ${msg.body || ""}`.trim(),
+          prompt: `[MEDIA: ${msg.filename || mime}] ${cleanCaption}`.trim(),
           tools: toolsCalled,
           status: "success"
         });

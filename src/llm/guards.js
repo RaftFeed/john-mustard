@@ -313,8 +313,18 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   if (!text) return false;
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
-  const claimRegex = /(sudah|berhasil|telah)\s+(di|ku|saya|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres)/i;
+  const claimRegex = /(sudah|udah|berhasil|telah)\s+(di|ku|saya|gw|gua|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin)/i;
   return claimRegex.test(text);
+}
+
+export function isAmbiguousScheduleStatement(text = "") {
+  if (!text) return false;
+  const t = text.trim();
+  const hasDelayOrConstraint = /(belum|blm|blom|belom)\s+(balik|pulang|selesai|kelar|bisa|sempat|nyampe|ada)|(masih|lagi|lg)\s+(di\s*jalan|macet|kerja|kuliah|sekolah|sibuk|otw|repot)|jangan\s+(jam|pukul|\d+)/i.test(t);
+  if (!hasDelayOrConstraint) return false;
+
+  const hasExplicitTarget = /(?:jadi|ke|pindah\s+ke|geser\s+ke|mundur\s+ke|maju\s+ke)\s*(?:jam|pukul)?\s*\d{1,2}(?:[.:]\d{2})?/i.test(t);
+  return !hasExplicitTarget;
 }
 
 export function isNoFluffRequest(text = "") {

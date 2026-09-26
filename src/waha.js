@@ -177,7 +177,7 @@ export function getWhitelistPhones(rawList) {
 
 export function resolveWhitelistRecipient(rawTarget, store = null) {
   if (!rawTarget) return null;
-  const targetStr = String(rawTarget).trim();
+  const targetStr = String(rawTarget).trim().replace(/^@/, "");
   const whitelist = getWhitelistPhones();
   let targetPhone = "";
   let recipientDisplayName = targetStr;
@@ -197,12 +197,30 @@ export function resolveWhitelistRecipient(rawTarget, store = null) {
     const primaryName = (process.env.PRIMARY_USER_NAME || "rafid").toLowerCase();
     const secondaryName = (process.env.SECONDARY_USER_NAME || "karimah").toLowerCase();
 
-    if (lower.includes(primaryName) || lower === "owner" || lower === "master") {
+    if (
+      lower.includes(primaryName) ||
+      lower === "owner" ||
+      lower === "master" ||
+      lower === "simas" ||
+      lower === "si mas" ||
+      lower === "mas" ||
+      lower === "mas rafid" ||
+      lower.includes("m3-083")
+    ) {
       targetPhone = (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "");
       recipientDisplayName = process.env.PRIMARY_USER_NAME || "Rafid";
     } else if (lower.includes(secondaryName) || lower === "istri" || lower === "pasangan") {
       targetPhone = (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "");
       recipientDisplayName = process.env.SECONDARY_USER_NAME || "Karimah";
+    } else if (lower === "mami" || lower === "mama" || lower === "ibu") {
+      targetPhone = "6282297432850";
+      recipientDisplayName = "Mami";
+    } else if (lower === "papi" || lower === "papa" || lower === "ayah") {
+      targetPhone = "62819703133";
+      recipientDisplayName = "Papi";
+    } else if (lower.includes("razita") || lower === "zita") {
+      targetPhone = "6282217584569";
+      recipientDisplayName = "Razita Ndut";
     }
   }
 
@@ -285,11 +303,35 @@ export function normalizeMentionsInText(text) {
   });
 }
 
-export function formatOutboundMentions(text) {
+export function formatOutboundMentions(text, store = null) {
   if (!text || typeof text !== "string") return { text: "", mentions: [] };
 
-  // Convert unmapped/raw LID mentions in text into phone number if resolvable
-  const formattedText = text.replace(/@(\d{8,20})\b/g, (match, digits) => {
+  let formattedText = text;
+
+  // 1. Convert known multi-word contact mention aliases
+  const KNOWN_MENTION_ALIASES = [
+    { regex: /@M3-083_Rafid\s+Harsyah\b/gi, phone: "6285236467838" },
+    { regex: /@Rafid\s+Harsyah\b/gi, phone: "6285236467838" },
+    { regex: /@Razita\s+Ndut\b/gi, phone: "6282217584569" },
+    { regex: /@si\s+mas\b/gi, phone: "6285236467838" },
+    { regex: /@mas\s+rafid\b/gi, phone: "6285236467838" }
+  ];
+  for (const item of KNOWN_MENTION_ALIASES) {
+    formattedText = formattedText.replace(item.regex, `@${item.phone}`);
+  }
+
+  // 2. Convert single-word named mentions (e.g. @simas, @rafid, @karimah)
+  formattedText = formattedText.replace(/@([a-zA-Z][a-zA-Z0-9_-]*)\b/g, (match, name) => {
+    if (/^(com|net|org|id|us|lid|c\.us|g\.us)$/i.test(name)) return match;
+    const res = resolveWhitelistRecipient(name, store);
+    if (res && res.targetPhone) {
+      return `@${res.targetPhone}`;
+    }
+    return match;
+  });
+
+  // 3. Convert unmapped/raw LID mentions in text into phone number if resolvable
+  formattedText = formattedText.replace(/@(\d{8,20})\b/g, (match, digits) => {
     const phone = resolveLidToPhone(digits);
     return phone ? `@${phone}` : match;
   });

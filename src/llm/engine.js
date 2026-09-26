@@ -20,6 +20,8 @@ import {
 } from "./cascade.js";
 import {
   detectUnexecutedMutationClaim,
+  isAmbiguousScheduleStatement,
+  isActionIntent,
   isNoFluffRequest,
   isGreetingIntent
 } from "./guards.js";
@@ -112,6 +114,7 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 - PENGINGAT (REMINDER): Setiap pengingat/reminder yang dibuat di grup ini akan dikirimkan langsung ke obrolan grup saat jatuh tempo.
 - DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
 - PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.
+- DILARANG MENGARANG JAM / TUGAS (ANTI-ASUMSI WAKTU & TUGAS): Jika ada anggota keluarga yang memberi kabar, mengeluh, atau berkomentar waktu (contoh: "Jam 17 blom pulang", "masih di jalan", "belum kelar"), DILARANG KERAS mengarang jam baru (seperti menebak jam 19.00) dan DILARANG langsung memanggil updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau diundur ke jam berapa jadwalnya?".
 - MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, WAJIB gunakan format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
@@ -147,19 +150,29 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
       ownershipGuidance = `Catatan, nomor rekening, to-do, atau data berlabel "Papi" adalah MILIK DIA SENDIRI. Jika Papi bertanya "norek aku berapa" atau mencari datanya, berikan langsung data milik Papi!`;
     } else if (/^karimah$/i.test(speakerName)) {
       callNameDesc = `Panggil "Karimah".`;
-      defaultToneDesc = `Gaya bahasa Gen Z santai, ramah, akrab (luwes pakai gw/lu, santuy, wkwk).`;
+      defaultToneDesc = isGroupChat
+        ? `Gaya bahasa ramah, santun, hangat (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu' di grup keluarga).`
+        : `Gaya bahasa Gen Z santai, ramah, akrab (luwes pakai gw/lu, santuy, wkwk).`;
       ownershipGuidance = `Karimah adalah pacar / pasangan Rafid. Catatan atau agenda berlabel Karimah adalah miliknya.`;
     } else if (/^razita/i.test(speakerName)) {
       callNameDesc = `Panggil "Razita" atau "Lord" santai.`;
-      defaultToneDesc = `Gaya bahasa Gen Z santai dan luwes (gw/lu, wkwk, sat-set, santuy).`;
-      ownershipGuidance = `Razita adalah adik Rafid. Catatan, jadwal pelajaran sekolah, PR, NISN, atau data sekolah yang tersimpan adalah miliknya.`;
+      defaultToneDesc = isGroupChat
+        ? `Gaya bahasa ramah, santun, hangat (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu' di grup keluarga).`
+        : `Gaya bahasa Gen Z santai dan luwes (gw/lu, wkwk, sat-set, santuy).`;
+      ownershipGuidance = `Razita adalah adik kandung Rafid. Sering memanggil Rafid dengan sebutan 'simas' atau 'Mas'. Catatan, jadwal pelajaran sekolah, PR, NISN, atau data sekolah yang tersimpan adalah miliknya.`;
     } else if (isOwnerUser || /rafid|simas/i.test(speakerName)) {
-      callNameDesc = `Panggil "Lord" atau "Mas".`;
-      defaultToneDesc = `Gaya bahasa Gen Z santai, akrab, sat-set (gw/lu, wkwk, santuy).`;
-      ownershipGuidance = `Rafid adalah Master / Owner Bot. Data pribadi/umum tanpa penanda khusus adalah miliknya.`;
+      callNameDesc = isGroupChat
+        ? `Panggil "Rafid", "Mas", atau "Lord".`
+        : `Panggil "Lord" atau "Mas".`;
+      defaultToneDesc = isGroupChat
+        ? `Gaya bahasa ramah, santun, hangat (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu' di grup keluarga).`
+        : `Gaya bahasa Gen Z santai, akrab, sat-set (gw/lu, wkwk, santuy).`;
+      ownershipGuidance = `Rafid adalah Master / Owner Bot. Anggota keluarga dan Razita sering memanggilnya 'simas' (si mas) atau 'Mas'. Data pribadi/umum tanpa penanda khusus adalah miliknya.`;
     } else {
       callNameDesc = `Panggil "${speakerName}".`;
-      defaultToneDesc = `Gaya bahasa ramah dan santai.`;
+      defaultToneDesc = isGroupChat
+        ? `Gaya bahasa ramah, santun, hangat (gunakan kata 'aku/kamu', DILARANG KERAS menggunakan kata 'gw/lu' di grup keluarga).`
+        : `Gaya bahasa ramah dan santai.`;
       ownershipGuidance = `Data berlabel nama user adalah miliknya.`;
     }
 
@@ -221,6 +234,11 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
 
   if (effectiveUserText && effectiveUserText.trim()) {
     userParts.push({ text: effectiveUserText });
+    if (isAmbiguousScheduleStatement(userText)) {
+      userParts.push({
+        text: "[PERINGATAN SISTEM ANTI-ASUMSI]: Pengguna hanya menyampaikan kabar/kendala waktu dan TIDAK memberikan jam target pengganti (contoh: 'jam 7 mah papi blm balik'). DILARANG KERAS MENGARANG JAM BARU (jangan nebak jam 19.00/21.00) dan DILARANG MEMANGGIL updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): 'Mau diundur ke jam berapa jadwalnya?'."
+      });
+    }
   } else if (audio && !media) {
     userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya." });
   }
@@ -249,10 +267,15 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
     contents.push({ role: "user", parts: userParts });
   }
 
-  // LLM Autonomy: biarkan Gemini menentukan sendiri secara native (mode AUTO) apakah perlu eksekusi tool atau cukup teks
-  let toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+  // LLM Autonomy: mode AUTO default, tapi NONE jika jadwal ambigu atau kirim media santai
+  const isAmbiguousSchedule = isAmbiguousScheduleStatement(userText);
+  const isMediaWithoutAction = Boolean(media && !isActionIntent(userText));
+  let toolConfig = (isAmbiguousSchedule || isMediaWithoutAction)
+    ? { functionCallingConfig: { mode: "NONE" } }
+    : { functionCallingConfig: { mode: "AUTO" } };
 
   const toolsCalled = [];
+  const successfulMutations = [];
   const executedTrajectory = [];
   let currentCandidate = null;
   let lastFormattedList = null;
@@ -277,7 +300,10 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
     if (fnCallParts.length === 0) {
       // Anti-Hallucination & Mutation Guardrail Check
       const candidateText = currentCandidate.content.parts?.find((p) => p.text)?.text || "";
-      if (detectUnexecutedMutationClaim(candidateText, toolsCalled)) {
+      if (detectUnexecutedMutationClaim(candidateText, successfulMutations)) {
+        if (isAmbiguousSchedule) {
+          return "Mau diundur ke jam berapa jadwalnya?";
+        }
         if (turns < MAX_STEPS - 1) {
           turns++;
           contents.push(currentCandidate.content);
@@ -306,10 +332,18 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
       if (onToolCall) onToolCall(name);
 
       let resultObj = {};
-      try {
-        resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
-      } catch (toolErr) {
-        resultObj = { toolResult: { error: toolErr.message } };
+      if (isAmbiguousScheduleStatement(userText) && ((name === "updateTodo" && args.deadlineIso) || (name === "updateReminder" && args.remindAtIso))) {
+        resultObj = {
+          toolResult: {
+            error: "DILARANG mengarang jam baru saat pengguna hanya memberi kabar waktu tanpa menyebutkan jam pengganti. Tanyakan konfirmasi terlebih dahulu: Mau diundur ke jam berapa jadwalnya?"
+          }
+        };
+      } else {
+        try {
+          resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
+        } catch (toolErr) {
+          resultObj = { toolResult: { error: toolErr.message } };
+        }
       }
 
       executedTrajectory.push({
@@ -317,6 +351,10 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
         args,
         result: resultObj.toolResult
       });
+
+      if (resultObj.toolResult && !resultObj.toolResult.error) {
+        successfulMutations.push(name);
+      }
 
       if (resultObj.formattedList) {
         lastFormattedList = resultObj.formattedList;
@@ -333,8 +371,10 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
       parts: userResponseParts
     });
 
-    // Revert toolConfig to AUTO for subsequent steps in the ReAct loop
-    toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+    // Revert toolConfig for subsequent steps
+    toolConfig = (isAmbiguousSchedule || isMediaWithoutAction)
+      ? { functionCallingConfig: { mode: "NONE" } }
+      : { functionCallingConfig: { mode: "AUTO" } };
 
     // Helmis pattern: Mid-Turn Steering via Mailbox Injection
     if (injectMailboxSteering(mailbox, contents)) {
@@ -367,6 +407,10 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
   finalReply = stripHallucinatedToolChips(finalReply);
   finalReply = sanitizeLatexForWhatsApp(finalReply);
   finalReply = formatForWhatsApp(finalReply);
+
+  if (isAmbiguousSchedule && detectUnexecutedMutationClaim(finalReply, successfulMutations)) {
+    finalReply = "Mau diundur ke jam berapa jadwalnya?";
+  }
 
   const noFluff = isNoFluffRequest(userText);
 
