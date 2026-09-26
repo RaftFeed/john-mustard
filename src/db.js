@@ -1,6 +1,28 @@
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
 import { resolveLidToPhone, resolvePhoneToLid } from "./waha.js";
+
+function loadDefaultContacts() {
+  const possiblePaths = [
+    path.resolve("config/contacts.json"),
+    path.resolve("contacts.json")
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = fs.readFileSync(p, "utf-8");
+        return JSON.parse(raw);
+      } catch (err) {
+        console.warn(`[Config] Gagal parse ${p}:`, err.message);
+      }
+    }
+  }
+  return [];
+}
+
+export const DEFAULT_CONTACT_PROFILES = loadDefaultContacts();
 
 export function normalizePhone(raw) {
   if (!raw) return "";
@@ -21,57 +43,22 @@ export function detectTaskCategory(title = "") {
   return "work";
 }
 
-export const DEFAULT_CONTACT_PROFILES = [
-  {
-    name: "Rafid",
-    phone: "6285236467838",
-    role: "Master / Owner",
-    relationship: "Owner",
-    notes: "Panggilan: Lord (DILARANG KERAS memanggil Mas). Tone: Gen Z santai (gw/lu, wkwk, sat-set). Segala data umum/pribadi tanpa label spesifik adalah miliknya."
-  },
-  {
-    name: "Karimah",
-    phone: "6289514718700",
-    role: "Pacar",
-    relationship: "Pacar / Pasangan",
-    notes: "Panggilan: Karimah. Tone: Gen Z santai (gw/lu, akrab, santuy). Pacar / Pasangan Rafid. Data berlabel Karimah adalah miliknya."
-  },
-  {
-    name: "Mami",
-    phone: "6282297432850",
-    role: "Ibu",
-    relationship: "Ibu / Orang Tua",
-    notes: "Panggilan: Mami (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data/rekening berlabel Mami adalah miliknya sendiri."
-  },
-  {
-    name: "Papi",
-    phone: "62819703133",
-    role: "Ayah",
-    relationship: "Ayah / Orang Tua",
-    notes: "Panggilan: Papi (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data berlabel Papi adalah miliknya sendiri."
-  },
-  {
-    name: "Razita Ndut",
-    phone: "6282217584569",
-    role: "Adik",
-    relationship: "Adik / Keluarga",
-    notes: "Panggilan: Razita / Lord santai. Tone: Gen Z santai (gw/lu, santuy). Adik Rafid. Catatan/jadwal pelajaran/PR/data sekolah berlabel Razita adalah miliknya."
-  }
-];
-
-export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || "6281234567890");
+const ownerProfile = DEFAULT_CONTACT_PROFILES.find((p) => /owner|master/i.test(p.role || p.relationship));
+export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || process.env.PRIMARY_USER_PHONE || ownerProfile?.phone || "6281234567890");
 
 export function isOwner(chatId = "", senderNumber = "") {
   const norm1 = normalizePhone(chatId);
   const norm2 = normalizePhone(senderNumber);
+  const ownerLid = process.env.OWNER_LID || "228140156772422";
+  const ownerSuffix = OWNER_PHONE.length >= 4 ? OWNER_PHONE.slice(-4) : "7838";
   return (
     norm1 === OWNER_PHONE ||
     norm2 === OWNER_PHONE ||
-    norm1.endsWith("7838") ||
-    norm2.endsWith("7838") ||
-    norm1 === "228140156772422" ||
-    norm2 === "228140156772422" ||
-    String(chatId).includes("228140156772422")
+    norm1.endsWith(ownerSuffix) ||
+    norm2.endsWith(ownerSuffix) ||
+    norm1 === ownerLid ||
+    norm2 === ownerLid ||
+    String(chatId).includes(ownerLid)
   );
 }
 
@@ -269,6 +256,14 @@ export class Storage {
         notes TEXT DEFAULT '',
         relationship TEXT DEFAULT '',
         updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS message_dedup (
+        id TEXT PRIMARY KEY,
+        received_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS model_cooldowns (
+        model TEXT PRIMARY KEY,
+        until_ms INTEGER NOT NULL
       );
     `);
 
@@ -1118,6 +1113,48 @@ export class Storage {
     const q = String(name).trim();
     return this.db.prepare("DELETE FROM contacts WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?)").run(q, `%${q}%`).changes;
   }
+
+  isMessageDuplicate(messageId, ttlMs = 60_000) {
+    if (!messageId) return false;
+    const now = Date.now();
+    try {
+      this.db.prepare("DELETE FROM message_dedup WHERE received_at < ?").run(now - ttlMs);
+      const row = this.db.prepare("SELECT id FROM message_dedup WHERE id = ?").get(messageId);
+      if (row) return true;
+      this.db.prepare("INSERT OR IGNORE INTO message_dedup (id, received_at) VALUES (?, ?)").run(messageId, now);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  setModelCooldown(model, cooldownMs = 120_000) {
+    if (!model) return;
+    const until = Date.now() + cooldownMs;
+    try {
+      this.db.prepare("INSERT OR REPLACE INTO model_cooldowns (model, until_ms) VALUES (?, ?)").run(model, until);
+    } catch {}
+  }
+
+  isModelCooling(model) {
+    if (!model) return false;
+    const now = Date.now();
+    try {
+      const row = this.db.prepare("SELECT until_ms FROM model_cooldowns WHERE model = ?").get(model);
+      if (!row) return false;
+      if (row.until_ms > now) return true;
+      this.db.prepare("DELETE FROM model_cooldowns WHERE model = ?").run(model);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  clearModelCooldowns() {
+    try {
+      this.db.prepare("DELETE FROM model_cooldowns").run();
+    } catch {}
+  }
 }
 
 export function formatPersonList(persons = []) {
@@ -1180,8 +1217,11 @@ export function formatRemindersList(reminders = []) {
   reminders.forEach((r, idx) => {
     let badge = "⚪";
     let scheduleStr = "Tanpa jadwal";
+    const isOverdue = r.remind_at && r.remind_at < now.getTime();
 
-    if (r.remind_at) {
+    if (isOverdue) {
+      badge = "🔴";
+    } else if (r.remind_at) {
       const targetDate = new Date(r.remind_at);
       const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
 
@@ -1210,6 +1250,25 @@ export function formatRemindersList(reminders = []) {
       }
     }
 
+    if (isOverdue) {
+      const targetDate = new Date(r.remind_at);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 0) {
+        scheduleStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
     const pillTokens = [];
     if (r.recurrence === "daily") {
       pillTokens.push("Harian");
@@ -1221,13 +1280,18 @@ export function formatRemindersList(reminders = []) {
       pillTokens.push("Sekali");
     }
 
+    if (isOverdue) {
+      pillTokens.push("[Terlewat]");
+    }
+
     if (r.task_type && r.task_type !== "reminder") {
       pillTokens.push(`#${r.task_type.replace(/^#/, "")}`);
     }
 
     const tagLine = `\`${pillTokens.join(" ")}\``;
+    const titleText = isOverdue ? `*[${idx + 1}] [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
 
-    lines.push(`${badge} *[${idx + 1}] ${r.message}*`);
+    lines.push(`${badge} ${titleText}`);
     lines.push(`├── ${scheduleStr}`);
     lines.push(`└── ${tagLine}\n`);
   });

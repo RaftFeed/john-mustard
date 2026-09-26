@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import dns from "node:dns/promises";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatNotesList, formatRemindersList, formatPersonList, normalizePhone, OWNER_PHONE, isOwner, DEFAULT_CONTACT_PROFILES } from "./db.js";
 import { sendFile, sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { scheduleNearHorizonReminder } from "./scheduler.js";
@@ -699,15 +700,21 @@ export function selectModelCascade(text = "", options = {}) {
 const modelCooldowns = new Map(); // model -> timestamp
 
 // ponytail: demote overloaded/failed models for 120s instead of re-probing every ReAct step
-export function markModelUnavailable(model, cooldownMs = 120_000) {
+export function markModelUnavailable(model, cooldownMs = 120_000, store = null) {
   modelCooldowns.set(model, Date.now() + cooldownMs);
+  if (store && typeof store.setModelCooldown === "function") {
+    store.setModelCooldown(model, cooldownMs);
+  }
 }
 
-export function clearModelCooldowns() {
+export function clearModelCooldowns(store = null) {
   modelCooldowns.clear();
+  if (store && typeof store.clearModelCooldowns === "function") {
+    store.clearModelCooldowns();
+  }
 }
 
-export function getActiveModels(baseModels = DEFAULT_CASCADE) {
+export function getActiveModels(baseModels = DEFAULT_CASCADE, store = null) {
   const models = process.env.GEMINI_MODELS
     ? process.env.GEMINI_MODELS.split(",").map((m) => m.trim()).filter(Boolean)
     : baseModels;
@@ -716,7 +723,12 @@ export function getActiveModels(baseModels = DEFAULT_CASCADE) {
   const cooling = [];
 
   for (const m of models) {
-    const until = modelCooldowns.get(m) || 0;
+    let until = modelCooldowns.get(m) || 0;
+    if (until <= now && store && typeof store.isModelCooling === "function") {
+      if (store.isModelCooling(m)) {
+        until = now + 60_000;
+      }
+    }
     if (until <= now) {
       healthy.push(m);
     } else {
@@ -726,19 +738,67 @@ export function getActiveModels(baseModels = DEFAULT_CASCADE) {
   return [...healthy, ...cooling];
 }
 
-export function isSafeUrl(rawUrl) {
+const BLOCKED_HOSTNAMES = new Set([
+  "localhost",
+  "waha",
+  "bot",
+  "runner",
+  "scheduler",
+  "host.docker.internal"
+]);
+
+export function isPrivateIp(ip) {
+  if (!ip) return true;
+  let clean = ip;
+  if (clean.startsWith("::ffff:")) {
+    clean = clean.slice(7);
+  }
+  if (
+    clean === "::1" ||
+    clean === "::" ||
+    clean.toLowerCase().startsWith("fc") ||
+    clean.toLowerCase().startsWith("fd") ||
+    clean.toLowerCase().startsWith("fe80")
+  ) {
+    return true;
+  }
+  const parts = clean.split(".").map((p) => parseInt(p, 10));
+  if (parts.length === 4 && parts.every((p) => !isNaN(p) && p >= 0 && p <= 255)) {
+    const [a, b] = parts;
+    if (a === 0 || a === 127 || a === 10) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  return false;
+}
+
+export function isSafeUrlSync(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     const host = parsed.hostname.toLowerCase();
-    if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
-    if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return false;
-    const m172 = host.match(/^172\.(\d+)\./);
-    if (m172) {
-      const second = parseInt(m172[1], 10);
-      if (second >= 16 && second <= 31) return false;
+    if (BLOCKED_HOSTNAMES.has(host) || host.endsWith(".local") || host.endsWith(".internal")) return false;
+    if (!host.includes(".")) return false;
+    if (isPrivateIp(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function isSafeUrl(rawUrl) {
+  if (!isSafeUrlSync(rawUrl)) return false;
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    const records = await dns.lookup(host, { all: true });
+    if (!records || records.length === 0) return false;
+    for (const rec of records) {
+      if (isPrivateIp(rec.address)) return false;
     }
-    if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return false;
     return true;
   } catch {
     return false;
@@ -864,7 +924,7 @@ export function parseCsvToMarkdown(csvText, { maxRows = 100 } = {}) {
 }
 
 export async function fetchUrlContent(rawUrl) {
-  if (!isSafeUrl(rawUrl)) {
+  if (!(await isSafeUrl(rawUrl))) {
     throw new Error("URL tidak aman atau mengarah ke alamat lokal/privat (SSRF Protection).");
   }
 
@@ -1389,18 +1449,24 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       };
     }
   } else if (name === "deleteTodo") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
     let targetId = args.todoId;
     if (!targetId && args.taskQuery) {
-      const found = store.findTodo(chatId, args.taskQuery);
+      const found = store.findTodo(queryChatId, args.taskQuery);
       if (found) targetId = found.id;
     }
     if (!targetId) {
       toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
     } else {
-      const changes = store.deleteTodo(targetId, chatId);
+      const changes = store.deleteTodo(targetId, queryChatId);
+      const remaining = store.getTodos(queryChatId, false);
+      formattedList = formatTodoList(remaining, isGroup);
       toolResult = {
         success: changes > 0,
-        deletedId: targetId
+        deletedId: targetId,
+        remainingCount: remaining.length,
+        formattedList,
+        instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus."
       };
     }
   } else if (name === "addReminder") {
@@ -1434,11 +1500,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     } else {
       const changes = store.deleteReminder(queryChatId, target);
       const remaining = store.listReminders(queryChatId);
-      formattedList = remaining.length > 0 ? formatRemindersList(remaining) : null;
+      formattedList = formatRemindersList(remaining);
       toolResult = {
         success: changes > 0,
         deletedCount: changes,
         remainingCount: remaining.length,
+        formattedList,
+        instruction: "Jika menampilkan sisa pengingat/agenda, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan agenda yang sudah dihapus.",
         message: changes > 0 ? "Pengingat/agenda berhasil dihapus." : "Pengingat tidak ditemukan."
       };
     }
@@ -2599,13 +2667,15 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(decls.includes("sendDirectMessage"));
 
     // SSRF Safety Tests
-    assert.strictEqual(isSafeUrl("http://localhost:3000/api"), false);
-    assert.strictEqual(isSafeUrl("http://127.0.0.1:8080"), false);
-    assert.strictEqual(isSafeUrl("http://192.168.1.1/router"), false);
-    assert.strictEqual(isSafeUrl("http://10.0.0.5/secret"), false);
-    assert.strictEqual(isSafeUrl("http://172.20.0.2/meta"), false);
-    assert.strictEqual(isSafeUrl("http://169.254.169.254/latest/meta-data"), false);
-    assert.strictEqual(isSafeUrl("https://en.wikipedia.org/wiki/Node.js"), true);
+    assert.strictEqual(await isSafeUrl("http://localhost:3000/api"), false);
+    assert.strictEqual(await isSafeUrl("http://waha:3000/api"), false);
+    assert.strictEqual(await isSafeUrl("http://runner:8000/run"), false);
+    assert.strictEqual(await isSafeUrl("http://127.0.0.1:8080"), false);
+    assert.strictEqual(await isSafeUrl("http://192.168.1.1/router"), false);
+    assert.strictEqual(await isSafeUrl("http://10.0.0.5/secret"), false);
+    assert.strictEqual(await isSafeUrl("http://172.20.0.2/meta"), false);
+    assert.strictEqual(await isSafeUrl("http://169.254.169.254/latest/meta-data"), false);
+    assert.strictEqual(await isSafeUrl("https://en.wikipedia.org/wiki/Node.js"), true);
 
     // Mutation Claim Detection Tests
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", []), true);

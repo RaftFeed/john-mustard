@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Rafid",
+    "phone": "6285236467838",
+    "role": "Master / Owner",
+    "relationship": "Owner",
+    "notes": "Panggilan: Lord (DILARANG KERAS memanggil Mas). Tone: Gen Z santai (gw/lu, wkwk, sat-set). Segala data umum/pribadi tanpa label spesifik adalah miliknya."
+  },
+  {
+    "name": "Karimah",
+    "phone": "6289514718700",
+    "role": "Pacar",
+    "relationship": "Pacar / Pasangan",
+    "notes": "Panggilan: Karimah. Tone: Gen Z santai (gw/lu, akrab, santuy). Pacar / Pasangan Rafid. Data berlabel Karimah adalah miliknya."
+  },
+  {
+    "name": "Mami",
+    "phone": "6282297432850",
+    "role": "Ibu",
+    "relationship": "Ibu / Orang Tua",
+    "notes": "Panggilan: Mami (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data/rekening berlabel Mami adalah miliknya sendiri."
+  },
+  {
+    "name": "Papi",
+    "phone": "62819703133",
+    "role": "Ayah",
+    "relationship": "Ayah / Orang Tua",
+    "notes": "Panggilan: Papi (DILARANG KERAS memanggil Lord/Sir/cuy). Tone: Santai, ramah, hangat (aku/kamu, NO gw/lu). Catatan/data berlabel Papi adalah miliknya sendiri."
+  },
+  {
+    "name": "Razita Ndut",
+    "phone": "6282217584569",
+    "role": "Adik",
+    "relationship": "Adik / Keluarga",
+    "notes": "Panggilan: Razita / Lord santai. Tone: Gen Z santai (gw/lu, santuy). Adik Rafid. Catatan/jadwal pelajaran/PR/data sekolah berlabel Razita adalah miliknya."
+  }
+]

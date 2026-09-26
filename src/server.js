@@ -43,7 +43,10 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
         }
 
         const msgId = body.payload?.id;
-        if (msgId && isDuplicate(msgId)) {
+        const dup = store && typeof store.isMessageDuplicate === "function"
+          ? store.isMessageDuplicate(msgId)
+          : isDuplicate(msgId);
+        if (msgId && dup) {
           res.writeHead(200, { "Content-Type": "application/json" });
           return res.end(JSON.stringify({ status: "duplicate" }));
         }

@@ -50,7 +50,24 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
         await textSender(item.chat_id, `[!] Gagal eksekusi jadwal #${item.id}: ${err.message}`);
       }
     } else {
-      await textSender(item.chat_id, `*[PENGINGAT]*\n${item.message}`);
+      const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
+      const hours = String(nowWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(nowWib.getUTCMinutes()).padStart(2, "0");
+      const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+      const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+      const dayName = daysId[nowWib.getUTCDay()];
+      const dateNum = nowWib.getUTCDate();
+      const monthName = monthsId[nowWib.getUTCMonth()];
+      const year = nowWib.getUTCFullYear();
+
+      const lines = [
+        "⏰ [Pengingat Acara & Agenda]",
+        "_Waktunya jadwal kegiatan!_\n",
+        `🔔 *[ACARA] ${item.message}*`,
+        `├── Hari ini (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`,
+        "└── `#acara`"
+      ];
+      await textSender(item.chat_id, lines.join("\n"));
     }
 
     if (item.recurrence) {
@@ -123,8 +140,33 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
         if (!marked) continue;
       }
       try {
-        const msg = `⏰ *[PENGINGAT DEADLINE TUGAS]*\nTenggat waktu tugas sudah tiba:\n• *${todo.task}*`;
-        await textSender(todo.chat_id, msg);
+        const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
+        const hours = String(nowWib.getUTCHours()).padStart(2, "0");
+        const minutes = String(nowWib.getUTCMinutes()).padStart(2, "0");
+        const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+        const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+        const dayName = daysId[nowWib.getUTCDay()];
+        const dateNum = nowWib.getUTCDate();
+        const monthName = monthsId[nowWib.getUTCMonth()];
+        const year = nowWib.getUTCFullYear();
+
+        const tagBase = todo.tag ? todo.tag.trim() : "#tugas";
+        const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
+          const clean = t.replace(/^`+|`+$/g, "");
+          return clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`;
+        });
+        tagTokens.push("[Terlewat]");
+
+        const lines = [
+          "⏰ [Pengingat Deadline Tugas]",
+          "_Tenggat waktu sudah tiba!_\n",
+          `🔴 *[TERLEWAT] ${todo.task}*`,
+          `├── Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`,
+          `└── \`${tagTokens.join(" ")}\`\n`,
+          `_Tandai selesai: ketik #done ${todo.id}_`
+        ];
+
+        await textSender(todo.chat_id, lines.join("\n"));
         count++;
       } catch (err) {
         console.error(`Gagal kirim reminder deadline to-do #${todo.id}:`, err.message);

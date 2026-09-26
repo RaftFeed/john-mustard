@@ -59,6 +59,17 @@ export class KeyRotator {
     while (attempts < maxAttempts) {
       const key = this.getKey();
       attempts++;
+
+      // Anti busy-wait: jika semua key cooldown dan bestKey masih dalam masa tunggu, tunggu sampai pulih
+      const until = this.cooldowns.get(key) || 0;
+      const now = Date.now();
+      if (until > now) {
+        const waitMs = Math.min(until - now, 10_000);
+        if (waitMs > 0) {
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+      }
+
       try {
         return await requestFn(key);
       } catch (err) {
