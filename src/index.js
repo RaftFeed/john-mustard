@@ -118,7 +118,70 @@ async function handleIncomingMessage(msg) {
         return;
       }
 
-      // Dokumen / Foto / PDF -> Ingest ke Document Vault
+      const isGroup = Boolean(msg.isGroup || String(msg.from).endsWith("@g.us"));
+
+      // 2. Di Grup Keluarga: Dokumen/Foto/PDF langsung dianalisis & diringkas lewat LLM
+      if (isGroup) {
+        console.log(`>> Memproses dokumen/media grup dari ${msg.from}: ${msg.filename} (${msg.mimetype})`);
+        const buffer = await downloadMedia(msg.mediaUrl);
+        const mediaTrajectory = [];
+        const reply = await processChat(rotator, msg.body, {
+          store,
+          chatId: msg.from,
+          senderNumber: msg.senderNumber,
+          onToolCall: (name) => toolsCalled.push(name),
+          onTrajectory: (traj) => mediaTrajectory.push(...traj),
+          media: { buffer, mimetype: msg.mimetype, filename: msg.filename },
+          mailbox: msg.mailbox
+        });
+
+        if (reply && reply.trim() !== "[NO_REPLY]") {
+          await sendText(msg.from, reply);
+          console.log(`>> Sent group media reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
+          store.saveChatMessage(msg.from, "user", msg.body ? `[Dokumen: ${msg.filename}] ${msg.body}` : `[Dokumen: ${msg.filename}]`);
+          store.saveChatMessage(msg.from, "model", reply);
+        }
+
+        logInteraction(store.db, {
+          prompt: `[MEDIA: ${msg.filename}] ${msg.body || ""}`.trim(),
+          tools: toolsCalled,
+          status: "success"
+        });
+        return;
+      }
+
+      // 3. Di DM Pribadi: Jika user menyertakan teks permintaan baca/ringkas, proses via LLM
+      const hasSummaryQuery = msg.body && /\b(ringkas|rangkum|baca|summary|simpulkan|jelaskan|analisis|apa\s+isi)\b/i.test(msg.body);
+      if (hasSummaryQuery) {
+        console.log(`>> Memproses dokumen/media DM untuk analisis langsung: ${msg.filename} (${msg.mimetype})`);
+        const buffer = await downloadMedia(msg.mediaUrl);
+        const mediaTrajectory = [];
+        const reply = await processChat(rotator, msg.body, {
+          store,
+          chatId: msg.from,
+          senderNumber: msg.senderNumber,
+          onToolCall: (name) => toolsCalled.push(name),
+          onTrajectory: (traj) => mediaTrajectory.push(...traj),
+          media: { buffer, mimetype: msg.mimetype, filename: msg.filename },
+          mailbox: msg.mailbox
+        });
+
+        if (reply && reply.trim() !== "[NO_REPLY]") {
+          await sendText(msg.from, reply);
+          console.log(`>> Sent DM media analysis reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
+          store.saveChatMessage(msg.from, "user", msg.body ? `[Dokumen: ${msg.filename}] ${msg.body}` : `[Dokumen: ${msg.filename}]`);
+          store.saveChatMessage(msg.from, "model", reply);
+        }
+
+        logInteraction(store.db, {
+          prompt: `[MEDIA: ${msg.filename}] ${msg.body || ""}`.trim(),
+          tools: toolsCalled,
+          status: "success"
+        });
+        return;
+      }
+
+      // 4. Default DM: Ingest ke Document Vault
       console.log(`>> Mengunduh media vault: ${msg.filename} (${msg.mimetype})`);
       const buffer = await downloadMedia(msg.mediaUrl);
       

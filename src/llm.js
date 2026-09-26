@@ -1976,7 +1976,7 @@ export function injectMailboxSteering(mailbox, contents) {
   return true;
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, mailbox = null }) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null }) {
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -2008,14 +2008,20 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
 
   // Multi-turn context: muat riwayat pesan terakhir
   const history = store ? store.getRecentChatHistory(chatId, 6) : [];
-  const isGreeting = isGreetingIntent(userText);
+  const isGreeting = isGreetingIntent(userText) && !isGroupChat;
   const greetingInstruction = isGreeting
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
 
   const isGroupChat = String(chatId).endsWith("@g.us");
   const groupContext = isGroupChat
-    ? `\n\n[OBROLAN GRUP & FOLLOW-UP CONTINUITY]: Kamu saat ini berada di dalam grup WhatsApp. Pesan ini SUDAH difilter dan pasti ditujukan kepadamu (lewat mention/tag, panggil nama "john/mustard/bot", reply pesanmu, fast-command, atau obrolan aktif 2 menit terakhir). Kamu WAJIB menjawab secara langsung, santai, ringkas, dan to the point ala anak muda/Gen Z. JANGAN mengeluarkan [NO_REPLY]. DILARANG membuka atau menyebutkan dokumen pribadi/vault pemilik di grup.`
+    ? `\n\n[OBROLAN GRUP KELUARGA]:
+- TONE & BAHASA: Kamu saat ini berbicara di obrolan grup keluarga. Gunakan gaya bahasa yang sopan, ramah, hangat, dan santun (pakai kata 'aku/kamu' atau netral santun). DILARANG KERAS menggunakan kata 'gw/gua', 'lu/lo', atau slang kasar di grup ini.
+- TANPA CATCHPHRASE MEME: JANGAN PERNAH menyertakan catchphrase meme koboi ("MY NAME IS JOHN MUSTARDDD...") di grup keluarga.
+- TUGAS BERSAMA & PENANGGUNG JAWAB: To-do list di obrolan ini adalah daftar tugas bersama keluarga. Jika ada nama penanggung jawab yang disebut (contoh: "Mas", "Mama", "Kakak", "Ayah"), WAJIB sertakan pada parameter 'assignee' di tool addTodo/updateTodo.
+- PENGINGAT (REMINDER): Setiap pengingat/reminder yang dibuat di grup ini akan dikirimkan langsung ke obrolan grup saat jatuh tempo.
+- DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
+- PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.`
     : "";
 
   const finalSystemPrompt = systemPrompt + groupContext + coupleContext + skillsContext + greetingInstruction;
@@ -2032,9 +2038,25 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       }
     });
   }
+  if (media) {
+    const base64Data = Buffer.isBuffer(media.buffer)
+      ? media.buffer.toString("base64")
+      : (media.base64 || media.data);
+    userParts.push({
+      inlineData: {
+        mimeType: media.mimetype || "application/pdf",
+        data: base64Data
+      }
+    });
+    if (!userText || !userText.trim()) {
+      userParts.push({
+        text: "Tolong baca dokumen/file '" + (media.filename || "ini") + "' dan berikan ringkasan singkat serta poin-poin pentingnya (3-5 poin) yang jelas dan mudah dipahami."
+      });
+    }
+  }
   if (userText && userText.trim()) {
     userParts.push({ text: userText });
-  } else if (audio) {
+  } else if (audio && !media) {
     userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya." });
   }
 
@@ -2174,7 +2196,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
   finalReply = finalReply.replace(/(?!🤠|🥀|🌄|🟠|🟡|🟢|🔴|⚪|💪|👤|✅|❌|⚠️|📌)[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "").trim();
 
   // Hook meme awal chat: 🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀
-  if (isGreeting && finalReply && finalReply !== "[NO_REPLY]") {
+  if (isGreeting && !isGroupChat && finalReply && finalReply !== "[NO_REPLY]") {
     if (!finalReply.includes("JOHN MUSTARDDD")) {
       finalReply = `🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀\n\n${finalReply}`;
     } else if (!finalReply.includes("🤠") && !finalReply.includes("🥀")) {
