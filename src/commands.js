@@ -20,22 +20,22 @@ function formatUptime(seconds) {
 
 export function parseFastCommand(text = "") {
   const trimmed = text.trim();
+
+  // Keyword langsung tanpa tanda # atau ?
+  if (/^(#)?(todo|todos|tugas|list\s*todo|list\s*tugas)$/i.test(trimmed)) {
+    return { type: "listTodos" };
+  }
+  if (/^(#)?(today|hari\s*ini)$/i.test(trimmed)) {
+    return { type: "today" };
+  }
+  if (/^(#)?(week|minggu\s*ini)$/i.test(trimmed)) {
+    return { type: "week" };
+  }
+
   if (!trimmed.startsWith("#") && !trimmed.startsWith("?")) return null;
 
   if (/^#ping\b/i.test(trimmed)) {
     return { type: "ping" };
-  }
-
-  if (/^#(todo|tugas)\b/i.test(trimmed)) {
-    return { type: "listTodos" };
-  }
-
-  if (/^#today\b/i.test(trimmed)) {
-    return { type: "today" };
-  }
-
-  if (/^#week\b/i.test(trimmed)) {
-    return { type: "week" };
   }
 
   const doneMatch = trimmed.match(/^#done\s+(\d+)$/i);
@@ -531,8 +531,12 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       // Test parsing
       assert.strictEqual(parseFastCommand("#ping").type, "ping");
       assert.strictEqual(parseFastCommand("#todo").type, "listTodos");
+      assert.strictEqual(parseFastCommand("todo").type, "listTodos");
+      assert.strictEqual(parseFastCommand("Todo").type, "listTodos");
       assert.strictEqual(parseFastCommand("#tugas").type, "listTodos");
+      assert.strictEqual(parseFastCommand("tugas").type, "listTodos");
       assert.strictEqual(parseFastCommand("#today").type, "today");
+      assert.strictEqual(parseFastCommand("today").type, "today");
       assert.strictEqual(parseFastCommand("#week").type, "week");
       assert.strictEqual(parseFastCommand("#done 5").id, 5);
       assert.strictEqual(parseFastCommand("#undo").type, "undo");

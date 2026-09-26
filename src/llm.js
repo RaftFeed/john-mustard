@@ -1313,13 +1313,22 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null);
     formattedList = formatTodoList(todos, isGroup);
-    toolResult = { raw: todos, formatted: formattedList, count: todos.length, assignee: args.assignee || null };
+    toolResult = {
+      count: todos.length,
+      formatted: formattedList,
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG membuat layout sendiri."
+    };
   } else if (name === "getTodosDue") {
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodosDue(queryChatId, days, args.assignee || null);
     formattedList = formatTodoList(todos, isGroup);
-    toolResult = { count: todos.length, daysAhead: days, todos, formattedList };
+    toolResult = {
+      count: todos.length,
+      daysAhead: days,
+      formatted: formattedList,
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG membuat layout sendiri."
+    };
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const changes = store.completeTodo(args.todoId, queryChatId);
@@ -2400,8 +2409,16 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
   let finalReply = "";
 
   if (text) {
-    if (lastFormattedList && !text.includes(lastFormattedList) && !text.includes("⏰") && !text.includes("[")) {
-      finalReply = `${text}\n\n${lastFormattedList}`;
+    if (lastFormattedList && !text.includes(lastFormattedList)) {
+      const isCorruptedList = text.includes("Pengingat Tugas") || text.includes("⏰") || /\[\d+\]/.test(text);
+      if (isCorruptedList) {
+        // Model tried to re-format list itself (often mimicking old chat history)
+        const headerIdx = text.search(/🌄|🌅|\[Pengingat Tugas\]|\[1\]/);
+        const preamble = headerIdx > 0 ? text.slice(0, headerIdx).trim() : "";
+        finalReply = preamble ? `${preamble}\n\n${lastFormattedList}` : lastFormattedList;
+      } else {
+        finalReply = `${text}\n\n${lastFormattedList}`;
+      }
     } else {
       finalReply = text;
     }
@@ -2687,6 +2704,37 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.ok(!formattedPills.includes("CODE_BLOCK"), "formatForWhatsApp must not leak CODE_BLOCK placeholders");
     assert.ok(formattedPills.includes("`#tugas` `[👤 Mami]`"));
     assert.ok(formattedPills.includes("`[P1]` `[P2]`"));
+
+    // Enforce tree layout over model hallucination
+    let listStep = 0;
+    const listMockRotator = {
+      execute: async () => {
+        listStep++;
+        if (listStep === 1) {
+          return {
+            candidates: [{
+              content: { parts: [{ functionCall: { name: "listTodos", args: {} } }] }
+            }]
+          };
+        }
+        return {
+          candidates: [{
+            content: { parts: [{ text: "🌅 [Pengingat Tugas]\n[1] Old format\n⏰ Old" }] }
+          }]
+        };
+      }
+    };
+    const listMockStore = {
+      getTodos: () => [{ id: 10, task: "Tree Task", deadline: null, tag: "#test", assignee: "" }],
+      getRecentChatHistory: () => []
+    };
+    const listRes = await processChat(listMockRotator, "lihat to-do", {
+      store: listMockStore,
+      chatId: "628123456789@c.us"
+    });
+    assert.ok(listRes.includes("├── Tanpa deadline"), "processChat must enforce tree layout over model hallucination");
+    assert.ok(listRes.includes("└── `#test`"));
+    assert.ok(!listRes.includes("Old format"));
 
     console.log("LLM module self-test OK");
   });
