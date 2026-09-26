@@ -1395,16 +1395,23 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }, { rotator });
     toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso, recurrence: args.recurrence || null };
   } else if (name === "listReminders") {
-    const reminders = store.listReminders(chatId);
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const reminders = store.listReminders(queryChatId);
     formattedList = formatRemindersList(reminders);
-    toolResult = { success: true, count: reminders.length, reminders, formattedList };
+    toolResult = {
+      success: true,
+      count: reminders.length,
+      formatted: formattedList,
+      instruction: "WAJIB kembalikan persis isi teks di field 'formatted' apa adanya. DILARANG memformat ulang."
+    };
   } else if (name === "deleteReminder") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
     const target = args.reminderId || args.query;
     if (!target) {
       toolResult = { error: "ID reminder atau teks query wajib diisi untuk menghapus pengingat." };
     } else {
-      const changes = store.deleteReminder(chatId, target);
-      const remaining = store.listReminders(chatId);
+      const changes = store.deleteReminder(queryChatId, target);
+      const remaining = store.listReminders(queryChatId);
       formattedList = formatRemindersList(remaining);
       toolResult = { success: changes > 0, deletedCount: changes, formattedList };
     }

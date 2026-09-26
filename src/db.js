@@ -27,7 +27,7 @@ export const DEFAULT_CONTACT_PROFILES = [
     phone: "6285236467838",
     role: "Master / Owner",
     relationship: "Owner",
-    notes: "Panggilan: Lord / Mas. Tone: Gen Z santai (gw/lu, wkwk, sat-set). Segala data umum/pribadi tanpa label spesifik adalah miliknya."
+    notes: "Panggilan: Lord (DILARANG KERAS memanggil Mas). Tone: Gen Z santai (gw/lu, wkwk, sat-set). Segala data umum/pribadi tanpa label spesifik adalah miliknya."
   },
   {
     name: "Karimah",
@@ -398,18 +398,31 @@ export class Storage {
   }
 
   listReminders(chatId) {
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.isGroup) {
+      return this.db
+        .prepare("SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY remind_at ASC")
+        .all(chatId);
+    }
+    const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     return this.db
-      .prepare("SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY remind_at ASC")
-      .all(chatId);
+      .prepare(`SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' ORDER BY remind_at ASC`)
+      .all(...scope.chatIds);
   }
 
   deleteReminder(chatId, idOrQuery) {
+    const scope = getUserTodoScope(chatId, this);
+    const cidCond = scope.isGroup
+      ? "chat_id = ?"
+      : `chat_id IN (${scope.chatIds.map(() => "?").join(", ")})`;
+    const params = scope.isGroup ? [chatId] : [...scope.chatIds];
+
     if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
-      const res = this.db.prepare("DELETE FROM reminders WHERE chat_id = ? AND id = ?").run(chatId, Number(idOrQuery));
+      const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND id = ?`).run(...params, Number(idOrQuery));
       return res.changes;
     }
     const clean = `%${String(idOrQuery || "").trim()}%`;
-    const res = this.db.prepare("DELETE FROM reminders WHERE chat_id = ? AND message LIKE ? AND status = 'pending'").run(chatId, clean);
+    const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending'`).run(...params, clean);
     return res.changes;
   }
 
@@ -1118,12 +1131,12 @@ export function formatRemindersList(reminders = []) {
       const year = targetWib.getUTCFullYear();
       const hours = String(targetWib.getUTCHours()).padStart(2, "0");
       const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
-      const jamStr = `${hours}.${minutes} WIB`;
+      const jamStr = `${hours}:${minutes}`;
 
       if (diffDays === 1) {
         scheduleStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
       } else if (diffDays === 0) {
-        scheduleStr = `Hari ini (${jamStr})`;
+        scheduleStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
       } else if (diffDays < 0) {
         scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
       } else {
@@ -1133,21 +1146,24 @@ export function formatRemindersList(reminders = []) {
 
     const pillTokens = [];
     if (r.recurrence === "daily") {
-      pillTokens.push("`Harian`");
+      pillTokens.push("Harian");
     } else if (r.recurrence === "weekly") {
-      pillTokens.push("`Mingguan`");
+      pillTokens.push("Mingguan");
     } else if (r.recurrence) {
-      pillTokens.push(`\`${r.recurrence}\``);
+      pillTokens.push(r.recurrence);
     } else {
-      pillTokens.push("`Sekali`");
+      pillTokens.push("Sekali");
     }
 
     if (r.task_type && r.task_type !== "reminder") {
-      pillTokens.push(`\`#${r.task_type}\``);
+      pillTokens.push(`#${r.task_type.replace(/^#/, "")}`);
     }
 
+    const tagLine = `\`${pillTokens.join(" ")}\``;
+
     lines.push(`${badge} *[${idx + 1}] ${r.message}*`);
-    lines.push(`   ⏰ ${scheduleStr} • ${pillTokens.join(" ")}\n`);
+    lines.push(`├── ${scheduleStr}`);
+    lines.push(`└── ${tagLine}\n`);
   });
 
   lines.push("_Semangat!_ 💪");
@@ -1535,6 +1551,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(formattedRems.includes("Bayar listrik"));
   assert.ok(!formattedRems.includes("[ID:"));
   assert.ok(formattedRems.includes("🗓️ [Daftar Acara & Pengingat]"));
+  assert.ok(formattedRems.includes("├── "));
+  assert.ok(formattedRems.includes("└── "));
 
   assert.strictEqual(store.deleteReminder("rem_user", testRemId1), 1);
   assert.strictEqual(store.deleteReminder("rem_user", "listrik"), 1);
@@ -1642,6 +1660,27 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   // Explicit target check: Rafid asks for Razita's tasks
   const checkedRazita = store.getTodos(rafidPhone, false, "Razita");
   assert.ok(checkedRazita.some((t) => t.id === taskRazita));
+
+  // Reminders Isolation tests
+  const remRafid = store.addReminder(rafidPhone, "Meeting Rafid", Date.now() + 3600_000);
+  const remRazita = store.addReminder(razitaPhone, "TM PRI Razita", Date.now() + 7200_000);
+  const remGroup = store.addReminder(groupJid, "Rapat Keluarga", Date.now() + 10800_000);
+
+  const rafidRems = store.listReminders(rafidPhone);
+  assert.ok(rafidRems.some((r) => r.id === remRafid));
+  assert.ok(!rafidRems.some((r) => r.id === remRazita), "Rafid must not see Razita's reminders in DM");
+  assert.ok(!rafidRems.some((r) => r.id === remGroup), "Rafid must not see group reminders in DM");
+
+  const razitaRems = store.listReminders(razitaPhone);
+  assert.ok(razitaRems.some((r) => r.id === remRazita));
+  assert.ok(!razitaRems.some((r) => r.id === remRafid), "Razita must not see Rafid's reminders in DM");
+
+  const groupRems = store.listReminders(groupJid);
+  assert.ok(groupRems.some((r) => r.id === remGroup));
+
+  store.deleteReminder(rafidPhone, remRafid);
+  store.deleteReminder(razitaPhone, remRazita);
+  store.deleteReminder(groupJid, remGroup);
 
   // Clean up test tasks
   store.deleteTodo(taskRafid, rafidPhone);

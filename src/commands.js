@@ -25,6 +25,9 @@ export function parseFastCommand(text = "") {
   if (/^(#)?(todo|todos|tugas|list\s*todo|list\s*tugas)$/i.test(trimmed)) {
     return { type: "listTodos" };
   }
+  if (/^(#)?(agenda|acara|jadwal|events?|reminders?|pengingat)$/i.test(trimmed)) {
+    return { type: "reminders" };
+  }
   if (/^(#)?(today|hari\s*ini)$/i.test(trimmed)) {
     return { type: "today" };
   }
@@ -538,6 +541,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#today").type, "today");
       assert.strictEqual(parseFastCommand("today").type, "today");
       assert.strictEqual(parseFastCommand("#week").type, "week");
+      assert.strictEqual(parseFastCommand("#agenda").type, "reminders");
+      assert.strictEqual(parseFastCommand("agenda").type, "reminders");
+      assert.strictEqual(parseFastCommand("#acara").type, "reminders");
+      assert.strictEqual(parseFastCommand("acara").type, "reminders");
+      assert.strictEqual(parseFastCommand("jadwal").type, "reminders");
       assert.strictEqual(parseFastCommand("#done 5").id, 5);
       assert.strictEqual(parseFastCommand("#undo").type, "undo");
       assert.strictEqual(parseFastCommand("#del 3").id, 3);
