@@ -72,6 +72,11 @@ async function handleIncomingMessage(msg) {
   startTyping(msg.from);
   const typingTimer = setInterval(() => startTyping(msg.from), 6000);
 
+  const isGroup = Boolean(msg.isGroup || String(msg.from).endsWith("@g.us"));
+  const person = store.getPerson ? (store.getPerson(msg.senderNumber) || store.getPerson(msg.from)) : null;
+  const senderDisplayName = person?.name || (msg.senderNumber ? `+${msg.senderNumber}` : "");
+  const senderLabel = isGroup && senderDisplayName ? `[${senderDisplayName}]: ` : "";
+
   try {
     // 1. Tangani Incoming Media
     if (msg.hasMedia && msg.mediaUrl) {
@@ -91,7 +96,7 @@ async function handleIncomingMessage(msg) {
         });
         await sendText(msg.from, reply);
         console.log(`>> Sent audio reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-        store.saveChatMessage(msg.from, "user", msg.body ? `[Voice Note] ${msg.body}` : "[Pesan Suara VN]");
+        store.saveChatMessage(msg.from, "user", msg.body ? `${senderLabel}[Voice Note] ${msg.body}` : `${senderLabel}[Pesan Suara VN]`);
         store.saveChatMessage(msg.from, "model", reply);
 
         // Voyager pattern: autonomous background crystallization (zero added latency)
@@ -150,7 +155,7 @@ async function handleIncomingMessage(msg) {
 
         await sendText(msg.from, reply);
         console.log(`>> Sent sticker reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-        store.saveChatMessage(msg.from, "user", msg.body ? `[Stiker] ${msg.body}` : "[Stiker WhatsApp]");
+        store.saveChatMessage(msg.from, "user", msg.body ? `${senderLabel}[Stiker] ${msg.body}` : `${senderLabel}[Stiker WhatsApp]`);
         store.saveChatMessage(msg.from, "model", reply);
         logInteraction(store.db, {
           prompt: `[STICKER] ${msg.body || ""}`.trim(),
@@ -159,8 +164,6 @@ async function handleIncomingMessage(msg) {
         });
         return;
       }
-
-      const isGroup = Boolean(msg.isGroup || String(msg.from).endsWith("@g.us"));
 
       // 2. Di Grup Keluarga: Dokumen/Foto/PDF langsung dianalisis & diringkas lewat LLM
       if (isGroup) {
@@ -180,7 +183,7 @@ async function handleIncomingMessage(msg) {
         if (reply && reply.trim() !== "[NO_REPLY]") {
           await sendText(msg.from, reply);
           console.log(`>> Sent group media reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-          store.saveChatMessage(msg.from, "user", msg.body ? `[Dokumen: ${msg.filename}] ${msg.body}` : `[Dokumen: ${msg.filename}]`);
+          store.saveChatMessage(msg.from, "user", msg.body ? `${senderLabel}[Dokumen: ${msg.filename}] ${msg.body}` : `${senderLabel}[Dokumen: ${msg.filename}]`);
           store.saveChatMessage(msg.from, "model", reply);
         }
 
@@ -213,7 +216,7 @@ async function handleIncomingMessage(msg) {
         if (reply && reply.trim() !== "[NO_REPLY]") {
           await sendText(msg.from, reply);
           console.log(`>> Sent DM media analysis reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-          store.saveChatMessage(msg.from, "user", `[Media: ${msg.filename}] ${msg.body}`);
+          store.saveChatMessage(msg.from, "user", `${senderLabel}[Media: ${msg.filename}] ${msg.body}`);
           store.saveChatMessage(msg.from, "model", reply);
         }
 
@@ -312,7 +315,6 @@ async function handleIncomingMessage(msg) {
     if (fastCmd) {
       console.log(`>> Fast command [${fastCmd.type}] from ${msg.from}`);
       const isOwnerUser = isOwner(msg.from, msg.senderNumber);
-      const person = store.getPerson ? store.getPerson(msg.senderNumber || msg.from) : null;
       const cmdReply = await executeFastCommand(fastCmd, {
         store,
         chatId: msg.from,
@@ -323,7 +325,7 @@ async function handleIncomingMessage(msg) {
       if (cmdReply) {
         await sendText(msg.from, cmdReply);
         console.log(`>> Sent fast command reply to ${msg.from}: ${cmdReply.slice(0, 60).replace(/\n/g, " ")}`);
-        store.saveChatMessage(msg.from, "user", msg.body);
+        store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
         store.saveChatMessage(msg.from, "model", cmdReply);
         logInteraction(store.db, {
           prompt: trimmed,
@@ -347,7 +349,7 @@ async function handleIncomingMessage(msg) {
     if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {
       await sendText(msg.from, reply);
       console.log(`>> Sent reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-      store.saveChatMessage(msg.from, "user", msg.body);
+      store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
       store.saveChatMessage(msg.from, "model", reply);
 
       // Voyager pattern: autonomous background crystallization (zero added latency)

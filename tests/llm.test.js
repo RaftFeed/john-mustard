@@ -46,3 +46,51 @@ test("LLM Intents: isActionIntent and isGreetingIntent classification", () => {
   assert.strictEqual(isActionIntent("tolong ingatkan besok jam 7"), true);
   assert.strictEqual(isActionIntent("halo bro"), false);
 });
+
+test("LLM Engine: group chat message prefixes active speaker identity", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Halo Mami, sistem aman terkendali." }] } }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = {
+      execute: async (fn) => fn("test-key")
+    };
+
+    const mockStore = {
+      getPerson: (q) => (q === "6282297432850" ? { name: "Mami", phone: "6282297432850", relationship: "Ibu" } : null),
+      getRecentChatHistory: () => [],
+      getUserTonePreference: () => null
+    };
+
+    const reply = await processChat(mockRotator, "da ERROR blon kamu...?!", {
+      store: mockStore,
+      chatId: "120363029582992016@g.us",
+      senderNumber: "6282297432850"
+    });
+
+    assert.ok(capturedPayload, "Payload should be sent to Gemini API");
+    const userContent = capturedPayload.contents.find((c) => c.role === "user");
+    assert.ok(userContent, "User role content must exist");
+    const userText = userContent.parts.map((p) => p.text).join(" ");
+    assert.ok(userText.includes("[Pengirim: Mami (+6282297432850)]: da ERROR blon kamu...?!"));
+    assert.ok(capturedPayload.systemInstruction.parts[0].text.includes("OBROLAN GRUP KELUARGA"));
+    assert.ok(capturedPayload.systemInstruction.parts[0].text.includes("IDENTIFIKASI PENGIRIM (SANGAT PENTING)"));
+    assert.ok(reply.includes("Mami"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
