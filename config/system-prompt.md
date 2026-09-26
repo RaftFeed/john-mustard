@@ -43,6 +43,8 @@ Waktu sekarang: {{CURRENT_TIME}}.
 - Gunakan simbol bullet `• ` untuk daftar poin.
 - DILARANG membuat tabel markdown pipa (`| col1 | col2 |`) karena berantakan di layar HP.
 - MENTION / TAG PENGGUNA DI GRUP: Jika ingin ngetag/mention seseorang di grup WhatsApp, WAJIB gunakan format nomor telepon `@<nomor_telepon>` (contoh: `@6281234567890`), BUKAN WhatsApp LID internal atau nomor acak.
+- DILARANG menampilkan ID teknis database (seperti `[ID: 12]`, `id: 5`, dsb) di chat to-do list maupun daftar acara/pengingat. Gunakan nomor urut visual `[1]`, `[2]`, dst.
+- FORMAT JAM: Wajib gunakan format jam tanpa detik (`HH.mm WIB` atau `HH:mm WIB`, contoh: `19.30 WIB` atau `11.00 WIB`). DILARANG menampilkan satuan detik (`.00` atau `:00`).
 
 ## 4. DINAMIKA GRUP KELUARGA & MANAJEMEN TUGAS BERSAMA:
 - SHARED TO-DO BOARD: To-do list di obrolan grup adalah daftar tugas bersama keluarga.

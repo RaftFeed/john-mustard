@@ -846,18 +846,102 @@ export function formatPersonList(persons = []) {
   return lines.join("\n\n");
 }
 
+export function formatWibDateTime(dateInput) {
+  if (!dateInput) return "Tanpa deadline";
+  const d = new Date(dateInput);
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const dWib = new Date(d.getTime() + WIB_OFFSET_MS);
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  const dayName = daysId[dWib.getUTCDay()];
+  const dateNum = dWib.getUTCDate();
+  const monthName = monthsId[dWib.getUTCMonth()];
+  const year = dWib.getUTCFullYear();
+  const hours = String(dWib.getUTCHours()).padStart(2, "0");
+  const minutes = String(dWib.getUTCMinutes()).padStart(2, "0");
+  return `${dayName}, ${dateNum} ${monthName} ${year} ${hours}.${minutes} WIB`;
+}
+
 export function formatRemindersList(reminders = []) {
   if (!reminders || reminders.length === 0) {
-    return "*[DAFTAR PENGINGAT]*\nBelum ada pengingat yang aktif.";
+    return "*[Daftar Acara & Pengingat]*\nBelum ada jadwal acara atau pengingat aktif.";
   }
-  const lines = ["*[DAFTAR PENGINGAT AKTIF]*\n"];
+
+  const now = new Date();
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  const nowWib = new Date(now.getTime() + WIB_OFFSET_MS);
+  const hour = nowWib.getUTCHours();
+  let salam = "Selamat pagi";
+  if (hour >= 11 && hour < 15) salam = "Selamat siang";
+  else if (hour >= 15 && hour < 18) salam = "Selamat sore";
+  else if (hour >= 18 || hour < 4) salam = "Selamat malam";
+
+  const lines = [
+    `🗓️ [Daftar Acara & Pengingat]\n_${salam}!_\n`
+  ];
+
   reminders.forEach((r, idx) => {
-    const d = new Date(r.remind_at);
-    const timeStr = d.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
-    const recStr = r.recurrence ? ` _(berulang: ${r.recurrence})_` : "";
-    lines.push(`${idx + 1}. [ID: ${r.id}] *${r.message}*${recStr}\n   ⏰ Jadwal: ${timeStr} WIB`);
+    let badge = "⚪";
+    let scheduleStr = "Tanpa jadwal";
+
+    if (r.remind_at) {
+      const targetDate = new Date(r.remind_at);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+
+      if (diffDays <= 0) badge = "🔴";
+      else if (diffDays === 1) badge = "🟠";
+      else if (diffDays <= 3) badge = "🟡";
+      else badge = "🟢";
+
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}.${minutes} WIB`;
+
+      if (diffDays === 1) {
+        scheduleStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else if (diffDays === 0) {
+        scheduleStr = `Hari ini (${jamStr})`;
+      } else if (diffDays < 0) {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
+    const pillTokens = [];
+    if (r.recurrence === "daily") {
+      pillTokens.push("`Harian`");
+    } else if (r.recurrence === "weekly") {
+      pillTokens.push("`Mingguan`");
+    } else if (r.recurrence) {
+      pillTokens.push(`\`${r.recurrence}\``);
+    } else {
+      pillTokens.push("`Sekali`");
+    }
+
+    if (r.task_type && r.task_type !== "reminder") {
+      pillTokens.push(`\`#${r.task_type}\``);
+    }
+
+    lines.push(`${badge} *[${idx + 1}] ${r.message}*`);
+    lines.push(`   ⏰ ${scheduleStr} • ${pillTokens.join(" ")}\n`);
   });
-  return lines.join("\n\n");
+
+  lines.push("_Semangat!_ 💪");
+  return lines.join("\n").trim();
 }
 
 export function formatNotesList(notes = []) {
@@ -960,14 +1044,16 @@ export function formatTodoList(todos) {
       const hours = String(dlWib.getUTCHours()).padStart(2, "0");
       const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
 
+      const jamStr = `${hours}.${minutes} WIB`;
+
       if (diffDays === 1) {
-        deadlineStr = `Besok (${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+        deadlineStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
       } else if (diffDays === 0) {
-        deadlineStr = `Hari ini (${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+        deadlineStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
       } else if (diffDays < 0) {
-        deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+        deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
       } else {
-        deadlineStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`;
+        deadlineStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
       }
     }
 
@@ -1233,6 +1319,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   const formattedRems = formatRemindersList(activeRems);
   assert.ok(formattedRems.includes("Jemput adik di stasiun"));
   assert.ok(formattedRems.includes("Bayar listrik"));
+  assert.ok(!formattedRems.includes("[ID:"));
+  assert.ok(formattedRems.includes("🗓️ [Daftar Acara & Pengingat]"));
 
   assert.strictEqual(store.deleteReminder("rem_user", testRemId1), 1);
   assert.strictEqual(store.deleteReminder("rem_user", "listrik"), 1);

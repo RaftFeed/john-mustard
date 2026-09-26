@@ -1,6 +1,6 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, normalizePhone, OWNER_PHONE } from "./db.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatWibDateTime, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
@@ -287,9 +287,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "detail": {
       const todo = store.getTodoById(cmd.id, chatId);
       if (!todo) return `[!] Tugas #${cmd.id} gak ketemu.`;
-      const dlStr = todo.deadline
-        ? new Date(todo.deadline).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB"
-        : "Tanpa deadline";
+      const dlStr = formatWibDateTime(todo.deadline);
       return `*[Detail Tugas #${todo.id}]*\n• Tugas: ${todo.task}\n• Deadline: ${dlStr}\n• Kategori: ${todo.category || "work"}\n• Tag: ${todo.tag || "-"}\n• Status: ${todo.done ? "Selesai" : "Pending"}`;
     }
 
