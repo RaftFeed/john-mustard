@@ -644,19 +644,20 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.1-pro-preview";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.7-flash",
-  "gemini-3-flash-preview"
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-latest"
 ];
 
 export const SMART_CASCADE = [
   PRO_MODEL,
   DEFAULT_MODEL,
-  "gemini-3.7-flash"
+  "gemini-3.5-flash-lite"
 ];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;
@@ -2566,8 +2567,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
 
     // Dynamic Model Tier Selection Tests
-    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-3.8-flash");
-    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-flash-lite-latest");
+    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-flash-lite-latest");
     assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.1-pro-preview");
     assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.1-pro-preview");
     assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.1-pro-preview");
