@@ -1206,7 +1206,7 @@ export function formatFeatureRequestsList(requests) {
   return lines.join("\n").trim();
 }
 
-export function formatTodoList(todos) {
+export function formatTodoList(todos, isGroup = false) {
   if (!todos || todos.length === 0) {
     return "*Tidak ada tugas pending.* To-do list aman semua.";
   }
@@ -1254,7 +1254,7 @@ export function formatTodoList(todos) {
       const hours = String(dlWib.getUTCHours()).padStart(2, "0");
       const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
 
-      const jamStr = `${hours}.${minutes} WIB`;
+      const jamStr = `${hours}:${minutes}`;
 
       if (diffDays === 1) {
         deadlineStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
@@ -1267,22 +1267,24 @@ export function formatTodoList(todos) {
       }
     }
 
-    // WhatsApp inline monospace code pill formatting: `#analgor` `[P2]`
     const tagBase = item.tag ? item.tag.trim() : "#tugas";
     const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
       const clean = t.replace(/^`+|`+$/g, "");
-      return `\`${clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`}\``;
+      return clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`;
     });
 
     if (item.category === "routine") {
-      tagTokens.push("`[Rutin]`");
+      tagTokens.push("[Rutin]");
     }
-    if (item.assignee) {
-      tagTokens.push(`\`[👤 ${item.assignee}]\``);
+    if (isGroup && item.assignee) {
+      tagTokens.push(`[👤 ${item.assignee}]`);
     }
 
+    const tagLine = tagTokens.length > 0 ? `\`${tagTokens.join(" ")}\`` : "`#tugas`";
+
     lines.push(`${badge} *[${index + 1}] ${item.task}*`);
-    lines.push(`   ⏰ ${deadlineStr} • ${tagTokens.join(" ")}\n`);
+    lines.push(`├── ${deadlineStr}`);
+    lines.push(`└── ${tagLine}\n`);
   });
 
   lines.push("_Semangat!_ 💪");
@@ -1321,7 +1323,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(todos.length, 1);
   const formatted = formatTodoList(todos);
   assert.ok(formatted.includes("[1] LKP 6 Analisis Algoritme"));
-  assert.ok(formatted.includes("`#analgor` `[P2]`"));
+  assert.ok(formatted.includes("`#analgor [P2]`"));
+  assert.ok(formatted.includes("├── "));
+  assert.ok(formatted.includes("└── "));
   assert.ok(formatted.includes("🌄 [Pengingat Tugas]"));
   assert.ok(formatted.includes("_Semangat!_ 💪"));
 
@@ -1574,8 +1578,10 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.strictEqual(todosBunga.length, 1);
   assert.strictEqual(todosBunga[0].id, taskForBunga);
   assert.strictEqual(todosBunga[0].assignee, "Bunga");
-  const formattedAssigned = formatTodoList(todosBunga);
-  assert.ok(formattedAssigned.includes("👤 Bunga"));
+  const formattedAssignedDm = formatTodoList(todosBunga, false);
+  assert.ok(!formattedAssignedDm.includes("👤 Bunga"), "In DM formatTodoList must NOT show assignee tag");
+  const formattedAssignedGroup = formatTodoList(todosBunga, true);
+  assert.ok(formattedAssignedGroup.includes("👤 Bunga"), "In group formatTodoList MUST show assignee tag");
 
   assert.strictEqual(store.deletePerson("Bunga"), 1);
   assert.strictEqual(store.getPerson("Bunga"), null);

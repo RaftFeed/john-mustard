@@ -1312,13 +1312,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null);
-    formattedList = formatTodoList(todos);
+    formattedList = formatTodoList(todos, isGroup);
     toolResult = { raw: todos, formatted: formattedList, count: todos.length, assignee: args.assignee || null };
   } else if (name === "getTodosDue") {
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodosDue(queryChatId, days, args.assignee || null);
-    formattedList = formatTodoList(todos);
+    formattedList = formatTodoList(todos, isGroup);
     toolResult = { count: todos.length, daysAhead: days, todos, formattedList };
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);

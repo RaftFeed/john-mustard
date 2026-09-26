@@ -218,20 +218,23 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     }
 
     case "listTodos": {
+      const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodos(chatId, false);
-      return formatTodoList(todos);
+      return formatTodoList(todos, isGroup);
     }
 
     case "today": {
+      const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodosDue(chatId, 0);
       if (todos.length === 0) return "*[Tugas Hari Ini]*\nGak ada tugas dengan deadline hari ini. Aman.";
-      return formatTodoList(todos);
+      return formatTodoList(todos, isGroup);
     }
 
     case "week": {
+      const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodosDue(chatId, 7);
       if (todos.length === 0) return "*[Tugas 7 Hari Ke Depan]*\nGak ada tugas dalam 7 hari ke depan. Santai.";
-      return formatTodoList(todos);
+      return formatTodoList(todos, isGroup);
     }
 
     case "done": {
