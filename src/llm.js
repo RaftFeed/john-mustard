@@ -605,14 +605,14 @@ export const TOOLS = [
   }
 ];
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const FALLBACK_MODEL = "gemini-2.0-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const FALLBACK_MODEL = "gemini-3.7-flash";
 
 const DEFAULT_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-2.5-pro",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash"
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash"
 ];
 
 const modelCooldowns = new Map(); // model -> timestamp
@@ -1203,12 +1203,12 @@ export async function generateContent(rotator, payload) {
 export async function getEmbedding(rotator, text) {
   if (!text || typeof text !== "string" || !text.trim() || !rotator) return null;
   return rotator.execute(async (key) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${key}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${key}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "models/text-embedding-004",
+        model: "models/gemini-embedding-001",
         content: { parts: [{ text: text.trim().slice(0, 2048) }] }
       }),
       signal: AbortSignal.timeout(10000)
