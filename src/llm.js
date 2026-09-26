@@ -1171,7 +1171,7 @@ export function formatForWhatsApp(text = "") {
   // 1. Preserve code blocks and inline code
   const codeBlocks = [];
   let s = text.replace(/```[\s\S]*?```|`[^`\n]+`/g, (match) => {
-    const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+    const placeholder = `@@CODE_BLOCK_${codeBlocks.length}@@`;
     codeBlocks.push(match);
     return placeholder;
   });
@@ -1193,7 +1193,7 @@ export function formatForWhatsApp(text = "") {
   s = s.replace(/^[ \t]*>[ \t]+(.*)$/gm, "_$1_");
 
   // 7. Restore code blocks
-  s = s.replace(/__CODE_BLOCK_(\d+)__/g, (_, idx) => codeBlocks[Number(idx)]);
+  s = s.replace(/@@CODE_BLOCK_(\d+)@@/g, (_, idx) => codeBlocks[Number(idx)]);
 
   return s;
 }
@@ -1310,19 +1310,23 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       assignee: args.assignee || null
     };
   } else if (name === "listTodos") {
-    const todos = store.getTodos(chatId, Boolean(args.includeRoutine), args.assignee || null);
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null);
     formattedList = formatTodoList(todos);
     toolResult = { raw: todos, formatted: formattedList, count: todos.length, assignee: args.assignee || null };
   } else if (name === "getTodosDue") {
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
-    const todos = store.getTodosDue(chatId, days);
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const todos = store.getTodosDue(queryChatId, days, args.assignee || null);
     formattedList = formatTodoList(todos);
     toolResult = { count: todos.length, daysAhead: days, todos, formattedList };
   } else if (name === "completeTodo") {
-    const changes = store.completeTodo(args.todoId, chatId);
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const changes = store.completeTodo(args.todoId, queryChatId);
     toolResult = { success: changes > 0, todoId: args.todoId };
   } else if (name === "undoLastTodo") {
-    const undone = store.undoLastDone(chatId);
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const undone = store.undoLastDone(queryChatId);
     if (!undone) {
       toolResult = { error: "Tidak ada tugas selesai yang bisa dibatalkan (undo)." };
     } else {
@@ -2677,6 +2681,12 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(multiToolsCalled[0], "addTodo");
     assert.strictEqual(multiToolsCalled[1], "addTodo");
     assert.ok(multiRes.includes("Dua tugas berhasil dicatat."));
+
+    // formatForWhatsApp code block preservation test
+    const formattedPills = formatForWhatsApp("Nyapu dan ngepel • `#tugas` `[👤 Mami]` • Cek email `[P1]` `[P2]`");
+    assert.ok(!formattedPills.includes("CODE_BLOCK"), "formatForWhatsApp must not leak CODE_BLOCK placeholders");
+    assert.ok(formattedPills.includes("`#tugas` `[👤 Mami]`"));
+    assert.ok(formattedPills.includes("`[P1]` `[P2]`"));
 
     console.log("LLM module self-test OK");
   });

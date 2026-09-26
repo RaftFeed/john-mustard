@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert";
-import { resolveLidToPhone } from "./waha.js";
+import { resolveLidToPhone, resolvePhoneToLid } from "./waha.js";
 
 export function normalizePhone(raw) {
   if (!raw) return "";
@@ -73,6 +73,64 @@ export function isOwner(chatId = "", senderNumber = "") {
     norm2 === "228140156772422" ||
     String(chatId).includes("228140156772422")
   );
+}
+
+export function getUserTodoScope(chatId = "", store = null) {
+  const clean = String(chatId || "").trim();
+  const isGroup = clean.endsWith("@g.us");
+  if (isGroup) {
+    return { isGroup: true, chatIds: [clean], names: [] };
+  }
+
+  const digits = clean.split("@")[0].replace(/\D/g, "");
+  const normPhone = normalizePhone(clean);
+  let diskLid = "";
+  let diskPhone = "";
+  try {
+    diskLid = typeof resolvePhoneToLid === "function" ? resolvePhoneToLid(normPhone) : "";
+    diskPhone = typeof resolveLidToPhone === "function" ? resolveLidToPhone(digits) : "";
+  } catch {}
+
+  const chatIds = new Set([clean, digits, normPhone, diskLid, diskPhone].filter(Boolean));
+  if (normPhone) {
+    chatIds.add(`${normPhone}@c.us`);
+    chatIds.add(`${normPhone}@s.whatsapp.net`);
+  }
+  if (diskLid) {
+    chatIds.add(`${diskLid}@lid`);
+  }
+  if (digits) {
+    chatIds.add(`${digits}@lid`);
+    chatIds.add(`${digits}@c.us`);
+  }
+
+  const isOwnerUser = isOwner(clean);
+  if (isOwnerUser) {
+    chatIds.add("6285236467838");
+    chatIds.add("6285236467838@c.us");
+    chatIds.add("228140156772422");
+    chatIds.add("228140156772422@lid");
+  }
+
+  const names = new Set();
+  const person = store?.getPerson ? (store.getPerson(normPhone) || store.getPerson(clean)) : null;
+  if (person && person.name) {
+    const n = person.name.toLowerCase();
+    names.add(n);
+    if (n === "mami") { names.add("mama"); names.add("ibu"); }
+    if (n === "papi") { names.add("papa"); names.add("ayah"); }
+    if (n.startsWith("razita")) { names.add("razita"); names.add("ndut"); names.add("adik"); }
+    if (n === "karimah") { names.add("karimah"); }
+    if (n === "rafid" || isOwnerUser) { names.add("rafid"); names.add("mas"); names.add("lord"); names.add("simas"); names.add("owner"); }
+  } else if (isOwnerUser) {
+    names.add("rafid"); names.add("mas"); names.add("lord"); names.add("simas"); names.add("owner");
+  }
+
+  return {
+    isGroup: false,
+    chatIds: Array.from(chatIds),
+    names: Array.from(names)
+  };
 }
 
 export function cosineSimilarity(vecA, vecB) {
@@ -364,7 +422,7 @@ export class Storage {
   }
 
   getTodos(chatId, includeRoutine = false, assignee = null) {
-    const person = this.getPerson ? this.getPerson(chatId) : null;
+    const scope = getUserTodoScope(chatId, this);
     let sql = `
       SELECT id, task, deadline, tag, category, assignee 
       FROM todos 
@@ -372,17 +430,34 @@ export class Storage {
     `;
     const params = [];
 
-    if (assignee) {
-      sql += " AND LOWER(assignee) = LOWER(?)";
-      params.push(assignee.trim());
-    } else if (isOwner(chatId)) {
-      // Owner sees all household tasks
-    } else if (person) {
-      sql += " AND (chat_id = ? OR LOWER(assignee) = LOWER(?))";
-      params.push(chatId, person.name.trim());
-    } else {
+    const isExplicitAll = assignee && /^(all|semua|keluarga|household)$/i.test(assignee.trim());
+
+    if (isExplicitAll && isOwner(chatId)) {
+      // Owner explicitly requested household overview: show all household tasks
+    } else if (assignee && !isExplicitAll) {
+      const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
+      if (targetPerson) {
+        const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
+        const cidPlaceholders = targetScope.chatIds.map(() => "?").join(", ");
+        sql += ` AND (LOWER(assignee) = LOWER(?) OR chat_id IN (${cidPlaceholders}))`;
+        params.push(assignee.trim(), ...targetScope.chatIds);
+      } else {
+        sql += " AND LOWER(assignee) = LOWER(?)";
+        params.push(assignee.trim());
+      }
+    } else if (scope.isGroup) {
       sql += " AND chat_id = ?";
       params.push(chatId);
+    } else {
+      const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+      const namePlaceholders = scope.names.map(() => "?").join(", ");
+      if (scope.names.length > 0) {
+        sql += ` AND (chat_id IN (${cidPlaceholders}) OR LOWER(assignee) IN (${namePlaceholders}))`;
+        params.push(...scope.chatIds, ...scope.names);
+      } else {
+        sql += ` AND chat_id IN (${cidPlaceholders})`;
+        params.push(...scope.chatIds);
+      }
     }
 
     if (!includeRoutine) {
@@ -434,31 +509,66 @@ export class Storage {
     if (!chatId || isOwner(chatId)) {
       return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(realId);
     }
-    const person = this.getPerson ? this.getPerson(chatId) : null;
-    if (person) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))").get(realId, chatId, person.name.trim());
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.isGroup) {
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(realId, chatId);
     }
-    return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(realId, chatId);
+    const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+    const namePlaceholders = scope.names.map(() => "?").join(", ");
+    let cond = `chat_id IN (${cidPlaceholders})`;
+    if (scope.names.length > 0) cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+    return this.db.prepare(`SELECT * FROM todos WHERE id = ? AND (${cond})`).get(realId, ...scope.chatIds, ...scope.names);
   }
 
-  getTodosDue(chatId, daysAhead = 0) {
+  getTodosDue(chatId, daysAhead = 0, assignee = null) {
+    const scope = getUserTodoScope(chatId, this);
     const now = new Date();
     const targetEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysAhead, 23, 59, 59, 999).getTime();
-    return this.db.prepare(`
-      SELECT id, task, deadline, tag, category, done
+
+    let sql = `
+      SELECT id, task, deadline, tag, category, assignee, done
       FROM todos
-      WHERE chat_id = ? AND done = 0 AND deadline IS NOT NULL AND deadline <= ?
-      ORDER BY 
-        CASE 
-          WHEN tag LIKE '%[P1]%' OR tag LIKE '%#p1%' OR LOWER(tag) LIKE '%p1%' OR LOWER(tag) LIKE '%urgent%' OR LOWER(tag) LIKE '%darurat%' THEN 1
-          WHEN tag LIKE '%[P2]%' OR tag LIKE '%#p2%' OR LOWER(tag) LIKE '%p2%' OR LOWER(tag) LIKE '%high%' THEN 2
-          WHEN tag LIKE '%[P3]%' OR tag LIKE '%#p3%' OR LOWER(tag) LIKE '%p3%' THEN 3
-          WHEN tag LIKE '%[P4]%' OR tag LIKE '%#p4%' OR LOWER(tag) LIKE '%p4%' THEN 4
-          ELSE 5
-        END ASC,
-        deadline ASC,
-        id ASC
-    `).all(chatId, targetEnd);
+      WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ?
+    `;
+    const params = [targetEnd];
+
+    if (assignee) {
+      const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
+      if (targetPerson) {
+        const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
+        const cidPlaceholders = targetScope.chatIds.map(() => "?").join(", ");
+        sql += ` AND (LOWER(assignee) = LOWER(?) OR chat_id IN (${cidPlaceholders}))`;
+        params.push(assignee.trim(), ...targetScope.chatIds);
+      } else {
+        sql += " AND LOWER(assignee) = LOWER(?)";
+        params.push(assignee.trim());
+      }
+    } else if (scope.isGroup) {
+      sql += " AND chat_id = ?";
+      params.push(chatId);
+    } else {
+      const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+      const namePlaceholders = scope.names.map(() => "?").join(", ");
+      if (scope.names.length > 0) {
+        sql += ` AND (chat_id IN (${cidPlaceholders}) OR LOWER(assignee) IN (${namePlaceholders}))`;
+        params.push(...scope.chatIds, ...scope.names);
+      } else {
+        sql += ` AND chat_id IN (${cidPlaceholders})`;
+        params.push(...scope.chatIds);
+      }
+    }
+
+    sql += ` ORDER BY 
+      CASE 
+        WHEN tag LIKE '%[P1]%' OR tag LIKE '%#p1%' OR LOWER(tag) LIKE '%p1%' OR LOWER(tag) LIKE '%urgent%' OR LOWER(tag) LIKE '%darurat%' THEN 1
+        WHEN tag LIKE '%[P2]%' OR tag LIKE '%#p2%' OR LOWER(tag) LIKE '%p2%' OR LOWER(tag) LIKE '%high%' THEN 2
+        WHEN tag LIKE '%[P3]%' OR tag LIKE '%#p3%' OR LOWER(tag) LIKE '%p3%' THEN 3
+        WHEN tag LIKE '%[P4]%' OR tag LIKE '%#p4%' OR LOWER(tag) LIKE '%p4%' THEN 4
+        ELSE 5
+      END ASC,
+      deadline ASC,
+      id ASC`;
+    return this.db.prepare(sql).all(...params);
   }
 
   setDailyDigest(chatId, enable = true) {
@@ -621,18 +731,23 @@ export class Storage {
 
   completeTodo(id, chatId) {
     const realId = this.resolveTodoId(id, chatId);
-    const person = this.getPerson ? this.getPerson(chatId) : null;
+    if (!realId) return 0;
+    const scope = getUserTodoScope(chatId, this);
     let changes = 0;
-    if (isOwner(chatId)) {
+    if (scope.isGroup) {
       changes = this.db.prepare("UPDATE todos SET done = 1 WHERE id = ?").run(realId).changes;
-    } else if (person) {
-      changes = this.db.prepare(
-        "UPDATE todos SET done = 1 WHERE id = ? AND (chat_id = ? OR LOWER(assignee) = LOWER(?))"
-      ).run(realId, chatId, person.name.trim()).changes;
     } else {
-      changes = this.db
-        .prepare("UPDATE todos SET done = 1 WHERE id = ? AND chat_id = ?")
-        .run(realId, chatId).changes;
+      const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+      const namePlaceholders = scope.names.map(() => "?").join(", ");
+      let cond = `chat_id IN (${cidPlaceholders})`;
+      if (scope.names.length > 0) {
+        cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+      }
+      if (isOwner(chatId)) {
+        changes = this.db.prepare("UPDATE todos SET done = 1 WHERE id = ?").run(realId).changes;
+      } else {
+        changes = this.db.prepare(`UPDATE todos SET done = 1 WHERE id = ? AND (${cond})`).run(realId, ...scope.chatIds, ...scope.names).changes;
+      }
     }
     if (changes > 0) {
       this.lastDoneByChat.set(chatId, realId);
@@ -643,10 +758,18 @@ export class Storage {
   undoLastDone(chatId) {
     let lastId = this.lastDoneByChat.get(chatId);
     if (!lastId) {
-      const row = isOwner(chatId)
-        ? this.db.prepare("SELECT id FROM todos WHERE done = 1 ORDER BY id DESC LIMIT 1").get()
-        : this.db.prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1").get(chatId);
-      if (row) lastId = row.id;
+      const scope = getUserTodoScope(chatId, this);
+      if (scope.isGroup) {
+        const row = this.db.prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1").get(chatId);
+        if (row) lastId = row.id;
+      } else {
+        const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+        const namePlaceholders = scope.names.map(() => "?").join(", ");
+        let cond = `chat_id IN (${cidPlaceholders})`;
+        if (scope.names.length > 0) cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+        const row = this.db.prepare(`SELECT id FROM todos WHERE (${cond}) AND done = 1 ORDER BY id DESC LIMIT 1`).get(...scope.chatIds, ...scope.names);
+        if (row) lastId = row.id;
+      }
     }
     if (!lastId) return null;
     const changes = this.db
@@ -658,19 +781,21 @@ export class Storage {
   }
 
   findTodo(chatId, query) {
-    const person = this.getPerson ? this.getPerson(chatId) : null;
-    if (isOwner(chatId)) {
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.isGroup) {
       return this.db
-        .prepare("SELECT * FROM todos WHERE done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
-        .get(`%${query}%`);
-    } else if (person) {
-      return this.db
-        .prepare("SELECT * FROM todos WHERE (chat_id = ? OR LOWER(assignee) = LOWER(?)) AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
-        .get(chatId, person.name.trim(), `%${query}%`);
+        .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
+        .get(chatId, `%${query}%`);
+    }
+    const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+    const namePlaceholders = scope.names.map(() => "?").join(", ");
+    let cond = `chat_id IN (${cidPlaceholders})`;
+    if (scope.names.length > 0) {
+      cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
     }
     return this.db
-      .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
-      .get(chatId, `%${query}%`);
+      .prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1`)
+      .get(...scope.chatIds, ...scope.names, `%${query}%`);
   }
 
   updateTodo(id, chatId, { task, deadline, tag, category, assignee }) {
@@ -1483,6 +1608,39 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(frFormatted.includes("User Test"));
   assert.strictEqual(store.completeFeatureRequest(frId), 1);
   assert.strictEqual(store.getFeatureRequests("pending").length, 0);
+
+  // Household vs Personal To-Do Isolation tests
+  const rafidPhone = "6285236467838";
+  const razitaPhone = "6282217584569";
+  const groupJid = "120363029582992016@g.us";
+
+  const taskRafid = store.addTodo(rafidPhone, "Tugas Pribadi Rafid");
+  const taskRazita = store.addTodo(razitaPhone, "PR MTK Razita");
+  const taskGroup = store.addTodo(groupJid, "Beli beras bersama", null, null, "work", "Mami");
+
+  // In Rafid's DM: Rafid only sees his own tasks, NOT Razita's PR
+  const rafidList = store.getTodos(rafidPhone);
+  assert.ok(rafidList.some((t) => t.id === taskRafid));
+  assert.ok(!rafidList.some((t) => t.id === taskRazita), "Rafid must not see Razita's private tasks in DM");
+  assert.ok(!rafidList.some((t) => t.id === taskGroup), "Rafid must not see Mami's group task without assignment");
+
+  // In Razita's DM: Razita only sees her own tasks
+  const razitaList = store.getTodos(razitaPhone);
+  assert.ok(razitaList.some((t) => t.id === taskRazita));
+  assert.ok(!razitaList.some((t) => t.id === taskRafid), "Razita must not see Rafid's tasks");
+
+  // In Group Chat: Group tasks are visible
+  const groupList = store.getTodos(groupJid);
+  assert.ok(groupList.some((t) => t.id === taskGroup));
+
+  // Explicit target check: Rafid asks for Razita's tasks
+  const checkedRazita = store.getTodos(rafidPhone, false, "Razita");
+  assert.ok(checkedRazita.some((t) => t.id === taskRazita));
+
+  // Clean up test tasks
+  store.deleteTodo(taskRafid, rafidPhone);
+  store.deleteTodo(taskRazita, razitaPhone);
+  store.deleteTodo(taskGroup, groupJid);
 
   console.log("DB & Formatter self-test OK");
 }
