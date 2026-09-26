@@ -606,14 +606,38 @@ export const TOOLS = [
 ];
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const FALLBACK_MODEL = "gemini-3.7-flash";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.1-pro-preview";
 
-const DEFAULT_CASCADE = [
+export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash"
+  "gemini-3-flash-preview"
 ];
+
+export const SMART_CASCADE = [
+  PRO_MODEL,
+  DEFAULT_MODEL
+];
+
+export const DEFAULT_CASCADE = FAST_CASCADE;
+
+export function selectModelCascade(text = "", options = {}) {
+  const t = String(text || "").trim();
+  // 1. Explicit override
+  if (/(?:^|\s)[#!]pro\b|\b(?:mode\s+pro|pake\s+pro)\b/i.test(t)) {
+    return SMART_CASCADE;
+  }
+  // 2. Heavy coding, scripting, regex, algorithms
+  const isCodeOrLogic = /\b(koding|coding|script|skrip|python|javascript|golang|rust|regex|algoritma|debug|debugging|bikin\s+program|buatkan\s+program|refactor)\b/i.test(t);
+  if (isCodeOrLogic) {
+    return SMART_CASCADE;
+  }
+  // 3. Deep analysis & complex math
+  const isDeepAnalysis = /\b(analisis\s+(mendalam|data|komparasi)|bandingkan\s+secara\s+detail|kalkulasi\s+rumit|probabilitas|persamaan\s+diferensial|integral|bedah\s+dokumen|analisis\s+jurnal)\b/i.test(t);
+  if (isDeepAnalysis) {
+    return SMART_CASCADE;
+  }
+  return FAST_CASCADE;
+}
 
 const modelCooldowns = new Map(); // model -> timestamp
 
@@ -1165,8 +1189,8 @@ async function callGemini(rotator, model, payload) {
   });
 }
 
-export async function generateContent(rotator, payload) {
-  const models = getActiveModels();
+export async function generateContent(rotator, payload, baseCascade = null) {
+  const models = getActiveModels(baseCascade || DEFAULT_CASCADE);
   let lastErr = null;
 
   for (const model of models) {
@@ -1189,7 +1213,7 @@ export async function generateContent(rotator, payload) {
   if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
     console.warn(`[LLM] Mode ANY gagal pada semua model. Mencoba fallback ke mode AUTO...`);
     const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
-    const autoModels = getActiveModels();
+    const autoModels = getActiveModels(baseCascade || DEFAULT_CASCADE);
     for (const model of autoModels) {
       try {
         return await callGemini(rotator, model, autoPayload);
@@ -1963,7 +1987,7 @@ export function injectMailboxSteering(mailbox, contents) {
   return true;
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null }) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null } = {}) {
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -2081,6 +2105,8 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
   const MAX_STEPS = 5;
   let turns = 0;
 
+  const activeCascade = cascade || selectModelCascade(userText, { media, audio });
+
   while (turns < MAX_STEPS) {
     const payload = {
       systemInstruction: { parts: [{ text: finalSystemPrompt }] },
@@ -2089,7 +2115,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
       ...(toolConfig ? { toolConfig } : {})
     };
 
-    const responseData = await generateContent(rotator, payload);
+    const responseData = await generateContent(rotator, payload, activeCascade);
     currentCandidate = responseData.candidates?.[0];
     if (!currentCandidate?.content) break;
 
@@ -2329,6 +2355,13 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.deepStrictEqual(getActiveModels(testModels), ["modelB", "modelC", "modelA"]); // modelA demoted to end
     clearModelCooldowns();
     assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
+
+    // Dynamic Model Tier Selection Tests
+    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.1-pro-preview");
+    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.1-pro-preview");
+    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.1-pro-preview");
 
     // Mid-Turn Mailbox Steering Tests
     const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];

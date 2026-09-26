@@ -71,11 +71,6 @@ async function handleIncomingMessage(msg) {
   const toolsCalled = [];
   startTyping(msg.from);
   const typingTimer = setInterval(() => startTyping(msg.from), 6000);
-  const watchdogTimer = setTimeout(async () => {
-    try {
-      await sendText(msg.from, "_Bentar ya, lagi diproses..._");
-    } catch {}
-  }, 12000);
 
   try {
     // 1. Tangani Incoming Media
@@ -325,7 +320,6 @@ async function handleIncomingMessage(msg) {
       error: err.message
     });
   } finally {
-    clearTimeout(watchdogTimer);
     clearInterval(typingTimer);
     stopTyping(msg.from);
   }
