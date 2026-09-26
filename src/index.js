@@ -113,6 +113,53 @@ async function handleIncomingMessage(msg) {
         return;
       }
 
+      // 2. Stiker WhatsApp -> DILARANG simpan ke Document Vault! Respon ledekan / komentar santai via Vision
+      if (msg.isSticker) {
+        console.log(`>> Memproses stiker WhatsApp dari ${msg.from}`);
+        let reply = "";
+        try {
+          const buffer = await downloadMedia(msg.mediaUrl);
+          const prompt = [
+            "[Stiker WhatsApp diterima].",
+            msg.body ? `Teks pengiring: "${msg.body}".` : "",
+            "Perhatikan stiker ini baik-baik. Karakter sedang melakukan apa dan bagaimana ekspresinya?",
+            "Beri respon ledekin santai, celetukan kocak, atau reaksi akrab khas John Mustard sesuai konteks stikernya (1-2 kalimat pendek, santai, anti-slop, tanpa basa-basi)."
+          ].filter(Boolean).join(" ");
+
+          reply = await processChat(rotator, prompt, {
+            store,
+            chatId: msg.from,
+            senderNumber: msg.senderNumber,
+            onToolCall: (name) => toolsCalled.push(name),
+            media: { buffer, mimetype: msg.mimetype || "image/webp", filename: "sticker.webp" },
+            mailbox: msg.mailbox
+          });
+        } catch (err) {
+          console.warn("[Sticker] Vision chat error, fallback used:", err.message);
+        }
+
+        if (!reply || reply.trim() === "[NO_REPLY]") {
+          const fallbacks = [
+            "Wkwk stiker apa tuh, lemes bener kayanya 🗿",
+            "Napa tuh ekspresinya begitu amat wkwk 😂",
+            "Muka stikernya mewakili batin banget ya wkwk 🥀",
+            "Wkwk pasrah amat itu stiker 😭"
+          ];
+          reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        }
+
+        await sendText(msg.from, reply);
+        console.log(`>> Sent sticker reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
+        store.saveChatMessage(msg.from, "user", msg.body ? `[Stiker] ${msg.body}` : "[Stiker WhatsApp]");
+        store.saveChatMessage(msg.from, "model", reply);
+        logInteraction(store.db, {
+          prompt: `[STICKER] ${msg.body || ""}`.trim(),
+          tools: toolsCalled,
+          status: "success"
+        });
+        return;
+      }
+
       const isGroup = Boolean(msg.isGroup || String(msg.from).endsWith("@g.us"));
 
       // 2. Di Grup Keluarga: Dokumen/Foto/PDF langsung dianalisis & diringkas lewat LLM
@@ -177,6 +224,11 @@ async function handleIncomingMessage(msg) {
       }
 
       // 4. Default DM: Ingest ke Document Vault
+      if (msg.isSticker || msg.mimetype === "image/webp") {
+        console.log(`>> Mengabaikan media webp/stiker dari vault ingest`);
+        return;
+      }
+
       console.log(`>> Mengunduh media vault: ${msg.filename} (${msg.mimetype})`);
       const buffer = await downloadMedia(msg.mediaUrl);
       

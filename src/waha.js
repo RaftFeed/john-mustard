@@ -668,6 +668,13 @@ export function parseIncoming(body, allowedPhone) {
   const mimetype = msg.media?.mimetype || msg.mimetype || "application/octet-stream";
   const filename = extractMediaFilename(msg);
 
+  const isSticker = Boolean(
+    msg.type === "sticker" ||
+    msg._data?.type === "sticker" ||
+    msg._data?.Message?.stickerMessage ||
+    (mimetype.includes("image/webp") && (!filename || filename === "file" || filename.endsWith(".webp")))
+  );
+
   let bodyText = normalizeMentionsInText(msg.body || "");
   if (quoted?.text) {
     const normQuoted = normalizeMentionsInText(quoted.text);
@@ -683,6 +690,7 @@ export function parseIncoming(body, allowedPhone) {
     mediaUrl,
     filename,
     mimetype,
+    isSticker,
     timestamp: msg.timestamp,
     quoted,
     isGroup,
@@ -729,6 +737,21 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   // Media filename test
   assert.strictEqual(extractMediaFilename({ _data: { Message: { documentMessage: { fileName: "dokumen_rahasia.pdf" } } } }), "dokumen_rahasia.pdf");
   assert.strictEqual(extractMediaFilename({ media: { fileName: "tabel.xlsx" } }), "tabel.xlsx");
+
+  // Sticker detection test
+  const stickerPayload = {
+    event: "message",
+    payload: {
+      id: "STK_123",
+      from: "6281234567890@c.us",
+      mediaUrl: "http://waha:3000/media/stk.webp",
+      media: { mimetype: "image/webp" },
+      _data: { Message: { stickerMessage: {} } }
+    }
+  };
+  const parsedSticker = parseIncoming(stickerPayload, "6281234567890");
+  assert.strictEqual(parsedSticker.isSticker, true);
+  assert.strictEqual(parsedSticker.hasMedia, true);
 
   // Group message tests
   const groupChatId = "1203630234567890@g.us";
