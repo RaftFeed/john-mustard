@@ -246,4 +246,22 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   assert.strictEqual(resDetail.toolResult.todo.task, "Submit Proposal Hackathon SEA");
   assert.ok(resDetail.toolResult.formatted.includes("Prompt / Deskripsi Asli:"));
   assert.ok(resDetail.toolResult.formatted.includes(userPrompt));
+
+  // Test sendDirectMessage guard in group chat: reject non-explicit PC
+  const resGroupDM = await executeTool("sendDirectMessage", {
+    recipient: "Mami",
+    message: "itu cuma typo doang wlek"
+  }, { store, chatId: "120363029582992016@g.us", userText: "bilangin mami itu cuma typo doang wlek" });
+
+  assert.ok(resGroupDM.toolResult.error);
+  assert.ok(resGroupDM.toolResult.error.includes("Di obrolan grup dilarang"));
+
+  // Test sendDirectMessage allowed in group chat when explicit PC requested
+  const resGroupExplicitDM = await executeTool("sendDirectMessage", {
+    recipient: "Mami",
+    message: "jangan lupa belanja"
+  }, { store, chatId: "120363029582992016@g.us", userText: "tolong pc mami jangan lupa belanja" });
+
+  // Will either succeed or fail at WhatsApp dispatch, but NOT blocked by group guard
+  assert.strictEqual(resGroupExplicitDM.toolResult.error?.includes("Di obrolan grup dilarang"), false);
 });

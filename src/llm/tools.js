@@ -677,7 +677,7 @@ export const TOOLS = [
       },
       {
         name: "sendDirectMessage",
-        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. Gunakan saat pengguna minta tolong PC/japri/DM/kirim link/pesan ke orang lain di whitelist, ATAU minta tolong semangatin, titip pesan, sampaikan ucapan selamat/semangat, atau bilangin ke orang lain di whitelist (misal: 'tolong semangatin Rafid ya, semangat pitchingnya', 'bilangin Mami...', 'pc karimah link ini', 'japri rafid tolong...', 'pc razita ndut ingetin pr'). Target penerima WAJIB terdaftar di whitelist bot.",
+        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. CATATAN PENTING: DILARANG gunakan tool ini di obrolan grup jika hanya disuruh 'bilangin si X' atau 'kasih tau si X'—cukup mention/tag orangnya (@Nama) langsung di balasan grup! HANYA gunakan tool ini jika di chat pribadi (PC/1-on-1) ATAU jika user di grup secara EKSPLISIT menyuruh 'pc', 'japri', 'dm', atau 'chat pribadi'. Target penerima WAJIB terdaftar di whitelist bot.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1579,6 +1579,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { success: true, status, formatted };
     }
   } else if (name === "sendDirectMessage") {
+    if (isGroup && !/\b(pc|japri|dm|chat pribadi|pesan pribadi|direct message)\b/i.test(userText)) {
+      toolResult = {
+        error: "Di obrolan grup dilarang mengirim PC/chat pribadi jika hanya diminta 'bilangin/kasih tau'. Sampaikan pesan langsung di obrolan grup dengan men-tag/mention orangnya (contoh: @Mami atau @Razita)."
+      };
+      return { toolResult, formattedList };
+    }
+
     const rawTarget = String(args.recipient || "").trim();
     const rawMsg = String(args.message || "").trim();
     if (!rawTarget || !rawMsg) {

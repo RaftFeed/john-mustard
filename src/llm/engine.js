@@ -115,7 +115,8 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 - DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
 - PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.
 - DILARANG MENGARANG JAM / TUGAS (ANTI-ASUMSI WAKTU & TUGAS): Jika ada anggota keluarga yang memberi kabar, mengeluh, atau berkomentar waktu (contoh: "Jam 17 blom pulang", "masih di jalan", "belum kelar"), DILARANG KERAS mengarang jam baru (seperti menebak jam 19.00) dan DILARANG langsung memanggil updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau diundur ke jam berapa jadwalnya?".
-- MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, WAJIB gunakan format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
+- RELAY PESAN DI GRUP ("BILANGIN X" / "KASIH TAU X"): Jika anggota grup menyuruh bilangin atau menyampaikan pesan ke orang lain (contoh: "bilangin mami itu cuma typo", "kasih tau razita..."), DILARANG KERAS memanggil tool sendDirectMessage (JANGAN PC / CHAT PRIBADI)! Cukup sampaikan langsung di balasan grup dengan me-mention/men-tag orangnya (misal: "@Mami katanya itu cuma typo doang"). HANYA kirim chat pribadi jika user secara eksplisit menyuruh "pc" atau "japri".
+- MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, bisa gunakan '@Nama' (misal: @Mami, @Razita, @Rafid) atau format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
   // Active speaker resolution & dynamic memory context
