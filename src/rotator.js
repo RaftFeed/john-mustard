@@ -201,11 +201,7 @@ export class KeyRotator {
 
         if (isRateLimit) {
           const isDailyQuota = msg.includes("PerDay") || msg.includes("free_tier_requests");
-          if (isDailyQuota) {
-            // Kuota model habis: langsung throw agar cascade pindah ke model berikutnya tanpa sleep
-            throw err;
-          }
-          this.markLimited(key, 30_000);
+          this.markLimited(key, isDailyQuota ? 3600_000 : 30_000);
           continue;
         }
 

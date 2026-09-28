@@ -112,3 +112,21 @@ test("KeyRotator: rotates through keys on 429 until healthy key is found", async
   assert.strictEqual(res, "success_key3");
   assert.strictEqual(attempts, 3);
 });
+
+test("KeyRotator: rotates on 429 daily free_tier_requests and remains sticky on healthy key", async () => {
+  const rotator = new KeyRotator(["key1", "key2", "key3"]);
+  let attempts = 0;
+  const res = await rotator.execute(async (key) => {
+    attempts++;
+    if (key === "key1") {
+      const err = new Error("429 RESOURCE_EXHAUSTED: Quota exceeded for metric free_tier_requests PerDay limit: 20");
+      err.status = 429;
+      throw err;
+    }
+    return `success_${key}`;
+  });
+
+  assert.strictEqual(res, "success_key2");
+  assert.strictEqual(attempts, 2);
+  assert.strictEqual(rotator.getKey(), "key2"); // stays sticky on key2
+});
