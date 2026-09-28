@@ -39,9 +39,13 @@ export function shouldAttemptCrystallization(executedTools = [], userMessage = "
     }
   }
 
-  // Trigger Condition 3: Explicit teaching language in user message
-  const teachPatterns = /(?:mulai sekarang|setiap kali|kalau ada|prosedurnya|caranya|aturan baru|formatnya|ingat cara|pelajari cara|jadikan skill|catat alur)\b/i;
+  // Trigger Condition 3: Explicit teaching language, user preference, or correction in user message
+  const teachPatterns = /(?:mulai sekarang|setiap kali|setiap ada|kalau ada|prosedurnya|caranya|aturan baru|formatnya|ingat cara|pelajari cara|jadikan skill|catat alur|bukan gitu|bukan begitu|lain kali|pakai cara|tiap kali|tiap aku|tolong selalu|jangan lupa kalau|kebiasaanku|aturannya|jadikan template|buat template|alur kerja)\b/i;
   if (teachPatterns.test(userMessage)) return true;
+
+  // Trigger Condition 4: Multi-stage workflow chaining with at least one non-trivial tool
+  const workflowPatterns = /(?:lalu|setelah itu|kemudian|habis itu|berikutnya)\b/i;
+  if (nonTrivial.length >= 1 && workflowPatterns.test(userMessage)) return true;
 
   return false;
 }
@@ -57,7 +61,8 @@ export async function autoCrystallizeTurn({
   executedTools = [],
   finalReply = "",
   store,
-  rotator
+  rotator,
+  notify = null
 }) {
   try {
     if (!store || !rotator) return null;
@@ -89,7 +94,7 @@ ${trajectorySteps}
 ${JSON.stringify(existingNames)}
 
 ### CRITERIA FOR CRYSTALLIZATION:
-1. ONLY crystallize if the workflow is reusable for FUTURE similar tasks (e.g. specialized data format parsing, custom formula calculation, multi-step web research + task logging, automated reporting).
+1. ONLY crystallize if the workflow is reusable for FUTURE similar tasks (e.g. specialized data format parsing, custom formula calculation, multi-step web research + task logging, automated reporting, user-defined operational preferences/SOP).
 2. DO NOT crystallize one-off trivial queries (e.g. checking one task, reading one note, simple banter).
 3. DO NOT duplicate an existing skill already in the system.
 4. Output MUST be valid JSON strictly matching the schema below.
@@ -136,6 +141,13 @@ ${JSON.stringify(existingNames)}
     if (skillName && template) {
       const saved = store.saveSkill(skillName, desc, template);
       console.log(`✨ [Auto-Crystallization] Synthesized new skill '${skillName}': ${desc}`);
+      if (typeof notify === "function") {
+        try {
+          await notify(`✨ *[Skill Baru Dipelajari]*\n• Nama: \`${skillName}\`\n• SOP: ${desc}`);
+        } catch (notifErr) {
+          console.warn("[Crystallize] Gagal kirim notif WhatsApp:", notifErr.message);
+        }
+      }
       return saved;
     }
   } catch (err) {
@@ -207,6 +219,22 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/crystallize.js")) {
       shouldAttemptCrystallization(
         [{ name: "addTodo", result: { success: true } }],
         "ingat cara format rekap bulanan ya"
+      ),
+      true
+    );
+
+    assert.strictEqual(
+      shouldAttemptCrystallization(
+        [{ name: "addTodo", result: { success: true } }],
+        "bukan gitu, lain kali kalau ada deadline tolong selalu tandai urgent"
+      ),
+      true
+    );
+
+    assert.strictEqual(
+      shouldAttemptCrystallization(
+        [{ name: "searchWeb", result: { results: [] } }],
+        "cari data kurs dollar kemudian rangkum"
       ),
       true
     );

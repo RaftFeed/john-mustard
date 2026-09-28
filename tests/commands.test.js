@@ -39,4 +39,20 @@ test("Commands: executeFastCommand executes ping, dew, and task commands", async
   assert.ok(detailRes.includes("Belajar matematika"));
   assert.ok(detailRes.includes("Prompt / Deskripsi Asli:"));
   assert.ok(detailRes.includes("Belajar matematika"));
+
+  // Natural language fast commands
+  const replaceCmd = parseFastCommand("1 bukan matematika tapi fisika");
+  assert.strictEqual(replaceCmd.type, "replaceTitle");
+  const replaceRes = await executeFastCommand(replaceCmd, ctx);
+  assert.ok(replaceRes.includes("Belajar fisika"));
+
+  const moveCmd = parseFastCommand("pindah 1 ke acara");
+  assert.strictEqual(moveCmd.type, "moveToReminder");
+  const moveRes = await executeFastCommand(moveCmd, ctx);
+  assert.ok(moveRes.includes("Berhasil dipindahkan ke agenda/acara"));
+
+  const delCmd = parseFastCommand("hapus 1");
+  assert.strictEqual(delCmd.type, "delete");
+  const delRes = await executeFastCommand(delCmd, ctx);
+  assert.ok(delRes.includes("berhasil dihapus"));
 });

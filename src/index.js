@@ -28,6 +28,8 @@ startScheduler(store, { rotator });
 const SKILLS_DIR = process.env.SKILLS_DIR || "skills";
 initSkillsWatcher(store, SKILLS_DIR);
 
+const getRafidChatId = () => `${(process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "")}@c.us`;
+
 const HELP_TEXT = `*[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀]*
 _Autonomous WhatsApp AI & Fast Command Engine_
 
@@ -113,7 +115,8 @@ async function handleIncomingMessage(msg) {
             executedTools: audioTrajectory,
             finalReply: reply,
             store,
-            rotator
+            rotator,
+            notify: (text) => sendText(getRafidChatId(), text)
           }).catch((err) => console.warn("[Crystallize] Background reflection error:", err.message));
         });
         logInteraction(store.db, {
@@ -394,7 +397,8 @@ async function handleIncomingMessage(msg) {
           executedTools: textTrajectory,
           finalReply: reply,
           store,
-          rotator
+          rotator,
+          notify: (text) => sendText(getRafidChatId(), text)
         }).catch((err) => console.warn("[Crystallize] Background reflection error:", err.message));
       });
     } else {

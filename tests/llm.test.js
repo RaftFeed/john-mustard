@@ -265,3 +265,47 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   // Will either succeed or fail at WhatsApp dispatch, but NOT blocked by group guard
   assert.strictEqual(resGroupExplicitDM.toolResult.error?.includes("Di obrolan grup dilarang"), false);
 });
+
+test("LLM Engine: single-turn mutation short-circuits to avoid turn 2 delay", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let fetchCallCount = 0;
+
+  globalThis.fetch = async (url, opts) => {
+    fetchCallCount++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                name: "deleteReminder",
+                args: { reminderId: 1 }
+              }
+            }]
+          }
+        }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    store.addReminder("user1", "Acara webinar", Date.now() + 3600_000);
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    const reply = await processChat(mockRotator, "hapus acara 1 dong", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1"
+    });
+
+    assert.strictEqual(fetchCallCount, 1, "Should short-circuit after turn 1 mutation");
+    assert.ok(reply.includes("Beres"), "Reply should confirm mutation immediately");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

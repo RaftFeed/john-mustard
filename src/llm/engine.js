@@ -372,6 +372,18 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
       parts: userResponseParts
     });
 
+    // Single-turn tool mutation short-circuit: potong latensi 50% untuk mutasi data murni
+    const isPureMutation = fnCallParts.every((p) =>
+      ["completeTodo", "deleteTodo", "deleteReminder", "updateReminder", "updateTodo", "addTodo", "addReminder"].includes(p.functionCall.name)
+    );
+    const allSucceeded = successfulMutations.length >= fnCallParts.length;
+    const isPureAction = isActionIntent(userText) && !userText.includes("?") && !/\b(kenapa|gimana|bagaimana|apakah|menurut|saran|rekomendasi)\b/i.test(userText);
+
+    if (turns === 1 && isPureMutation && allSucceeded && isPureAction && lastFormattedList) {
+      const salute = isGroupChat ? "Beres!" : "Beres, Lord!";
+      return `${salute} Data berhasil diperbarui di sistem.\n\n${lastFormattedList}`;
+    }
+
     // Revert toolConfig for subsequent steps
     toolConfig = (isAmbiguousSchedule || isMediaWithoutAction)
       ? { functionCallingConfig: { mode: "NONE" } }

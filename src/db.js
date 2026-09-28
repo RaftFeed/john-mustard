@@ -947,7 +947,7 @@ export class Storage {
     const resetReminded = deadline !== undefined && deadline !== existing.deadline ? 0 : (existing.reminded || 0);
     return this.db
       .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ?, description = ?, reminded = ? WHERE id = ?")
-      .run(newTask, newDeadline, newTag, newCategory, newAssignee, newDescription, resetReminded, id).changes;
+      .run(newTask, newDeadline, newTag, newCategory, newAssignee, newDescription, resetReminded, existing.id).changes;
   }
 
   getPendingTodoDeadlines(limit = 20) {
@@ -968,7 +968,7 @@ export class Storage {
     if (!existing) return 0;
     return this.db
       .prepare("DELETE FROM todos WHERE id = ?")
-      .run(id).changes;
+      .run(existing.id).changes;
   }
 
   // --- Backlog (Owner Only) ---

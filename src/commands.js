@@ -35,6 +35,61 @@ export function parseFastCommand(text = "") {
     return { type: "week" };
   }
 
+  // Natural Commands (Bypass LLM for instant <10ms execution)
+  const naturalDone =
+    trimmed.match(/^(?:no(?:mor)?\s*)?(\d+)\s*(?:udh|udah|sdh|sudah)?\s*(?:kelar|beres|selesai|done)$/i) ||
+    trimmed.match(/^(?:kelar|beres|selesai|done)\s+(?:no(?:mor)?\s*)?(\d+)$/i);
+  if (naturalDone) {
+    return { type: "done", id: parseInt(naturalDone[1], 10) };
+  }
+
+  const naturalDel =
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i);
+  if (naturalDel) {
+    const ids = naturalDel[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    if (ids.length === 1) return { type: "delete", id: ids[0] };
+    if (ids.length > 1) return { type: "deleteMultiple", ids };
+  }
+
+  const naturalMove =
+    trimmed.match(/^(?:eh\s+)?(?:itu\s+)?(?:tolong\s+)?(?:pindah(?:in)?|ganti)\s+(?:no(?:mor)?\s*)?(\d+)\s+(?:ke\s+)(todo|tugas|acara|agenda)(?:.*)$/i) ||
+    trimmed.match(/^(?:eh\s+)?(?:itu\s+)?(?:tolong\s+)?(?:pindah(?:in)?|ganti)\s+(?:ke\s+)(todo|tugas|acara|agenda)\s+(?:no(?:mor)?\s*)?(\d+)(?:.*)$/i);
+  if (naturalMove) {
+    const id = parseInt(naturalMove[1], 10);
+    const target = naturalMove[2].toLowerCase();
+    const isTargetTodo = target === "todo" || target === "tugas";
+    return { type: isTargetTodo ? "moveToTodo" : "moveToReminder", id };
+  }
+
+  const naturalReplace = trimmed.match(/^(?:no(?:mor)?\s*)?(\d+)\s+bukan\s+(.+?)\s+tapi\s+(.+)$/i);
+  if (naturalReplace) {
+    return {
+      type: "replaceTitle",
+      id: parseInt(naturalReplace[1], 10),
+      find: naturalReplace[2].trim(),
+      replace: naturalReplace[3].trim()
+    };
+  }
+
+  const naturalRename = trimmed.match(/^(?:edit|ganti)\s+(?:nama|judul)?\s*(?:no(?:mor)?\s*)?(\d+)\s+jadi\s+(.+)$/i);
+  if (naturalRename) {
+    return {
+      type: "renameItem",
+      id: parseInt(naturalRename[1], 10),
+      newTitle: naturalRename[2].trim()
+    };
+  }
+
+  const naturalTime = trimmed.match(/^(?:edit|ganti)?\s*(?:jam|waktu)\s*(?:no(?:mor)?\s*)?(\d+)\s+(?:jadi|ke|ganti ke)\s+(\d{1,2}[:.]\d{2})$/i);
+  if (naturalTime) {
+    return {
+      type: "updateTime",
+      id: parseInt(naturalTime[1], 10),
+      newTime: naturalTime[2].replace(".", ":")
+    };
+  }
+
   if (!trimmed.startsWith("#") && !trimmed.startsWith("?")) return null;
 
   if (/^#ping\b/i.test(trimmed)) {
@@ -257,11 +312,140 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     }
 
     case "delete": {
+      const isGroup = String(chatId).endsWith("@g.us");
       const changed = store.deleteTodo(cmd.id, chatId);
       if (changed > 0) {
-        return `[OK] Tugas #${cmd.id} berhasil dihapus.`;
+        const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
+        return `[OK] Tugas #${cmd.id} berhasil dihapus.${formatted}`;
       }
-      return `[!] Tugas #${cmd.id} gak ketemu.`;
+      if (store.deleteReminder) {
+        const remChanged = store.deleteReminder(chatId, cmd.id);
+        if (remChanged > 0) {
+          const remaining = store.listReminders ? store.listReminders(chatId) : [];
+          const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
+          return `[OK] Acara/pengingat #${cmd.id} berhasil dihapus.${formatted}`;
+        }
+      }
+      return `[!] Item #${cmd.id} gak ketemu.`;
+    }
+
+    case "deleteMultiple": {
+      const isGroup = String(chatId).endsWith("@g.us");
+      const deletedTodos = [];
+      const deletedRems = [];
+      for (const id of cmd.ids) {
+        if (store.deleteTodo(id, chatId) > 0) {
+          deletedTodos.push(id);
+        } else if (store.deleteReminder && store.deleteReminder(chatId, id) > 0) {
+          deletedRems.push(id);
+        }
+      }
+      const totalDeleted = deletedTodos.length + deletedRems.length;
+      if (totalDeleted === 0) {
+        return `[!] Tidak ada item dari [${cmd.ids.join(", ")}] yang ditemukan.`;
+      }
+      let reply = `[OK] Berhasil menghapus ${totalDeleted} item.`;
+      if (deletedTodos.length > 0) {
+        const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        reply += `\n\n${formatTodoList(remaining, isGroup)}`;
+      } else if (deletedRems.length > 0) {
+        const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        reply += `\n\n${formatRemindersList(remaining)}`;
+      }
+      return reply;
+    }
+
+    case "moveToTodo": {
+      const isGroup = String(chatId).endsWith("@g.us");
+      const targetRemId = store.resolveReminderId ? store.resolveReminderId(cmd.id, chatId) : cmd.id;
+      const rem = store.getReminderById ? store.getReminderById(targetRemId) : null;
+      if (rem) {
+        const todoId = store.addTodo(chatId, rem.message, rem.event_at || rem.remind_at, rem.task_type || null, null, "");
+        if (store.deleteReminder) store.deleteReminder(chatId, targetRemId);
+        const remainingTodos = store.getTodos ? store.getTodos(chatId) : [];
+        const formatted = remainingTodos.length > 0 ? `\n\n${formatTodoList(remainingTodos, isGroup)}` : "";
+        return `[OK] Berhasil dipindahkan ke daftar tugas (Tugas #${todoId}: "${rem.message}").${formatted}`;
+      }
+      return `[!] Acara #${cmd.id} gak ketemu untuk dipindahkan.`;
+    }
+
+    case "moveToReminder": {
+      const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
+      if (todo) {
+        const remindAt = todo.deadline || (Date.now() + 3600_000);
+        const remId = store.addReminder(chatId, todo.task, remindAt, null, "reminder", remindAt);
+        store.deleteTodo(cmd.id, chatId);
+        const remainingRems = store.listReminders ? store.listReminders(chatId) : [];
+        const formatted = remainingRems.length > 0 ? `\n\n${formatRemindersList(remainingRems)}` : "";
+        return `[OK] Berhasil dipindahkan ke agenda/acara (Acara #${remId}: "${todo.task}").${formatted}`;
+      }
+      return `[!] Tugas #${cmd.id} gak ketemu untuk dipindahkan.`;
+    }
+
+    case "replaceTitle": {
+      const targetRemId = store.resolveReminderId ? store.resolveReminderId(cmd.id, chatId) : cmd.id;
+      const rem = store.getReminderById ? store.getReminderById(targetRemId) : null;
+      if (rem && store.updateReminder) {
+        const newMsg = rem.message.replace(new RegExp(cmd.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), cmd.replace);
+        store.updateReminder(chatId, targetRemId, { message: newMsg });
+        const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        return `[OK] Acara #${cmd.id} diubah jadi: "${newMsg}"\n\n${formatRemindersList(remaining)}`;
+      }
+      const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
+      if (todo) {
+        const newTask = todo.task.replace(new RegExp(cmd.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), cmd.replace);
+        store.updateTodo(cmd.id, chatId, { task: newTask });
+        const isGroup = String(chatId).endsWith("@g.us");
+        const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        return `[OK] Tugas #${cmd.id} diubah jadi: "${newTask}"\n\n${formatTodoList(remaining, isGroup)}`;
+      }
+      return `[!] Item #${cmd.id} gak ketemu.`;
+    }
+
+    case "renameItem": {
+      const targetRemId = store.resolveReminderId ? store.resolveReminderId(cmd.id, chatId) : cmd.id;
+      const rem = store.getReminderById ? store.getReminderById(targetRemId) : null;
+      if (rem && store.updateReminder) {
+        store.updateReminder(chatId, targetRemId, { message: cmd.newTitle });
+        const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        return `[OK] Acara #${cmd.id} diubah jadi: "${cmd.newTitle}"\n\n${formatRemindersList(remaining)}`;
+      }
+      const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
+      if (todo) {
+        store.updateTodo(cmd.id, chatId, { task: cmd.newTitle });
+        const isGroup = String(chatId).endsWith("@g.us");
+        const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        return `[OK] Tugas #${cmd.id} diubah jadi: "${cmd.newTitle}"\n\n${formatTodoList(remaining, isGroup)}`;
+      }
+      return `[!] Item #${cmd.id} gak ketemu.`;
+    }
+
+    case "updateTime": {
+      const [hours, minutes] = cmd.newTime.split(":").map((n) => parseInt(n, 10));
+      const targetRemId = store.resolveReminderId ? store.resolveReminderId(cmd.id, chatId) : cmd.id;
+      const rem = store.getReminderById ? store.getReminderById(targetRemId) : null;
+      if (rem && store.updateReminder) {
+        const baseTimestamp = rem.event_at || rem.remind_at || Date.now();
+        const WIB_OFFSET = 7 * 3600 * 1000;
+        const d = new Date(baseTimestamp + WIB_OFFSET);
+        const updatedUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours - 7, minutes, 0);
+        store.updateReminder(chatId, targetRemId, { remindAt: updatedUtc, eventAt: updatedUtc });
+        const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        return `[OK] Jam acara #${cmd.id} diubah jadi ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} WIB.\n\n${formatRemindersList(remaining)}`;
+      }
+      const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
+      if (todo) {
+        const baseTimestamp = todo.deadline || Date.now();
+        const WIB_OFFSET = 7 * 3600 * 1000;
+        const d = new Date(baseTimestamp + WIB_OFFSET);
+        const updatedUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours - 7, minutes, 0);
+        store.updateTodo(cmd.id, chatId, { deadline: updatedUtc });
+        const isGroup = String(chatId).endsWith("@g.us");
+        const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        return `[OK] Deadline tugas #${cmd.id} diubah jadi ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} WIB.\n\n${formatTodoList(remaining, isGroup)}`;
+      }
+      return `[!] Item #${cmd.id} gak ketemu.`;
     }
 
     case "update": {
@@ -564,6 +748,20 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#rollback rekap_malam 2").name, "rekap_malam");
       assert.strictEqual(parseFastCommand("#rollback rekap_malam 2").version, 2);
       assert.strictEqual(parseFastCommand("#health").type, "health");
+      assert.strictEqual(parseFastCommand("3 kelar").type, "done");
+      assert.strictEqual(parseFastCommand("3 kelar").id, 3);
+      assert.strictEqual(parseFastCommand("selesai 5").id, 5);
+      assert.strictEqual(parseFastCommand("hapus 1, 2").type, "deleteMultiple");
+      assert.deepStrictEqual(parseFastCommand("hapus 1, 2").ids, [1, 2]);
+      assert.strictEqual(parseFastCommand("hapus 3").type, "delete");
+      assert.strictEqual(parseFastCommand("hapus 3").id, 3);
+      assert.strictEqual(parseFastCommand("pindah 1 ke todo").type, "moveToTodo");
+      assert.strictEqual(parseFastCommand("pindah 2 ke acara").type, "moveToReminder");
+      assert.strictEqual(parseFastCommand("1 bukan apel tapi jeruk").type, "replaceTitle");
+      assert.strictEqual(parseFastCommand("ganti nama 1 jadi Belajar Fisika").type, "renameItem");
+      assert.strictEqual(parseFastCommand("jam 1 ganti ke 14:30").type, "updateTime");
+      assert.strictEqual(parseFastCommand("jam 1 ganti ke 14:30").newTime, "14:30");
+
       assert.strictEqual(parseFastCommand("#mc").type, "minecraft");
       assert.strictEqual(parseFastCommand("#help").type, "help");
       assert.strictEqual(parseFastCommand("halo john"), null);
@@ -648,6 +846,17 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(japriCmd.type, "sendDirectMessage");
       const japriDenied = await executeFastCommand(japriCmd, { store, chatId });
       assert.ok(japriDenied.includes("tidak terdaftar dalam whitelist"));
+
+      // Test natural commands execution
+      store.addReminder(chatId, "Beli apel malang", Date.now() + 3600_000);
+      const natReplaceRes = await executeFastCommand(parseFastCommand("1 bukan apel tapi jeruk"), { store, chatId });
+      assert.ok(natReplaceRes.includes("Beli jeruk malang"));
+
+      const natMoveRes = await executeFastCommand(parseFastCommand("pindah 1 ke todo"), { store, chatId });
+      assert.ok(natMoveRes.includes("Berhasil dipindahkan ke daftar tugas"));
+
+      const natDelRes = await executeFastCommand(parseFastCommand("hapus 1"), { store, chatId });
+      assert.ok(natDelRes.includes("berhasil dihapus"));
 
       console.log("Commands module self-test OK");
     });

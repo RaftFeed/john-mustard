@@ -1,18 +1,19 @@
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.6-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
   "gemini-3.8-flash",
-  "gemini-flash-latest"
+  "gemini-3.6-flash"
 ];
 
 export const SMART_CASCADE = [
   PRO_MODEL,
-  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
   "gemini-3.8-flash",
-  "gemini-flash-latest"
+  "gemini-flash-lite-latest"
 ];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;

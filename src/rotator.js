@@ -135,8 +135,10 @@ export class KeyRotator {
       const now = Date.now();
       if (until > now) {
         const waitMs = Math.min(until - now, 10_000);
-        if (waitMs > 0) {
+        if (waitMs > 0 && waitMs <= 1000) {
           await new Promise((r) => setTimeout(r, waitMs));
+        } else if (waitMs > 1000) {
+          throw new Error(`Semua key sedang cooldown (${Math.round((until - now) / 1000)}s tersisa).`);
         }
       }
 
@@ -199,7 +201,11 @@ export class KeyRotator {
 
         if (isRateLimit) {
           const isDailyQuota = msg.includes("PerDay") || msg.includes("free_tier_requests");
-          this.markLimited(key, isDailyQuota ? 3600_000 : 30_000);
+          if (isDailyQuota) {
+            // Kuota model habis: langsung throw agar cascade pindah ke model berikutnya tanpa sleep
+            throw err;
+          }
+          this.markLimited(key, 30_000);
           continue;
         }
 
