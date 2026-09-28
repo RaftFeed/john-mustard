@@ -148,7 +148,7 @@ export const TOOLS = [
       },
       {
         name: "listReminders",
-        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
+        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. HANYA untuk acara kalender spesifik/sekali jalan atau pengingat aktif. BUKAN untuk jadwal kuliah/sekolah/kelas mingguan (jadwal kuliah/kelas mingguan tersimpan di catatan, gunakan getNote 'jadwal_kuliah'). Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -631,18 +631,18 @@ export const TOOLS = [
       },
       {
         name: "getNote",
-        description: "Cari atau ambil catatan/memori personal pengguna berdasarkan kata kunci atau query",
+        description: "Cari atau ambil catatan/memori personal pengguna berdasarkan kata kunci atau query (misal: 'jadwal_kuliah', 'jadwal_pelajaran', 'rekening', 'alamat', 'preferensi'). WAJIB gunakan tool ini ketika pengguna menanyakan 'jadwal kuliah', 'jadwal sekolah', 'jadwal kelas', atau hari/jam mata kuliah mingguan!",
         parameters: {
           type: "OBJECT",
           properties: {
-            key: { type: "STRING", description: "Kata kunci atau topik catatan yang ingin dicari/diambil" }
+            key: { type: "STRING", description: "Kata kunci atau topik catatan yang ingin dicari/diambil (contoh: 'jadwal_kuliah', 'rekening', dsb)" }
           },
           required: ["key"]
         }
       },
       {
         name: "listNotes",
-        description: "Tampilkan seluruh daftar catatan/memori personal pengguna yang tersimpan",
+        description: "Tampilkan seluruh daftar catatan/memori personal pengguna yang tersimpan (termasuk jadwal kuliah, rekening, catatan penting, dsb)",
         parameters: {
           type: "OBJECT",
           properties: {}
