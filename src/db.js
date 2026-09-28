@@ -453,6 +453,28 @@ export class Storage {
       .all(...scope.chatIds, ...dateParams);
   }
 
+  resolveReminderId(idOrIndex, chatId) {
+    const num = parseInt(idOrIndex, 10);
+    if (isNaN(num)) return null;
+    if (!chatId) return num;
+
+    const list = this.listReminders(chatId);
+    if (!list || list.length === 0) return num;
+
+    // 1. Jika angka 1-based visual index dalam rentang active list (1..list.length)
+    if (num >= 1 && num <= list.length) {
+      return list[num - 1].id;
+    }
+
+    // 2. Jika angka cocok langsung dengan id DB asli dari salah satu active reminder
+    const byId = list.find((r) => r.id === num);
+    if (byId) {
+      return byId.id;
+    }
+
+    return num;
+  }
+
   deleteReminder(chatId, idOrQuery) {
     const scope = getUserTodoScope(chatId, this);
     const cidCond = scope.isGroup
@@ -461,7 +483,8 @@ export class Storage {
     const params = scope.isGroup ? [chatId] : [...scope.chatIds];
 
     if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
-      const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND id = ?`).run(...params, Number(idOrQuery));
+      const targetId = this.resolveReminderId(idOrQuery, chatId);
+      const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND id = ?`).run(...params, targetId);
       return res.changes;
     }
     const clean = `%${String(idOrQuery || "").trim()}%`;
@@ -478,13 +501,8 @@ export class Storage {
 
     let row = null;
     if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
-      const num = Number(idOrQuery);
-      const list = this.listReminders(chatId);
-      if (num >= 1 && num <= list.length) {
-        row = list[num - 1];
-      } else {
-        row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ?`).get(...params, num);
-      }
+      const targetId = this.resolveReminderId(idOrQuery, chatId);
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ?`).get(...params, targetId);
     } else {
       const clean = `%${String(idOrQuery || "").trim()}%`;
       row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending' ORDER BY id DESC LIMIT 1`).get(...params, clean);
@@ -1481,7 +1499,7 @@ export function formatTodoList(todos, isGroup = false, options = {}) {
     if (dayRange) {
       const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
       const dayName = fullDaysId[dObj.getUTCDay()];
-      return `*[Pengingat Tugas]*\nTidak ada tugas atau deadline untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+      return `*[To-Do List]*\nTidak ada tugas atau deadline untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
     }
     return "*Tidak ada tugas pending.* To-do list aman semua.";
   }
@@ -1503,11 +1521,11 @@ export function formatTodoList(todos, isGroup = false, options = {}) {
   else if (hour >= 15 && hour < 18) salam = "Selamat sore";
   else if (hour >= 18 || hour < 4) salam = "Selamat malam";
 
-  let header = `🌄 [Pengingat Tugas]\n_${salam}!_\n`;
+  let header = `🌄 [To-Do List]\n_${salam}!_\n`;
   if (dayRange) {
     const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
     const dayName = fullDaysId[dObj.getUTCDay()];
-    header = `🌄 [Tugas Hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
+    header = `🌄 [To-Do List - ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
   }
 
   const lines = [header];

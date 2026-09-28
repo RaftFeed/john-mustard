@@ -123,10 +123,17 @@ test("Storage: listReminders and getTodos date filtering with WIB range", () => 
   assert.strictEqual(mondayTodos[0].task, "Tugas Senin");
 
   const formattedTodosMonday = formatTodoList(mondayTodos, false, { targetDate: "2026-09-28" });
-  assert.ok(formattedTodosMonday.includes("Tugas Hari Senin, 28 Sep 2026"));
+  assert.ok(formattedTodosMonday.includes("To-Do List - Senin, 28 Sep 2026"));
   assert.ok(formattedTodosMonday.includes("Tugas Senin"));
   assert.ok(!formattedTodosMonday.includes("Tugas Selasa"));
 
   const formattedTodosEmpty = formatTodoList([], false, { targetDate: "2026-09-30" });
   assert.ok(formattedTodosEmpty.includes("Tidak ada tugas atau deadline untuk hari Rabu, 30 Sep 2026"));
+  assert.ok(formattedTodosEmpty.includes("[To-Do List]"));
+
+  // Delete reminder by visual index (1-based index)
+  assert.strictEqual(store.deleteReminder("user1", 1), 1);
+  const remainingRems = store.listReminders("user1");
+  assert.strictEqual(remainingRems.length, 1);
+  assert.strictEqual(remainingRems[0].message, "Acara Selasa");
 });

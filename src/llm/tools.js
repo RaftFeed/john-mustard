@@ -107,11 +107,11 @@ export const TOOLS = [
       },
       {
         name: "deleteTodo",
-        description: "Hapus tugas dari To-Do List",
+        description: "Hapus tugas dari To-Do List. Panggil tool ini saat user minta menghapus tugas atau menyebut nomor tugas dari daftar To-Do List yang baru saja ditampilkan (contoh: 'no 2 apus', 'hapus 1', 'hapus tugas ini').",
         parameters: {
           type: "OBJECT",
           properties: {
-            todoId: { type: "NUMBER", description: "ID tugas yang mau dihapus" },
+            todoId: { type: "NUMBER", description: "Nomor urut visual (1..N) atau ID tugas yang mau dihapus" },
             taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika ID tidak disebutkan" }
           }
         }
@@ -147,11 +147,11 @@ export const TOOLS = [
       },
       {
         name: "deleteReminder",
-        description: "Hapus/batalkan pengingat/reminder berdasarkan ID reminder atau kata kunci pesan",
+        description: "Hapus/batalkan pengingat/acara dari Daftar Acara & Pengingat. Panggil tool ini HANYA jika yang ingin dihapus adalah agenda/acara/reminder. DILARANG memanggil tool ini jika pengguna merujuk nomor dari To-Do List!",
         parameters: {
           type: "OBJECT",
           properties: {
-            reminderId: { type: "NUMBER", description: "ID reminder yang ingin dibatalkan/dihapus (opsional)" },
+            reminderId: { type: "NUMBER", description: "Nomor urut visual (1..N) atau ID reminder yang ingin dibatalkan/dihapus (opsional)" },
             query: { type: "STRING", description: "Pesan atau topik reminder yang ingin dicari untuk dihapus (opsional)" }
           }
         }
