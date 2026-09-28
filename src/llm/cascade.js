@@ -1,17 +1,17 @@
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.8-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.6-flash";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
   "gemini-3.6-flash",
-  "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
   "gemini-flash-latest"
 ];
 
 export const SMART_CASCADE = [
   PRO_MODEL,
-  "gemini-3.6-flash",
   "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
   "gemini-flash-latest"
 ];
 
@@ -80,7 +80,7 @@ async function callGemini(rotator, model, payload) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000)
+      signal: AbortSignal.timeout(15000)
     });
     if (!res.ok) {
       const err = new Error(await res.text());
