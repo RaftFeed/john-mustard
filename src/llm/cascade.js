@@ -1,9 +1,9 @@
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.6-flash";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
   "gemini-flash-latest"
 ];
@@ -110,11 +110,11 @@ export async function generateContent(rotator, payload, baseCascade = null) {
         markModelUnavailable(model, 24 * 60 * 60 * 1000);
         console.warn(`[LLM] Model ${model} NOT FOUND (404). Demoted 24 jam.`);
       } else if (is503 || isTimeout) {
-        markModelUnavailable(model, 120_000);
-        console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 120s. Mencoba model berikutnya...`);
+        markModelUnavailable(model, 15_000);
+        console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 15s. Mencoba model berikutnya...`);
       } else if (is429) {
-        markModelUnavailable(model, 120_000);
-        console.warn(`[LLM] Model ${model} kena quota/rate-limit (429). Demoted 120s. Mencoba model berikutnya...`);
+        markModelUnavailable(model, 60_000);
+        console.warn(`[LLM] Model ${model} kena quota/rate-limit (429). Demoted 60s. Mencoba model berikutnya...`);
       } else {
         console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
       }

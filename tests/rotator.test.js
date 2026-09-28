@@ -77,3 +77,20 @@ test("KeyRotator: anti busy-wait waits for cooling key when all keys limited", a
   assert.strictEqual(res, "ok_keyA");
   assert.ok(elapsed >= 40, `Expected elapsed >= 40ms, got ${elapsed}ms`);
 });
+
+test("KeyRotator: rotates through keys on 429 until healthy key is found", async () => {
+  const rotator = new KeyRotator(["key1", "key2", "key3"]);
+  let attempts = 0;
+  const res = await rotator.execute(async (key) => {
+    attempts++;
+    if (key === "key1" || key === "key2") {
+      const err = new Error("429 Resource Exhausted: Quota exceeded");
+      err.status = 429;
+      throw err;
+    }
+    return `success_${key}`;
+  });
+
+  assert.strictEqual(res, "success_key3");
+  assert.strictEqual(attempts, 3);
+});

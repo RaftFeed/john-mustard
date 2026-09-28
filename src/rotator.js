@@ -130,9 +130,6 @@ export class KeyRotator {
         if (isRateLimit) {
           const isDailyQuota = msg.includes("PerDay") || msg.includes("free_tier_requests");
           this.markLimited(key, isDailyQuota ? 3600_000 : 30_000);
-          if (attempts >= 2) {
-            throw err;
-          }
           continue;
         }
 
