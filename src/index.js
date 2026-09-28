@@ -79,6 +79,17 @@ async function handleIncomingMessage(msg) {
   const senderDisplayName = person?.name || (msg.senderNumber ? `+${msg.senderNumber}` : "");
   const senderLabel = isGroup && senderDisplayName ? `[${senderDisplayName}]: ` : "";
 
+  // Resolusi nama pengirim quoted message jika ada
+  if (msg.quoted && msg.quoted.senderNumber) {
+    const qPerson = store.getPerson ? (store.getPerson(msg.quoted.senderNumber) || store.getPerson(msg.quoted.sender)) : null;
+    if (qPerson?.name) {
+      msg.quoted.senderName = qPerson.name;
+      if (msg.body && msg.body.includes(`DARI +${msg.quoted.senderNumber}`)) {
+        msg.body = msg.body.replace(`DARI +${msg.quoted.senderNumber}`, `DARI ${qPerson.name} (+${msg.quoted.senderNumber})`);
+      }
+    }
+  }
+
   try {
     // 0. Resolusi Media dari Quoted Message jika belum ada mediaUrl langsung
     if (msg.hasMedia && !msg.mediaUrl && msg.quotedMessageId) {
@@ -100,7 +111,8 @@ async function handleIncomingMessage(msg) {
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => audioTrajectory.push(...traj),
           audio: { buffer, mimetype: msg.mimetype, filename: msg.filename },
-          mailbox: msg.mailbox
+          mailbox: msg.mailbox,
+          quoted: msg.quoted
         });
         await sendText(msg.from, reply);
         console.log(`>> Sent audio reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
@@ -191,7 +203,14 @@ async function handleIncomingMessage(msg) {
         let effectiveMediaPrompt = cleanCaption;
         const mime = (msg.mimetype || "").toLowerCase();
 
-        if (mime.startsWith("video/")) {
+        if (msg.isQuotedMedia) {
+          const quotedSender = msg.quoted?.fromMe
+            ? "Bot (kamu sendiri)"
+            : msg.quoted?.senderName ? `${msg.quoted.senderName} (+${msg.quoted.senderNumber})` : (msg.quoted?.senderNumber ? `+${msg.quoted.senderNumber}` : "seseorang di grup");
+          effectiveMediaPrompt = cleanCaption
+            ? `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Pesan/pertanyaan pengirim: "${cleanCaption}". Analisa file tersebut dan jawab pertanyaan pengirim secara tepat dan relevan untuk obrolan grup keluarga.`
+            : `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya yang mudah dipahami.`;
+        } else if (mime.startsWith("video/")) {
           effectiveMediaPrompt = cleanCaption
             ? `[Video WhatsApp diterima]. Instruksi pengirim: "${cleanCaption}". Perhatikan video ini (visual, teks di layar, suara). Berikan tanggapan akrab, santai, atau celetukan lucu yang nyambung untuk obrolan keluarga.`
             : `[Video WhatsApp diterima]. Perhatikan video ini (visual, teks di layar, suara). Tonton dan berikan respon santai, ramah, atau celetukan lucu yang relevan dengan isi video untuk obrolan grup keluarga (1-2 kalimat). JANGAN bahas to-do/jadwal kecuali ada di video.`;
@@ -213,7 +232,8 @@ async function handleIncomingMessage(msg) {
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => mediaTrajectory.push(...traj),
           media: { buffer, mimetype: msg.mimetype, filename: msg.filename },
-          mailbox: msg.mailbox
+          mailbox: msg.mailbox,
+          quoted: msg.quoted
         });
 
         if (reply && reply.trim() !== "[NO_REPLY]") {
@@ -240,14 +260,26 @@ async function handleIncomingMessage(msg) {
         console.log(`>> Memproses dokumen/media DM untuk analisis langsung: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
         const mediaTrajectory = [];
-        const reply = await processChat(rotator, msg.body, {
+
+        let promptForAnalysis = msg.body;
+        if (msg.isQuotedMedia) {
+          const quotedSender = msg.quoted?.fromMe
+            ? "Bot (kamu sendiri)"
+            : msg.quoted?.senderName ? `${msg.quoted.senderName}` : (msg.quoted?.senderNumber ? `+${msg.quoted.senderNumber}` : "lawan bicara");
+          promptForAnalysis = msg.body
+            ? `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Pertanyaan/Instruksi pengguna: "${msg.body}". Analisa file tersebut dan jawab pertanyaan pengguna secara akurat.`
+            : `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya.`;
+        }
+
+        const reply = await processChat(rotator, promptForAnalysis, {
           store,
           chatId: msg.from,
           senderNumber: msg.senderNumber,
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => mediaTrajectory.push(...traj),
           media: { buffer, mimetype: msg.mimetype, filename: msg.filename },
-          mailbox: msg.mailbox
+          mailbox: msg.mailbox,
+          quoted: msg.quoted
         });
 
         if (reply && reply.trim() !== "[NO_REPLY]") {
@@ -380,7 +412,8 @@ async function handleIncomingMessage(msg) {
       senderNumber: msg.senderNumber,
       onToolCall: (name) => toolsCalled.push(name),
       onTrajectory: (traj) => textTrajectory.push(...traj),
-      mailbox: msg.mailbox
+      mailbox: msg.mailbox,
+      quoted: msg.quoted
     });
 
     if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {

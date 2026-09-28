@@ -46,7 +46,7 @@ export function injectMailboxSteering(mailbox, contents) {
   return true;
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null } = {}) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -197,7 +197,23 @@ Pengguna ini telah mengatur preferensi gaya bicara/panggilan kustom:
 PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone default di atas! Patuhi instruksi ini secara konsisten.`;
   }
 
-  const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction;
+  let quotedContext = "";
+  if (quoted) {
+    const isBotQuoted = Boolean(quoted.fromMe);
+    const qPerson = (quoted.senderNumber && store?.getPerson) ? store.getPerson(quoted.senderNumber) : null;
+    const qSender = isBotQuoted
+      ? "Bot (kamu sendiri)"
+      : quoted.senderName || (qPerson?.name ? `${qPerson.name} (+${quoted.senderNumber})` : (quoted.senderNumber ? `+${quoted.senderNumber}` : "lawan bicara"));
+
+    quotedContext = `\n\n[KONTEKS PESAN YANG DI-REPLY]:
+- Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.
+${isBotQuoted
+  ? "- PENGGUNA ME-REPLY PESAN BOT: Sambungkan jawabanmu langsung dengan apa yang kamu sampaikan sebelumnya (pertanyaan, konfirmasi, atau daftar to-do/acara). Jika user menyebut nomor urut (contoh: 'nomor 2', 'yang ketiga') atau memberi jawaban singkat (contoh: 'jam 8 aja', 'udah beres'), rujuk ke konteks pesan bot tersebut!"
+  : `- Pengguna me-reply pesan dari ${qSender}. Jadikan isi pesan yang di-reply sebagai dasar/rujukan tindakanmu.`}
+- DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!`;
+  }
+
+  const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
 
   const userParts = [];
   if (audio) {

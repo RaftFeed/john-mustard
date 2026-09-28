@@ -309,3 +309,56 @@ test("LLM Engine: single-turn mutation short-circuits to avoid turn 2 delay", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LLM Engine: injects quoted message context anchor when user replies to bot or contact", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Siap, jadwal diundur ke jam 20:00 WIB." }] } }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    store.addPerson({ name: "Mami", phone: "6282297432850", relationship: "Ibu" });
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    // Test A: Reply to Bot
+    await processChat(mockRotator, "jam 20:00 aja", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1",
+      quoted: { fromMe: true, text: "Mau diundur ke jam berapa jadwalnya?" }
+    });
+
+    assert.ok(capturedPayload, "Payload should be captured");
+    const sysPromptA = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sysPromptA.includes("[KONTEKS PESAN YANG DI-REPLY]"));
+    assert.ok(sysPromptA.includes("PENGGUNA ME-REPLY PESAN BOT"));
+
+    // Test B: Reply to Contact (Mami)
+    await processChat(mockRotator, "tolong catat ini", {
+      store,
+      chatId: "120363029582992016@g.us",
+      senderNumber: "user1",
+      quoted: { fromMe: false, senderNumber: "6282297432850", text: "Besok beli telur 1 kg" }
+    });
+
+    const sysPromptB = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sysPromptB.includes("[KONTEKS PESAN YANG DI-REPLY]"));
+    assert.ok(sysPromptB.includes("Mami (+6282297432850)"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

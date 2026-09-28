@@ -815,9 +815,28 @@ export function parseIncoming(body, allowedPhone) {
   );
 
   let bodyText = normalizeMentionsInText(msg.body || "");
-  if (quoted?.text) {
-    const normQuoted = normalizeMentionsInText(quoted.text);
-    bodyText = `${bodyText}\n\n[MEMBALAS PESAN]: "${normQuoted}"`.trim();
+  let resolvedQuotedNum = null;
+  if (quoted && (quoted.text || quoted.hasMedia)) {
+    const rawQuotedNum = (quoted.sender || "").split("@")[0].split(":")[0].replace(/\D/g, "");
+    resolvedQuotedNum = resolveLidToPhone(rawQuotedNum) || rawQuotedNum;
+    const senderTag = quoted.fromMe
+      ? "BOT (John Mustard)"
+      : resolvedQuotedNum ? `+${resolvedQuotedNum}` : "";
+    const fromSuffix = senderTag ? ` DARI ${senderTag}` : "";
+
+    let mediaTag = "";
+    if (quoted.hasMedia) {
+      const mime = (quoted.media?.mimetype || "").toLowerCase();
+      const mType = mime.startsWith("image/") ? "FOTO" : mime.startsWith("video/") ? "VIDEO" : mime.startsWith("audio/") ? "AUDIO/VN" : "DOKUMEN";
+      const fName = quoted.media?.filename && quoted.media.filename !== "file" ? ` '${quoted.media.filename}'` : "";
+      mediaTag = ` [MEDIA ${mType}${fName}]`;
+    }
+
+    const normQuoted = quoted.text ? normalizeMentionsInText(quoted.text) : "";
+    const quoteContent = normQuoted ? `"${normQuoted}"` : (mediaTag ? "(file terlampir)" : "");
+
+    const replyHeader = senderTag ? `[REPLY KE PESAN${fromSuffix}${mediaTag}]:\n` : (mediaTag ? `[REPLY KE MEDIA${mediaTag}]:\n` : "");
+    bodyText = `${bodyText}\n\n${replyHeader}[MEMBALAS PESAN]: ${quoteContent}`.trim();
   }
 
   return {
@@ -833,7 +852,10 @@ export function parseIncoming(body, allowedPhone) {
     isQuotedMedia,
     quotedMessageId: quoted?.id || null,
     timestamp: msg.timestamp,
-    quoted,
+    quoted: quoted ? {
+      ...quoted,
+      senderNumber: resolvedQuotedNum
+    } : null,
     isGroup,
     isFollowUpThread
   };
@@ -902,6 +924,28 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.strictEqual(parsedQuotedDoc.mimetype, "application/pdf");
   assert.strictEqual(parsedQuotedDoc.filename, "HasilPTSkelas7s1Revisi.pdf");
   assert.ok(parsedQuotedDoc.body.includes("file apani"));
+  assert.ok(parsedQuotedDoc.body.includes("[REPLY KE PESAN DARI +6281234567890 [MEDIA DOKUMEN 'HasilPTSkelas7s1Revisi.pdf']]"));
+
+  // Quoted bot message test
+  const quotedBotPayload = {
+    event: "message",
+    payload: {
+      id: "MSG_REPLY_BOT",
+      from: "6281234567890@c.us",
+      fromMe: false,
+      body: "jam 20:00 aja",
+      replyTo: {
+        id: "true_ABC123",
+        body: "Mau diundur ke jam berapa jadwalnya?",
+        fromMe: true
+      },
+      timestamp: 1700000030
+    }
+  };
+  const parsedQuotedBot = parseIncoming(quotedBotPayload, "6281234567890");
+  assert.ok(parsedQuotedBot.body.includes("[REPLY KE PESAN DARI BOT (John Mustard)]"));
+  assert.ok(parsedQuotedBot.body.includes('[MEMBALAS PESAN]: "Mau diundur ke jam berapa jadwalnya?"'));
+  assert.strictEqual(parsedQuotedBot.quoted.fromMe, true);
 
   // Media filename test
   assert.strictEqual(extractMediaFilename({ _data: { Message: { documentMessage: { fileName: "dokumen_rahasia.pdf" } } } }), "dokumen_rahasia.pdf");
