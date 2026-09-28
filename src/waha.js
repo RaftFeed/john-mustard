@@ -527,12 +527,35 @@ export async function downloadMedia(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
+export async function fetchQuotedMediaUrl(chatId, messageId) {
+  if (!chatId || !messageId) return null;
+  try {
+    const headers = {};
+    const apiKey = getWahaApiKey();
+    if (apiKey) headers["x-api-key"] = apiKey;
+    const cleanId = String(messageId).replace(/^true_|^false_/, "");
+    const res = await fetch(`${wahaUrl}/api/default/chats/${encodeURIComponent(chatId)}/messages?limit=25&downloadMedia=true`, {
+      headers
+    });
+    if (!res.ok) return null;
+    const msgs = await res.json();
+    if (!Array.isArray(msgs)) return null;
+    const match = msgs.find((m) => m.id === messageId || m.id?.includes(cleanId) || (cleanId.length > 8 && m.id?.includes(cleanId.slice(0, 16))));
+    if (match && match.media?.url) {
+      return match.media.url;
+    }
+  } catch (err) {
+    console.warn(`[WAHA] fetchQuotedMediaUrl error: ${err.message}`);
+  }
+  return null;
+}
+
 export function extractMediaFilename(msg) {
   if (!msg) return "file";
   if (msg.media?.filename || msg.media?.fileName) return String(msg.media.filename || msg.media.fileName).trim();
   if (msg.filename || msg.fileName) return String(msg.filename || msg.fileName).trim();
   if (msg._data?.filename || msg._data?.title) return String(msg._data.filename || msg._data.title).trim();
-  const doc = msg._data?.Message?.documentMessage;
+  const doc = msg._data?.Message?.documentMessage || msg.documentMessage;
   if (doc?.fileName || doc?.title) return String(doc.fileName || doc.title).trim();
   return "file";
 }
@@ -554,39 +577,110 @@ export function extractQuotedInfo(msg) {
     (replyId && isBotSentMessage(replyId))
   );
 
+  let text = "";
+  let sender = "";
+  let hasMedia = false;
+  let media = null;
+
   // 1. Top-level replyTo
   if (msg.replyTo) {
-    const text = String(msg.replyTo.body || msg.replyTo.caption || "").trim();
-    const sender = String(msg.replyTo.participant || msg.replyTo.from || "").trim();
-    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
+    text = String(msg.replyTo.body || msg.replyTo.caption || "").trim();
+    sender = String(msg.replyTo.participant || msg.replyTo.from || "").trim();
+    if (msg.replyTo.hasMedia || msg.replyTo.media) {
+      hasMedia = true;
+      media = {
+        url: msg.replyTo.media?.url || (typeof msg.replyTo.media === "string" ? msg.replyTo.media : null),
+        mimetype: msg.replyTo.media?.mimetype || msg.replyTo.mimetype || "application/octet-stream",
+        filename: msg.replyTo.media?.filename || extractMediaFilename(msg.replyTo)
+      };
+    }
   }
+
   // 2. _data.quotedMsg
   const dataQuoted = msg._data?.quotedMsg || msg.quotedMsg;
   if (dataQuoted) {
-    const text = String(dataQuoted.body || dataQuoted.caption || "").trim();
-    const sender = String(msg._data?.quotedParticipant || dataQuoted.participant || "").trim();
-    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
+    if (!text) text = String(dataQuoted.body || dataQuoted.caption || "").trim();
+    if (!sender) sender = String(msg._data?.quotedParticipant || dataQuoted.participant || "").trim();
+    if (!hasMedia && (dataQuoted.hasMedia || dataQuoted.media)) {
+      hasMedia = true;
+      media = {
+        url: dataQuoted.media?.url || (typeof dataQuoted.media === "string" ? dataQuoted.media : null),
+        mimetype: dataQuoted.media?.mimetype || dataQuoted.mimetype || "application/octet-stream",
+        filename: dataQuoted.media?.filename || extractMediaFilename(dataQuoted)
+      };
+    }
   }
+
   // 3. Protobuf contextInfo (GOWS/NOWEB)
   const contextInfo =
     msg._data?.Message?.extendedTextMessage?.contextInfo ||
+    msg._data?.Message?.imageMessage?.contextInfo ||
+    msg._data?.Message?.videoMessage?.contextInfo ||
+    msg._data?.Message?.documentMessage?.contextInfo ||
     msg._data?.contextInfo ||
     msg.contextInfo;
+
   if (contextInfo) {
     const qMsg = contextInfo.quotedMessage;
-    const sender = String(contextInfo.participant || "").trim();
-    let text = "";
+    if (!sender) sender = String(contextInfo.participant || "").trim();
     if (qMsg) {
-      if (qMsg.conversation) text = String(qMsg.conversation).trim();
-      else if (qMsg.extendedTextMessage?.text) text = String(qMsg.extendedTextMessage.text).trim();
-      else if (qMsg.documentMessage?.fileName || qMsg.documentMessage?.title) {
-        text = `[Dokumen: ${qMsg.documentMessage.fileName || qMsg.documentMessage.title}]`;
-      } else if (qMsg.imageMessage?.caption) text = `[Foto: ${qMsg.imageMessage.caption}]`;
-      else if (qMsg.imageMessage) text = `[Foto]`;
-      else if (qMsg.audioMessage) text = `[Pesan Suara VN]`;
+      if (!text) {
+        if (qMsg.conversation) text = String(qMsg.conversation).trim();
+        else if (qMsg.extendedTextMessage?.text) text = String(qMsg.extendedTextMessage.text).trim();
+        else if (qMsg.documentMessage?.fileName || qMsg.documentMessage?.title) {
+          text = `[Dokumen: ${qMsg.documentMessage.fileName || qMsg.documentMessage.title}]`;
+        } else if (qMsg.imageMessage?.caption) text = `[Foto: ${qMsg.imageMessage.caption}]`;
+        else if (qMsg.imageMessage) text = `[Foto]`;
+        else if (qMsg.videoMessage?.caption) text = `[Video: ${qMsg.videoMessage.caption}]`;
+        else if (qMsg.videoMessage) text = `[Video]`;
+        else if (qMsg.audioMessage) text = `[Pesan Suara VN]`;
+      }
+
+      if (!hasMedia) {
+        if (qMsg.documentMessage) {
+          hasMedia = true;
+          media = {
+            url: media?.url || null,
+            mimetype: qMsg.documentMessage.mimetype || "application/pdf",
+            filename: qMsg.documentMessage.fileName || qMsg.documentMessage.title || "document.pdf"
+          };
+        } else if (qMsg.imageMessage) {
+          hasMedia = true;
+          media = {
+            url: media?.url || null,
+            mimetype: qMsg.imageMessage.mimetype || "image/jpeg",
+            filename: "image.jpeg"
+          };
+        } else if (qMsg.videoMessage) {
+          hasMedia = true;
+          media = {
+            url: media?.url || null,
+            mimetype: qMsg.videoMessage.mimetype || "video/mp4",
+            filename: "video.mp4"
+          };
+        } else if (qMsg.audioMessage) {
+          hasMedia = true;
+          media = {
+            url: media?.url || null,
+            mimetype: qMsg.audioMessage.mimetype || "audio/ogg",
+            filename: "audio.ogg"
+          };
+        }
+      }
     }
-    if (text) return { text, sender, fromMe: isFromMe, id: replyId };
   }
+
+  if (text || hasMedia || sender || replyId) {
+    return {
+      text,
+      sender,
+      fromMe: isFromMe,
+      id: replyId,
+      hasMedia,
+      media
+    };
+  }
+
   return null;
 }
 
@@ -706,15 +800,18 @@ export function parseIncoming(body, allowedPhone) {
     return null;
   }
 
-  const mediaUrl = msg.media?.url || msg.mediaUrl || (typeof msg.media === "string" ? msg.media : null);
-  const mimetype = msg.media?.mimetype || msg.mimetype || "application/octet-stream";
-  const filename = extractMediaFilename(msg);
+  const quotedMedia = quoted?.hasMedia ? quoted.media : null;
+  const isQuotedMedia = Boolean(!msg.hasMedia && !msg.media && quotedMedia);
+
+  const mediaUrl = msg.media?.url || msg.mediaUrl || (typeof msg.media === "string" ? msg.media : null) || quotedMedia?.url || null;
+  const mimetype = msg.media?.mimetype || msg.mimetype || quotedMedia?.mimetype || "application/octet-stream";
+  const filename = extractMediaFilename(msg) !== "file" ? extractMediaFilename(msg) : (quotedMedia?.filename || "file");
 
   const isSticker = Boolean(
     msg.type === "sticker" ||
     msg._data?.type === "sticker" ||
     msg._data?.Message?.stickerMessage ||
-    (mimetype.includes("image/webp") && (!filename || filename === "file" || filename.endsWith(".webp")))
+    (!isQuotedMedia && mimetype.includes("image/webp") && (!filename || filename === "file" || filename.endsWith(".webp")))
   );
 
   let bodyText = normalizeMentionsInText(msg.body || "");
@@ -728,11 +825,13 @@ export function parseIncoming(body, allowedPhone) {
     from: msg.from,
     senderNumber: resolvedPhone || altNumber || senderNumber,
     body: bodyText,
-    hasMedia: Boolean(msg.hasMedia || mediaUrl),
+    hasMedia: Boolean(msg.hasMedia || mediaUrl || quotedMedia),
     mediaUrl,
     filename,
     mimetype,
     isSticker,
+    isQuotedMedia,
+    quotedMessageId: quoted?.id || null,
     timestamp: msg.timestamp,
     quoted,
     isGroup,
@@ -775,6 +874,34 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/waha.js")) {
   assert.ok(parsedQuoted.body.includes("kerjakan ini"));
   assert.ok(parsedQuoted.body.includes('[MEMBALAS PESAN]: "Tugas Kalkulus bab 4 dikumpulkan besok"'));
   assert.strictEqual(parsedQuoted.quoted.text, "Tugas Kalkulus bab 4 dikumpulkan besok");
+
+  // Quoted media test (reply to document without resending)
+  const quotedDocPayload = {
+    event: "message",
+    payload: {
+      id: "MSG_REPLY_DOC",
+      from: "6281234567890@c.us",
+      fromMe: false,
+      body: "file apani",
+      replyTo: {
+        hasMedia: true,
+        media: {
+          url: "http://waha:3000/api/files/default/PTS1.pdf",
+          mimetype: "application/pdf",
+          filename: "HasilPTSkelas7s1Revisi.pdf"
+        },
+        participant: "6281234567890@c.us"
+      },
+      timestamp: 1700000020
+    }
+  };
+  const parsedQuotedDoc = parseIncoming(quotedDocPayload, "6281234567890");
+  assert.strictEqual(parsedQuotedDoc.hasMedia, true);
+  assert.strictEqual(parsedQuotedDoc.isQuotedMedia, true);
+  assert.strictEqual(parsedQuotedDoc.mediaUrl, "http://waha:3000/api/files/default/PTS1.pdf");
+  assert.strictEqual(parsedQuotedDoc.mimetype, "application/pdf");
+  assert.strictEqual(parsedQuotedDoc.filename, "HasilPTSkelas7s1Revisi.pdf");
+  assert.ok(parsedQuotedDoc.body.includes("file apani"));
 
   // Media filename test
   assert.strictEqual(extractMediaFilename({ _data: { Message: { documentMessage: { fileName: "dokumen_rahasia.pdf" } } } }), "dokumen_rahasia.pdf");

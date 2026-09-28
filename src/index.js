@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia, startTyping, stopTyping, fetchBotNumber, getBotLid } from "./waha.js";
+import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
@@ -78,6 +78,12 @@ async function handleIncomingMessage(msg) {
   const senderLabel = isGroup && senderDisplayName ? `[${senderDisplayName}]: ` : "";
 
   try {
+    // 0. Resolusi Media dari Quoted Message jika belum ada mediaUrl langsung
+    if (msg.hasMedia && !msg.mediaUrl && msg.quotedMessageId) {
+      console.log(`>> Mencari URL media dari quoted message: ${msg.quotedMessageId} di chat ${msg.from}`);
+      msg.mediaUrl = await fetchQuotedMediaUrl(msg.from, msg.quotedMessageId);
+    }
+
     // 1. Tangani Incoming Media
     if (msg.hasMedia && msg.mediaUrl) {
       // Voice note / Audio -> Proses langsung dengan LLM
@@ -190,6 +196,11 @@ async function handleIncomingMessage(msg) {
           effectiveMediaPrompt = cleanCaption
             ? `[Gambar/Foto diterima]. Pesan pengirim: "${cleanCaption}". Respon gambar ini secara relevan dan santai untuk keluarga.`
             : `[Gambar/Foto diterima]. Lihat gambar ini dan berikan komentar santai, ramah, atau lucu yang relevan untuk obrolan grup keluarga (1-2 kalimat).`;
+        } else {
+          // Dokumen / PDF / File umum
+          effectiveMediaPrompt = cleanCaption
+            ? `[Dokumen/File '${msg.filename}' diterima]. Pertanyaan/Instruksi pengirim: "${cleanCaption}". Baca dan analisa dokumen tersebut untuk menjawab pertanyaan pengirim secara akurat dan jelas.`
+            : `[Dokumen/File '${msg.filename}' diterima]. Baca dokumen ini dan berikan ringkasan singkat serta poin-poin pentingnya yang mudah dipahami.`;
         }
 
         const reply = await processChat(rotator, effectiveMediaPrompt, {
@@ -218,11 +229,11 @@ async function handleIncomingMessage(msg) {
         return;
       }
 
-      // 3. Di DM Pribadi: Jika user menyertakan teks pertanyaan/diskusi (dan bukan perintah simpan ke vault), proses langsung via LLM
+      // 3. Di DM Pribadi: Jika user menyertakan teks pertanyaan/diskusi (atau berasal dari quoted media dan bukan perintah simpan ke vault), proses langsung via LLM
       const isExplicitVaultSave = msg.body && /\b(simpan|save|arsip|#vault|masukkan\s+ke\s+vault|catat\s+ke\s+vault)\b/i.test(msg.body);
       const hasUserCaption = Boolean(msg.body && msg.body.trim());
 
-      if (hasUserCaption && !isExplicitVaultSave) {
+      if ((hasUserCaption || msg.isQuotedMedia) && !isExplicitVaultSave) {
         console.log(`>> Memproses dokumen/media DM untuk analisis langsung: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
         const mediaTrajectory = [];
