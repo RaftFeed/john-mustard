@@ -212,11 +212,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.deepStrictEqual(getActiveModels(testModels), ["modelA", "modelB", "modelC"]);
 
     // Dynamic Model Tier Selection Tests
-    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-flash-lite-latest");
-    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-flash-lite-latest");
-    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.5-flash-lite");
-    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.5-flash-lite");
-    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.5-flash-lite");
+    assert.strictEqual(selectModelCascade("tambah to-do beli susu")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("halo john apa kabar")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("#pro tolong buatkan arsitektur backend")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("tolong debug script python ini")[0], "gemini-3.8-flash");
+    assert.strictEqual(selectModelCascade("lakukan analisis mendalam data ini")[0], "gemini-3.8-flash");
 
     // Mid-Turn Mailbox Steering Tests
     const testMailbox = [{ body: "eh koreksi: ganti jam 14.00" }];

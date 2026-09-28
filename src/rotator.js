@@ -90,15 +90,33 @@ export class KeyRotator {
           throw err;
         }
 
-        const isRateLimit =
-          status === 429 ||
-          msg.includes("429") ||
-          msg.includes("RESOURCE_EXHAUSTED");
-
         const isDemandSpike =
           status === 503 ||
           msg.includes("503") ||
           msg.includes("UNAVAILABLE");
+
+        const isTimeout =
+          msg.includes("timeout") ||
+          msg.includes("aborted");
+
+        // Timeout jaringan/model hang: jangan buang waktu coba key lain, langsung lempar ke cascade
+        if (isTimeout) {
+          throw err;
+        }
+
+        // 503 demand spike: coba maksimal 2 key berbeda tanpa sleep. Jika tetap 503, lempar ke model berikutnya
+        if (isDemandSpike) {
+          this.markLimited(key, 15_000);
+          if (attempts >= 2) {
+            throw err;
+          }
+          continue;
+        }
+
+        const isRateLimit =
+          status === 429 ||
+          msg.includes("429") ||
+          msg.includes("RESOURCE_EXHAUSTED");
 
         const isAuthError =
           status === 401 ||
@@ -110,16 +128,11 @@ export class KeyRotator {
           msg.includes("API_KEY_INVALID");
 
         if (isRateLimit) {
-          this.markLimited(key, 15_000); // cooldown 15 detik
-          // Backoff delay sebelum mencoba key berikutnya (cegah burst hammering antar-key)
-          const delay = Math.min(1000 * Math.pow(1.5, attempts - 1), 3000);
-          await new Promise((r) => setTimeout(r, delay));
-          continue;
-        }
-
-        if (isDemandSpike) {
-          this.markLimited(key, 3_000); // 503 spike sementara, cooldown 3 detik
-          await new Promise((r) => setTimeout(r, 500));
+          const isDailyQuota = msg.includes("PerDay") || msg.includes("free_tier_requests");
+          this.markLimited(key, isDailyQuota ? 3600_000 : 30_000);
+          if (attempts >= 2) {
+            throw err;
+          }
           continue;
         }
 
@@ -160,6 +173,34 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/rotator.js")) {
   } catch (err) {
     assert.strictEqual(err.status, 404);
     assert.strictEqual(calledCount, 1); // exactly 1 attempt, no rotation on 404
+  }
+
+  // Test 503 fast-fails after max 2 keys, timeout fast-fails on 1 key
+  let count503 = 0;
+  try {
+    await rotator.execute(async () => {
+      count503++;
+      const err = new Error("503 Service Unavailable");
+      err.status = 503;
+      throw err;
+    });
+    assert.fail("Should throw 503");
+  } catch (err) {
+    assert.strictEqual(err.status, 503);
+    assert.strictEqual(count503, 2);
+  }
+
+  let countTimeout = 0;
+  try {
+    await rotator.execute(async () => {
+      countTimeout++;
+      const err = new Error("The operation was aborted due to timeout");
+      throw err;
+    });
+    assert.fail("Should throw timeout");
+  } catch (err) {
+    assert.ok(err.message.includes("timeout"));
+    assert.strictEqual(countTimeout, 1);
   }
 
   console.log("KeyRotator self-test OK");

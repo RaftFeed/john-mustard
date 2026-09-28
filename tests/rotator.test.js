@@ -36,6 +36,36 @@ test("KeyRotator: fatal error (404 / 400) stops retry without rotating", async (
   }
 });
 
+test("KeyRotator: fast-fails on 503 (max 2 keys) or timeout (1 key)", async () => {
+  const rotator = new KeyRotator(["keyA", "keyB", "keyC"]);
+  let called503 = 0;
+  try {
+    await rotator.execute(async () => {
+      called503++;
+      const err = new Error("503 Service Unavailable");
+      err.status = 503;
+      throw err;
+    });
+    assert.fail("Should throw 503");
+  } catch (err) {
+    assert.strictEqual(err.status, 503);
+    assert.strictEqual(called503, 2);
+  }
+
+  let calledTimeout = 0;
+  try {
+    await rotator.execute(async () => {
+      calledTimeout++;
+      const err = new Error("The operation was aborted due to timeout");
+      throw err;
+    });
+    assert.fail("Should throw timeout");
+  } catch (err) {
+    assert.ok(err.message.includes("timeout"));
+    assert.strictEqual(calledTimeout, 1);
+  }
+});
+
 test("KeyRotator: anti busy-wait waits for cooling key when all keys limited", async () => {
   const rotator = new KeyRotator(["keyA"], 50); // 50ms cooldown
   rotator.markLimited("keyA", 50);

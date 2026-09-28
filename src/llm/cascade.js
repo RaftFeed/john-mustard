@@ -1,16 +1,17 @@
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.8-flash";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
   "gemini-3.1-flash-lite",
   "gemini-flash-latest"
 ];
 
 export const SMART_CASCADE = [
-  "gemini-3.5-flash-lite",
-  DEFAULT_MODEL,
+  PRO_MODEL,
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
   "gemini-flash-latest"
 ];
 
@@ -79,7 +80,7 @@ async function callGemini(rotator, model, payload) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(8000)
     });
     if (!res.ok) {
       const err = new Error(await res.text());
@@ -103,6 +104,7 @@ export async function generateContent(rotator, payload, baseCascade = null) {
       const is503 = err.status === 503 || msg.includes("503") || msg.includes("UNAVAILABLE");
       const isTimeout = msg.includes("timeout") || msg.includes("aborted");
       const is404 = err.status === 404 || msg.includes("404") || msg.includes("NOT_FOUND");
+      const is429 = err.status === 429 || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
 
       if (is404) {
         markModelUnavailable(model, 24 * 60 * 60 * 1000);
@@ -110,6 +112,9 @@ export async function generateContent(rotator, payload, baseCascade = null) {
       } else if (is503 || isTimeout) {
         markModelUnavailable(model, 120_000);
         console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 120s. Mencoba model berikutnya...`);
+      } else if (is429) {
+        markModelUnavailable(model, 120_000);
+        console.warn(`[LLM] Model ${model} kena quota/rate-limit (429). Demoted 120s. Mencoba model berikutnya...`);
       } else {
         console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
       }
