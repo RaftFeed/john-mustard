@@ -4,23 +4,17 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: read
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GH_TOKEN
           script: |
             cd ${{ secrets.WORK_DIR }}
-            git pull https://x-access-token:$GH_TOKEN@github.com/RaftFeed/john-mustard.git main || git pull origin main
+            git pull origin main
             docker compose up -d --build bot
