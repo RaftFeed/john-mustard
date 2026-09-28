@@ -175,7 +175,8 @@ export class Storage {
         tag TEXT,
         category TEXT DEFAULT 'work',
         done INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        description TEXT DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS vault_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,6 +279,7 @@ export class Storage {
     try { this.db.exec("ALTER TABLE todos ADD COLUMN category TEXT DEFAULT 'work'"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN assignee TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN reminded INTEGER DEFAULT 0"); } catch {}
+    try { this.db.exec("ALTER TABLE todos ADD COLUMN description TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN event_at INTEGER DEFAULT NULL"); } catch {}
@@ -526,12 +528,12 @@ export class Storage {
     return changes > 0 ? { id: row.id, message: newMessage, remindAt: newRemindAt, recurrence: newRecurrence, taskType: newTaskType, eventAt: newEventAt } : null;
   }
 
-  addTodo(chatId, task, deadline = null, tag = null, category = null, assignee = "") {
+  addTodo(chatId, task, deadline = null, tag = null, category = null, assignee = "", description = "") {
     const cat = category || detectTaskCategory(task);
     const stmt = this.db.prepare(
-      "INSERT INTO todos (chat_id, task, deadline, tag, category, assignee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO todos (chat_id, task, deadline, tag, category, assignee, created_at, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
-    return stmt.run(chatId, task, deadline, tag, cat, assignee || "", Date.now()).lastInsertRowid;
+    return stmt.run(chatId, task, deadline, tag, cat, assignee || "", Date.now(), description || "").lastInsertRowid;
   }
 
   getTodos(chatId, includeRoutine = false, assignee = null, includeDone = false, targetDate = null) {
@@ -933,7 +935,7 @@ export class Storage {
       .get(...scope.chatIds, ...scope.names, `%${query}%`);
   }
 
-  updateTodo(id, chatId, { task, deadline, tag, category, assignee }) {
+  updateTodo(id, chatId, { task, deadline, tag, category, assignee, description }) {
     const existing = this.getTodoById(id, chatId);
     if (!existing) return 0;
     const newTask = task !== undefined && task !== null ? task : existing.task;
@@ -941,10 +943,11 @@ export class Storage {
     const newTag = tag !== undefined ? tag : existing.tag;
     const newCategory = category !== undefined ? category : existing.category;
     const newAssignee = assignee !== undefined ? assignee : (existing.assignee || "");
+    const newDescription = description !== undefined ? description : (existing.description || "");
     const resetReminded = deadline !== undefined && deadline !== existing.deadline ? 0 : (existing.reminded || 0);
     return this.db
-      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ?, reminded = ? WHERE id = ?")
-      .run(newTask, newDeadline, newTag, newCategory, newAssignee, resetReminded, id).changes;
+      .prepare("UPDATE todos SET task = ?, deadline = ?, tag = ?, category = ?, assignee = ?, description = ?, reminded = ? WHERE id = ?")
+      .run(newTask, newDeadline, newTag, newCategory, newAssignee, newDescription, resetReminded, id).changes;
   }
 
   getPendingTodoDeadlines(limit = 20) {
@@ -1638,6 +1641,27 @@ export function formatTodoList(todos, isGroup = false, options = {}) {
 
   lines.push("_Semangat!_ 💪");
   return lines.join("\n").trim();
+}
+
+export function formatTodoDetail(todo) {
+  if (!todo) return "Tugas tidak ditemukan.";
+  const dlStr = formatWibDateTime(todo.deadline);
+  const statusStr = todo.done ? "✅ Selesai" : "⏳ Pending";
+  const lines = [
+    `📋 *[Detail Tugas #${todo.id}]*`,
+    `• Tugas: ${todo.task}`,
+    `• Deadline: ${dlStr}`,
+    `• Kategori: ${todo.category || "work"}`,
+    `• Tag: ${todo.tag || "-"}`,
+    `• Status: ${statusStr}`
+  ];
+  if (todo.assignee) {
+    lines.push(`• Penanggung Jawab: ${todo.assignee}`);
+  }
+  if (todo.description && todo.description.trim()) {
+    lines.push(`\n📝 *Prompt / Deskripsi Asli:*\n"${todo.description.trim()}"`);
+  }
+  return lines.join("\n");
 }
 
 export function logInteraction(db, { prompt, tools = [], status = "success", error = null }) {

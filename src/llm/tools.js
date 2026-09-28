@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import {
   formatTodoList,
+  formatTodoDetail,
   formatBacklogList,
   formatFeatureRequestsList,
   formatSkillList,
@@ -35,22 +36,23 @@ export const TOOLS = [
     functionDeclarations: [
       {
         name: "addTodo",
-        description: "Tambahkan tugas ke To-Do List dengan deadline, tag matkul/kategori, dan penanggung jawab",
+        description: "Tambahkan tugas ke To-Do List dengan deadline, tag matkul/kategori, penanggung jawab, dan deskripsi/prompt rincian tugas",
         parameters: {
           type: "OBJECT",
           properties: {
-            task: { type: "STRING", description: "Judul tugas, contoh: LKP 6 Analisis Algoritme" },
+            task: { type: "STRING", description: "Judul tugas singkat, contoh: LKP 6 Analisis Algoritme" },
             deadlineIso: { type: "STRING", description: "Deadline dalam format ISO 8601 (contoh: 2026-09-27T23:59:00+07:00)" },
             tag: { type: "STRING", description: "Tag atau kode mata kuliah, contoh: #analgor [P2]" },
             category: { type: "STRING", description: "Kategori tugas opsional: work (default) atau routine (absen/kuliah)" },
-            assignee: { type: "STRING", description: "Nama orang yang ditugaskan (contoh: Gilang, Bunga, atau anggota keluarga/tim)" }
+            assignee: { type: "STRING", description: "Nama orang yang ditugaskan (contoh: Gilang, Bunga, atau anggota keluarga/tim)" },
+            description: { type: "STRING", description: "Deskripsi lengkap tugas atau kalimat instruksi/prompt asli dari user saat meminta tugas ini dibuat" }
           },
           required: ["task"]
         }
       },
       {
         name: "listTodos",
-        description: "Tampilkan daftar tugas / to-do list aktif beserta countdown deadline. Bisa difilter per tanggal jika pengguna menanyakan tugas/deadline hari tertentu (misal: 'tugas senin', 'deadline besok').",
+        description: "Tampilkan daftar tugas / to-do list aktif secara ringkas beserta countdown deadline. Bisa difilter per tanggal jika pengguna menanyakan tugas/deadline hari tertentu (misal: 'tugas senin', 'deadline besok').",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -58,6 +60,17 @@ export const TOOLS = [
             assignee: { type: "STRING", description: "Filter to-do list berdasarkan orang yang ditugaskan (opsional)" },
             includeDone: { type: "BOOLEAN", description: "Set true jika user minta melihat tugas yang sudah selesai atau meminta semua tugas termasuk yang sudah dikerjakan (default false)" },
             targetDateIso: { type: "STRING", description: "Filter tugas yang jatuh tempo/deadline pada tanggal spesifik dalam format YYYY-MM-DD (contoh: '2026-09-28'). Wajib hitung dari konteks waktu saat ini jika user menyebutkan hari ('senin', 'besok', dsb). Kosongkan jika ingin melihat semua tugas." }
+          }
+        }
+      },
+      {
+        name: "getTodoDetail",
+        description: "Lihat rincian lengkap tugas tertentu di To-Do List termasuk prompt/deskripsi asli saat tugas dibuat, deadline, tag, dan status. Panggil tool ini saat user minta detail/rincian tugas (contoh: 'detail tugas 1', 'isi tugas 2 apa', 'tunjukin deskripsi nomor 3').",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            todoId: { type: "NUMBER", description: "Nomor urut visual (1..N) atau ID tugas yang ingin dilihat detailnya" },
+            taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika nomor urut/ID tidak disebutkan" }
           }
         }
       },
@@ -92,7 +105,7 @@ export const TOOLS = [
       },
       {
         name: "updateTodo",
-        description: "Ubah atau koreksi judul tugas, deadline, atau tag di To-Do List",
+        description: "Ubah atau koreksi judul tugas, deadline, tag, atau deskripsi di To-Do List",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -101,7 +114,8 @@ export const TOOLS = [
             newTask: { type: "STRING", description: "Judul tugas baru" },
             deadlineIso: { type: "STRING", description: "Deadline baru dalam format ISO 8601 (contoh: 2026-09-25T09:30:00+07:00)" },
             tag: { type: "STRING", description: "Tag baru mata kuliah atau kategori" },
-            assignee: { type: "STRING", description: "Ganti nama penanggung jawab tugas" }
+            assignee: { type: "STRING", description: "Ganti nama penanggung jawab tugas" },
+            description: { type: "STRING", description: "Deskripsi atau instruksi baru untuk tugas" }
           }
         }
       },
@@ -683,7 +697,7 @@ export const TOOLS = [
   }
 ];
 
-export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null }) {
+export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null, userText = "" }) {
   let toolResult = {};
   let formattedList = null;
   const callerId = senderNumber || chatId;
@@ -698,13 +712,15 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
 
   if (name === "addTodo") {
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
-    const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee);
+    const desc = (args.description && String(args.description).trim()) || userText || "";
+    const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee, desc);
     toolResult = {
       success: true,
       id,
       task: args.task,
       category: args.category || "auto",
-      assignee: args.assignee || null
+      assignee: args.assignee || null,
+      description: desc
     };
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
@@ -716,6 +732,34 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       formatted: formattedList,
       instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir (seperti 'ada yang mau dibantu?', 'mau diapain list ini?')."
     };
+  } else if (name === "getTodoDetail") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    let targetId = args.todoId;
+    if (!targetId && args.taskQuery) {
+      const found = store.findTodo(queryChatId, args.taskQuery);
+      if (found) targetId = found.id;
+    }
+    const todo = targetId ? store.getTodoById(targetId, queryChatId) : null;
+    if (!todo) {
+      toolResult = { error: `Tugas ${args.todoId || args.taskQuery || ""} tidak ditemukan.` };
+    } else {
+      const formattedDetail = formatTodoDetail(todo);
+      toolResult = {
+        success: true,
+        todo: {
+          id: todo.id,
+          task: todo.task,
+          deadline: todo.deadline,
+          tag: todo.tag,
+          category: todo.category,
+          assignee: todo.assignee,
+          done: Boolean(todo.done),
+          description: todo.description || ""
+        },
+        formatted: formattedDetail,
+        instruction: "Kembalikan rincian tugas berdasarkan field 'formatted' kepada pengguna dengan rapi dan jelas."
+      };
+    }
   } else if (name === "getTodosDue") {
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
     const queryChatId = isGroup ? chatId : (callerId || chatId);
@@ -759,7 +803,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         task: args.newTask,
         deadline,
         tag: args.tag,
-        assignee: args.assignee
+        assignee: args.assignee,
+        description: args.description
       });
       toolResult = {
         success: changes > 0,

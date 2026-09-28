@@ -340,7 +340,7 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
         };
       } else {
         try {
-          resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator });
+          resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText });
         } catch (toolErr) {
           resultObj = { toolResult: { error: toolErr.message } };
         }

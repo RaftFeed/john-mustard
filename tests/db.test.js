@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange } from "../src/db.js";
+import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -136,4 +136,31 @@ test("Storage: listReminders and getTodos date filtering with WIB range", () => 
   const remainingRems = store.listReminders("user1");
   assert.strictEqual(remainingRems.length, 1);
   assert.strictEqual(remainingRems[0].message, "Acara Selasa");
+
+  // Todo description & formatTodoDetail test
+  const promptText = "Tolong bikinin tugas buat koding frontend login page pakai react";
+  const descTodoId = store.addTodo("user1", "Koding Frontend Login", monday10Wib, "#react", "work", "Rafid", promptText);
+  const fetchedTodo = store.getTodoById(descTodoId);
+  assert.strictEqual(fetchedTodo.description, promptText);
+
+  // Visual index 2 resolves to the same task
+  const fetchedByVisual = store.getTodoById(2, "user1");
+  assert.strictEqual(fetchedByVisual.description, promptText);
+
+  // List brief format does not contain prompt text
+  const briefList = formatTodoList([fetchedTodo]);
+  assert.ok(briefList.includes("Koding Frontend Login"));
+  assert.ok(!briefList.includes(promptText));
+
+  // Detail format contains full prompt text and details
+  const detailView = formatTodoDetail(fetchedTodo);
+  assert.ok(detailView.includes("Detail Tugas"));
+  assert.ok(detailView.includes("Koding Frontend Login"));
+  assert.ok(detailView.includes("Prompt / Deskripsi Asli:"));
+  assert.ok(detailView.includes(promptText));
+
+  // Update description
+  store.updateTodo(descTodoId, null, { description: "Prompt revisi: tambahkan fitur oauth google" });
+  const updatedDescTodo = store.getTodoById(descTodoId);
+  assert.strictEqual(updatedDescTodo.description, "Prompt revisi: tambahkan fitur oauth google");
 });

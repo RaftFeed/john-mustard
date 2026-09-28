@@ -226,4 +226,24 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   assert.strictEqual(resListMon.toolResult.count, 1);
   assert.ok(resListMon.formattedList.includes("TM Valorant Senin"));
   assert.ok(!resListMon.formattedList.includes("Match Valorant Selasa"));
+
+  // Test addTodo with prompt context & getTodoDetail
+  const userPrompt = "Bikinin to do list submit proposal hackathon SEA besok sore jam 5 ya";
+  const resAddTodo = await executeTool("addTodo", {
+    task: "Submit Proposal Hackathon SEA",
+    deadlineIso: "2026-09-30T17:00:00+07:00",
+    tag: "#hackathon"
+  }, { store, chatId: "test-chat", userText: userPrompt });
+
+  assert.strictEqual(resAddTodo.toolResult.success, true);
+  assert.strictEqual(resAddTodo.toolResult.description, userPrompt);
+
+  const resDetail = await executeTool("getTodoDetail", {
+    todoId: 1
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(resDetail.toolResult.success, true);
+  assert.strictEqual(resDetail.toolResult.todo.task, "Submit Proposal Hackathon SEA");
+  assert.ok(resDetail.toolResult.formatted.includes("Prompt / Deskripsi Asli:"));
+  assert.ok(resDetail.toolResult.formatted.includes(userPrompt));
 });

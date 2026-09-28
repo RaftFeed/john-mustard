@@ -1,6 +1,6 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatWibDateTime, normalizePhone, OWNER_PHONE } from "./db.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
@@ -293,11 +293,11 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "detail": {
       const todo = store.getTodoById(cmd.id, chatId);
       if (!todo) return `[!] Tugas #${cmd.id} gak ketemu.`;
-      const dlStr = formatWibDateTime(todo.deadline);
-      return `*[Detail Tugas #${todo.id}]*\n• Tugas: ${todo.task}\n• Deadline: ${dlStr}\n• Kategori: ${todo.category || "work"}\n• Tag: ${todo.tag || "-"}\n• Status: ${todo.done ? "Selesai" : "Pending"}`;
+      return formatTodoDetail(todo);
     }
 
     case "add": {
+      const originalPrompt = cmd.raw;
       let task = cmd.raw;
       let tag = null;
       const tagMatch = task.match(/#(\w+)/);
@@ -312,7 +312,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         if (!isNaN(parsed)) deadline = parsed;
         task = task.replace(dlMatch[0], "").trim();
       }
-      const id = store.addTodo(chatId, task, deadline, tag);
+      const id = store.addTodo(chatId, task, deadline, tag, null, "", originalPrompt);
       return `[OK] Tugas #${id} dicatat: "${task}"`;
     }
 

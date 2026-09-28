@@ -33,4 +33,10 @@ test("Commands: executeFastCommand executes ping, dew, and task commands", async
 
   const listRes = await executeFastCommand({ type: "listTodos" }, ctx);
   assert.ok(listRes.includes("Belajar matematika"));
+
+  const detailRes = await executeFastCommand({ type: "detail", id: 1 }, ctx);
+  assert.ok(detailRes.includes("Detail Tugas #1"));
+  assert.ok(detailRes.includes("Belajar matematika"));
+  assert.ok(detailRes.includes("Prompt / Deskripsi Asli:"));
+  assert.ok(detailRes.includes("Belajar matematika"));
 });
