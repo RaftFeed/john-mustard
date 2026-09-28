@@ -10,6 +10,8 @@ import {
   isGreetingIntent
 } from "../src/llm.js";
 import { formatOutboundMentions } from "../src/waha.js";
+import { executeTool } from "../src/llm/tools.js";
+import { Storage } from "../src/db.js";
 
 test("LLM Guards: detectUnexecutedMutationClaim identifies false completion claims", () => {
   assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", []), true);
@@ -166,4 +168,48 @@ test("LLM Engine: group chat overrides Lord tone and includes anti-asumsi guardr
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("LLM Tools: addReminder calculates 1h default for events and supports custom remindAt", async () => {
+  const store = new Storage(":memory:");
+  const eventIso = new Date(Date.now() + 7200_000).toISOString();
+
+  // Event with default 1h before
+  const res1 = await executeTool("addReminder", {
+    message: "Rapat Koordinasi",
+    isEvent: true,
+    eventAtIso: eventIso
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(res1.toolResult.success, true);
+  const rem1 = store.getReminderById(res1.toolResult.id);
+  assert.strictEqual(rem1.event_at, new Date(eventIso).getTime());
+  assert.strictEqual(rem1.remind_at, rem1.event_at - 3600_000);
+
+  // Event with custom remindAtIso (30 min before)
+  const customIso = new Date(Date.now() + 7200_000 - 1800_000).toISOString();
+  const res2 = await executeTool("addReminder", {
+    message: "Webinar Tech",
+    isEvent: true,
+    eventAtIso: eventIso,
+    remindAtIso: customIso
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(res2.toolResult.success, true);
+  const rem2 = store.getReminderById(res2.toolResult.id);
+  assert.strictEqual(rem2.event_at, new Date(eventIso).getTime());
+  assert.strictEqual(rem2.remind_at, new Date(customIso).getTime());
+
+  // Non-event regular reminder
+  const regIso = new Date(Date.now() + 3600_000).toISOString();
+  const res3 = await executeTool("addReminder", {
+    message: "Minum Vitamin",
+    isEvent: false,
+    remindAtIso: regIso
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(res3.toolResult.success, true);
+  const rem3 = store.getReminderById(res3.toolResult.id);
+  assert.strictEqual(rem3.event_at, null);
+  assert.strictEqual(rem3.remind_at, new Date(regIso).getTime());
 });

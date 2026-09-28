@@ -164,7 +164,8 @@ export class Storage {
         remind_at INTEGER NOT NULL,
         status TEXT DEFAULT 'pending',
         recurrence TEXT DEFAULT NULL,
-        task_type TEXT DEFAULT 'reminder'
+        task_type TEXT DEFAULT 'reminder',
+        event_at INTEGER DEFAULT NULL
       );
       CREATE TABLE IF NOT EXISTS todos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,6 +275,7 @@ export class Storage {
     try { this.db.exec("ALTER TABLE todos ADD COLUMN reminded INTEGER DEFAULT 0"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
+    try { this.db.exec("ALTER TABLE reminders ADD COLUMN event_at INTEGER DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
 
@@ -332,11 +334,32 @@ export class Storage {
     return rows.reverse();
   }
 
-  addReminder(chatId, message, remindAtTimestamp, recurrence = null, taskType = "reminder") {
+  // ponytail: event reminder defaults to 1h before event unless custom remindAt specified
+  addReminder(chatId, message, remindAtTimestamp, recurrence = null, taskType = "reminder", eventAtTimestamp = null) {
+    let finalEventAt = typeof eventAtTimestamp === "number" ? eventAtTimestamp : null;
+    let finalRemindAt = typeof remindAtTimestamp === "number" ? remindAtTimestamp : null;
+
+    if (finalEventAt) {
+      if (!finalRemindAt) {
+        finalRemindAt = finalEventAt - 3600_000;
+      }
+      if (finalRemindAt <= Date.now()) {
+        finalRemindAt = Date.now();
+      }
+    }
+
+    if (!finalRemindAt && !finalEventAt) {
+      finalRemindAt = Date.now();
+    }
+
     const stmt = this.db.prepare(
-      "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
     );
-    return stmt.run(chatId, message, remindAtTimestamp, recurrence, taskType).lastInsertRowid;
+    return stmt.run(chatId, message, finalRemindAt, recurrence, taskType, finalEventAt).lastInsertRowid;
+  }
+
+  advanceReminderToEventTime(id, eventAt) {
+    return this.db.prepare("UPDATE reminders SET remind_at = ?, status = 'pending' WHERE id = ?").run(eventAt, id).changes > 0;
   }
 
   getPendingReminders(now = Date.now()) {
@@ -380,13 +403,25 @@ export class Storage {
         step = parseInt(matchH[1], 10) * 60 * 60 * 1000;
       }
     }
-    let nextTime = rem.remind_at + step;
     const now = Date.now();
-    while (nextTime <= now) {
-      nextTime += step;
+    let nextEvent = rem.event_at;
+    let nextRemind = rem.remind_at + step;
+
+    if (nextEvent) {
+      nextEvent += step;
+      while (nextEvent <= now) {
+        nextEvent += step;
+      }
+      nextRemind = Math.max(now, nextEvent - 3600_000);
+      this.db.prepare("UPDATE reminders SET remind_at = ?, event_at = ?, status = 'pending' WHERE id = ?").run(nextRemind, nextEvent, id);
+      return nextRemind;
     }
-    this.db.prepare("UPDATE reminders SET remind_at = ?, status = 'pending' WHERE id = ?").run(nextTime, id);
-    return nextTime;
+
+    while (nextRemind <= now) {
+      nextRemind += step;
+    }
+    this.db.prepare("UPDATE reminders SET remind_at = ?, status = 'pending' WHERE id = ?").run(nextRemind, id);
+    return nextRemind;
   }
 
   markReminderDone(id) {
@@ -397,12 +432,12 @@ export class Storage {
     const scope = getUserTodoScope(chatId, this);
     if (scope.isGroup) {
       return this.db
-        .prepare("SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY remind_at ASC")
+        .prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY COALESCE(event_at, remind_at) ASC")
         .all(chatId);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     return this.db
-      .prepare(`SELECT id, message, remind_at, recurrence, task_type FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' ORDER BY remind_at ASC`)
+      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' ORDER BY COALESCE(event_at, remind_at) ASC`)
       .all(...scope.chatIds);
   }
 
@@ -422,7 +457,7 @@ export class Storage {
     return res.changes;
   }
 
-  updateReminder(chatId, idOrQuery, { message, remindAt, recurrence, taskType } = {}) {
+  updateReminder(chatId, idOrQuery, { message, remindAt, recurrence, taskType, eventAt } = {}) {
     const scope = getUserTodoScope(chatId, this);
     const cidCond = scope.isGroup
       ? "chat_id = ?"
@@ -446,15 +481,19 @@ export class Storage {
     if (!row) return null;
 
     const newMessage = message !== undefined && message !== null ? message : row.message;
-    const newRemindAt = remindAt !== undefined && remindAt !== null ? remindAt : row.remind_at;
+    const newEventAt = eventAt !== undefined ? eventAt : (row.event_at || null);
+    let newRemindAt = remindAt !== undefined && remindAt !== null ? remindAt : row.remind_at;
+    if (eventAt !== undefined && remindAt === undefined && newEventAt) {
+      newRemindAt = Math.max(Date.now(), newEventAt - 3600_000);
+    }
     const newRecurrence = recurrence !== undefined ? recurrence : row.recurrence;
     const newTaskType = taskType !== undefined ? taskType : (row.task_type || "reminder");
 
     const changes = this.db
-      .prepare("UPDATE reminders SET message = ?, remind_at = ?, recurrence = ?, task_type = ? WHERE id = ?")
-      .run(newMessage, newRemindAt, newRecurrence, newTaskType, row.id).changes;
+      .prepare("UPDATE reminders SET message = ?, remind_at = ?, recurrence = ?, task_type = ?, event_at = ? WHERE id = ?")
+      .run(newMessage, newRemindAt, newRecurrence, newTaskType, newEventAt, row.id).changes;
 
-    return changes > 0 ? { id: row.id, message: newMessage, remindAt: newRemindAt, recurrence: newRecurrence, taskType: newTaskType } : null;
+    return changes > 0 ? { id: row.id, message: newMessage, remindAt: newRemindAt, recurrence: newRecurrence, taskType: newTaskType, eventAt: newEventAt } : null;
   }
 
   addTodo(chatId, task, deadline = null, tag = null, category = null, assignee = "") {
@@ -1217,12 +1256,13 @@ export function formatRemindersList(reminders = []) {
   reminders.forEach((r, idx) => {
     let badge = "⚪";
     let scheduleStr = "Tanpa jadwal";
-    const isOverdue = r.remind_at && r.remind_at < now.getTime();
+    const targetTimestamp = r.event_at || r.remind_at;
+    const isOverdue = targetTimestamp && targetTimestamp < now.getTime();
 
     if (isOverdue) {
       badge = "🔴";
-    } else if (r.remind_at) {
-      const targetDate = new Date(r.remind_at);
+    } else if (targetTimestamp) {
+      const targetDate = new Date(targetTimestamp);
       const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
 
       if (diffDays <= 0) badge = "🔴";
@@ -1251,7 +1291,7 @@ export function formatRemindersList(reminders = []) {
     }
 
     if (isOverdue) {
-      const targetDate = new Date(r.remind_at);
+      const targetDate = new Date(targetTimestamp);
       const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
       const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
       const dayName = daysId[targetWib.getUTCDay()];

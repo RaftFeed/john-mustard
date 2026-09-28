@@ -42,4 +42,31 @@ test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () =
   const persons = store.listPersons();
   assert.ok(persons.length >= 1, "Expected at least 1 default profile loaded");
   assert.ok(persons.some((p) => p.name === "Rafid"));
+
+  // Event reminders with 1h default and custom offset
+  const futureEventAt = Date.now() + 7200_000; // 2 hours later
+  const evId1 = store.addReminder("user1", "Rapat Kerja", null, null, "reminder", futureEventAt);
+  const ev1 = store.getReminderById(evId1);
+  assert.strictEqual(ev1.event_at, futureEventAt);
+  assert.strictEqual(ev1.remind_at, futureEventAt - 3600_000); // 1h before
+
+  // Custom reminder offset (e.g. 30 min before)
+  const customRemindAt = futureEventAt - 1800_000;
+  const evId2 = store.addReminder("user1", "Kuliah AI", customRemindAt, null, "reminder", futureEventAt);
+  const ev2 = store.getReminderById(evId2);
+  assert.strictEqual(ev2.event_at, futureEventAt);
+  assert.strictEqual(ev2.remind_at, customRemindAt);
+
+  // Event < 1h away sets remind_at to now
+  const nearEventAt = Date.now() + 1800_000;
+  const evId3 = store.addReminder("user1", "Mepet Banget", null, null, "reminder", nearEventAt);
+  const ev3 = store.getReminderById(evId3);
+  assert.strictEqual(ev3.event_at, nearEventAt);
+  assert.ok(ev3.remind_at <= Date.now());
+
+  // advanceReminderToEventTime
+  assert.strictEqual(store.advanceReminderToEventTime(evId1, futureEventAt), true);
+  const advancedEv1 = store.getReminderById(evId1);
+  assert.strictEqual(advancedEv1.remind_at, futureEventAt);
+  assert.strictEqual(advancedEv1.status, "pending");
 });

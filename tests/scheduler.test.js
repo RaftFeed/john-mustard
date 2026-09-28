@@ -61,3 +61,76 @@ test("Scheduler: tickScheduler handles overdue reminders, near-horizon schedulin
 
   clearActiveTimers();
 });
+
+test("Scheduler: 2-stage event reminder pings early then pings on event start", async () => {
+  const sentMessages = [];
+  const mockSender = async (chatId, text) => {
+    sentMessages.push({ chatId, text });
+  };
+
+  const now = Date.now();
+  const eventAt = now + 3600_000; // 1 hour in future
+  const eventItem = {
+    id: 10,
+    chat_id: "user1",
+    message: "Rapat Pleno",
+    remind_at: now - 1000, // Trigger Stage 1 now
+    event_at: eventAt,
+    status: "pending"
+  };
+
+  const mockStore = {
+    claimReminder(id) {
+      if (eventItem.id === id && eventItem.status === "pending") {
+        eventItem.status = "claimed";
+        return true;
+      }
+      return false;
+    },
+    advanceReminderToEventTime(id, targetEventAt) {
+      if (eventItem.id === id) {
+        eventItem.remind_at = targetEventAt;
+        eventItem.status = "pending";
+        return true;
+      }
+      return false;
+    },
+    markReminderDone(id) {
+      if (eventItem.id === id) {
+        eventItem.status = "sent";
+      }
+    },
+    getPendingReminders() {
+      const t = Date.now();
+      return eventItem.status === "pending" && eventItem.remind_at <= t ? [eventItem] : [];
+    },
+    getNearHorizonReminders() {
+      return [];
+    },
+    getReminderById(id) {
+      return eventItem.id === id ? eventItem : null;
+    },
+    getPendingTodoDeadlines() {
+      return [];
+    }
+  };
+
+  // Phase 1 tick (Advance reminder trigger)
+  const res1 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res1.sent, 1);
+  assert.strictEqual(eventItem.status, "pending"); // Not done yet!
+  assert.strictEqual(eventItem.remind_at, eventAt);
+  assert.ok(sentMessages[0].text.includes("Pengingat sebelum acara dimulai"));
+  assert.ok(sentMessages[0].text.includes("Rapat Pleno"));
+
+  // Simulate time reaching eventAt
+  eventItem.event_at = Date.now() - 500;
+  eventItem.remind_at = Date.now() - 500; // Trigger Stage 2
+  const res2 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res2.sent, 1);
+  assert.strictEqual(eventItem.status, "sent"); // Now done!
+  assert.ok(sentMessages[1].text.includes("Waktunya jadwal kegiatan"));
+  assert.ok(sentMessages[1].text.includes("Rapat Pleno"));
+
+  clearActiveTimers();
+});

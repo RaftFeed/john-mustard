@@ -117,16 +117,18 @@ export const TOOLS = [
       },
       {
         name: "addReminder",
-        description: "Buat pengingat/reminder yang akan otomatis diping ke WhatsApp",
+        description: "Buat pengingat/reminder atau jadwal acara/agenda yang akan otomatis diping ke WhatsApp",
         parameters: {
           type: "OBJECT",
           properties: {
-            message: { type: "STRING", description: "Pesan pengingat" },
-            remindAtIso: { type: "STRING", description: "Waktu pengingat dalam ISO 8601 (contoh: 2026-09-25T17:00:00+07:00)" },
+            message: { type: "STRING", description: "Nama agenda/acara atau pesan pengingat" },
+            isEvent: { type: "BOOLEAN", description: "Set true jika ini adalah acara, agenda, rapat, kuliah, jadwal kegiatan. Set false jika hanya pengingat langsung (misal minum obat, matikan kompor)" },
+            eventAtIso: { type: "STRING", description: "Waktu mulai acara/agenda dalam ISO 8601 (contoh: 2026-09-25T17:00:00+07:00). Wajib jika isEvent=true" },
+            remindAtIso: { type: "STRING", description: "Waktu pengingat dalam ISO 8601. Untuk acara, isi HANYA jika user meminta waktu pengingat khusus/custom (jika user tidak meminta waktu pengingat khusus, kosongkan/abaikan parameter ini agar sistem otomatis mengingatkan 1 jam sebelum acara). Untuk pengingat biasa non-acara, wajib diisi" },
             recurrence: { type: "STRING", description: "Perulangan pengingat opsional: daily, weekly, every_6h, 6h, 12h, dsb." },
             taskType: { type: "STRING", description: "Tipe tugas: reminder (default) atau scheduled_action" }
           },
-          required: ["message", "remindAtIso"]
+          required: ["message"]
         }
       },
       {
@@ -157,7 +159,8 @@ export const TOOLS = [
             reminderId: { type: "NUMBER", description: "Nomor urut visual atau ID agenda yang mau diubah (opsional jika query diisi)" },
             query: { type: "STRING", description: "Kata kunci nama agenda lama yang mau diubah" },
             newMessage: { type: "STRING", description: "Nama atau pesan agenda yang baru" },
-            newRemindAtIso: { type: "STRING", description: "Jadwal/jam baru dalam format ISO 8601 (opsional)" },
+            newEventAtIso: { type: "STRING", description: "Jadwal/jam baru pelaksanaan acara dalam format ISO 8601 (opsional)" },
+            newRemindAtIso: { type: "STRING", description: "Jadwal/jam baru waktu pengingat dalam format ISO 8601 (opsional)" },
             recurrence: { type: "STRING", description: "Perulangan baru: daily, weekly, atau null jika sekali" }
           }
         }
@@ -778,18 +781,50 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       };
     }
   } else if (name === "addReminder") {
-    const timestamp = new Date(args.remindAtIso).getTime();
-    if (isNaN(timestamp)) throw new Error("Format tanggal/jam ISO tidak valid");
-    const id = store.addReminder(chatId, args.message, timestamp, args.recurrence || null, args.taskType || "reminder");
+    let eventAt = args.eventAtIso ? new Date(args.eventAtIso).getTime() : null;
+    let remindAt = args.remindAtIso ? new Date(args.remindAtIso).getTime() : null;
+    if (isNaN(eventAt)) eventAt = null;
+    if (isNaN(remindAt)) remindAt = null;
+
+    if ((args.isEvent || args.eventAtIso) && !eventAt && remindAt) {
+      eventAt = remindAt;
+      remindAt = null;
+    }
+
+    if (!eventAt && !remindAt) {
+      throw new Error("Format tanggal/jam ISO tidak valid atau waktu pengingat belum ditentukan.");
+    }
+
+    const id = store.addReminder(
+      chatId,
+      args.message,
+      remindAt,
+      args.recurrence || null,
+      args.taskType || "reminder",
+      eventAt
+    );
+
+    const createdReminder = store.getReminderById ? store.getReminderById(id) : null;
+    const finalRemindAt = createdReminder ? createdReminder.remind_at : (remindAt || Date.now());
+
     scheduleNearHorizonReminder(store, {
       id,
       chat_id: chatId,
       message: args.message,
-      remind_at: timestamp,
+      remind_at: finalRemindAt,
       recurrence: args.recurrence || null,
-      task_type: args.taskType || "reminder"
+      task_type: args.taskType || "reminder",
+      event_at: eventAt
     }, { rotator });
-    toolResult = { success: true, id, message: args.message, remindAt: args.remindAtIso, recurrence: args.recurrence || null };
+
+    toolResult = {
+      success: true,
+      id,
+      message: args.message,
+      eventAt: eventAt ? new Date(eventAt).toISOString() : null,
+      remindAt: new Date(finalRemindAt).toISOString(),
+      recurrence: args.recurrence || null
+    };
   } else if (name === "listReminders") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const reminders = store.listReminders(queryChatId);
@@ -825,9 +860,11 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { error: "reminderId atau query wajib diisi untuk mengubah agenda/pengingat." };
     } else {
       const remindAt = args.newRemindAtIso ? new Date(args.newRemindAtIso).getTime() : undefined;
+      const eventAt = args.newEventAtIso ? new Date(args.newEventAtIso).getTime() : undefined;
       const updated = store.updateReminder(queryChatId, target, {
         message: args.newMessage,
         remindAt: isNaN(remindAt) ? undefined : remindAt,
+        eventAt: isNaN(eventAt) ? undefined : eventAt,
         recurrence: args.recurrence
       });
       if (!updated) {

@@ -50,11 +50,53 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
         await textSender(item.chat_id, `[!] Gagal eksekusi jadwal #${item.id}: ${err.message}`);
       }
     } else {
+      const isStage1 = Boolean(item.event_at && item.remind_at < item.event_at && item.event_at > Date.now());
+      const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+      const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+      if (isStage1) {
+        const eventWib = new Date(item.event_at + 7 * 60 * 60 * 1000);
+        const evHours = String(eventWib.getUTCHours()).padStart(2, "0");
+        const evMinutes = String(eventWib.getUTCMinutes()).padStart(2, "0");
+        const evDayName = daysId[eventWib.getUTCDay()];
+        const evDateNum = eventWib.getUTCDate();
+        const evMonthName = monthsId[eventWib.getUTCMonth()];
+        const evYear = eventWib.getUTCFullYear();
+        const diffMinutes = Math.max(0, Math.round((item.event_at - Date.now()) / 60000));
+        const timeUntil = diffMinutes >= 60
+          ? `${Math.round(diffMinutes / 60)} jam lagi`
+          : (diffMinutes > 0 ? `${diffMinutes} menit lagi` : "segera");
+
+        const lines = [
+          "⏰ [Pengingat Acara & Agenda]",
+          "_Pengingat sebelum acara dimulai!_\n",
+          `🔔 *[ACARA] ${item.message}*`,
+          `├── Mulai: ${evDayName}, ${evDateNum} ${evMonthName} ${evYear} ${evHours}:${evMinutes} (${timeUntil})`,
+          "└── `#acara`"
+        ];
+        await textSender(item.chat_id, lines.join("\n"));
+
+        // Advance ke Stage 2 (jam acara mulai)
+        if (typeof store.advanceReminderToEventTime === "function") {
+          store.advanceReminderToEventTime(item.id, item.event_at);
+        } else if (typeof store.updateReminderSchedule === "function") {
+          store.updateReminderSchedule(item.id, item.event_at);
+        } else if (typeof store.updateReminder === "function") {
+          store.updateReminder(item.chat_id, item.id, { remindAt: item.event_at });
+        }
+
+        if (typeof store.getReminderById === "function") {
+          const nextItem = store.getReminderById(item.id);
+          if (nextItem) {
+            scheduleNearHorizonReminder(store, nextItem, { rotator, textSender });
+          }
+        }
+        return true;
+      }
+
       const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
       const hours = String(nowWib.getUTCHours()).padStart(2, "0");
       const minutes = String(nowWib.getUTCMinutes()).padStart(2, "0");
-      const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-      const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
       const dayName = daysId[nowWib.getUTCDay()];
       const dateNum = nowWib.getUTCDate();
       const monthName = monthsId[nowWib.getUTCMonth()];
