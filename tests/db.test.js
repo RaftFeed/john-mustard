@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatPersonList, formatFeatureRequestsList } from "../src/db.js";
+import { Storage, formatTodoList, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -16,6 +16,11 @@ test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () =
   assert.strictEqual(store.isModelCooling("gemini-test"), true);
   store.clearModelCooldowns();
   assert.strictEqual(store.isModelCooling("gemini-test"), false);
+
+  // Bot settings test
+  assert.strictEqual(store.getSetting("test_key", "default_val"), "default_val");
+  store.setSetting("test_key", "saved_val");
+  assert.strictEqual(store.getSetting("test_key"), "saved_val");
 
   // Todo CRUD & Overdue test
   const id1 = store.addTodo("user1", "Belajar Node.js", Date.now() + 3600_000, "#coding");
@@ -69,4 +74,59 @@ test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () =
   const advancedEv1 = store.getReminderById(evId1);
   assert.strictEqual(advancedEv1.remind_at, futureEventAt);
   assert.strictEqual(advancedEv1.status, "pending");
+});
+
+test("Storage: listReminders and getTodos date filtering with WIB range", () => {
+  const store = new Storage(":memory:");
+
+  // Monday: 2026-09-28
+  const mondayRange = parseWibDayRange("2026-09-28");
+  assert.ok(mondayRange);
+  assert.strictEqual(mondayRange.dateStr, "2026-09-28");
+
+  // Tuesday: 2026-09-29
+  const tuesdayRange = parseWibDayRange("2026-09-29");
+
+  const monday10Wib = new Date("2026-09-28T10:00:00+07:00").getTime();
+  const tuesday14Wib = new Date("2026-09-29T14:00:00+07:00").getTime();
+
+  // Add reminders: 1 on Monday, 1 on Tuesday
+  store.addReminder("user1", "Acara Senin", monday10Wib, null, "reminder", monday10Wib);
+  store.addReminder("user1", "Acara Selasa", tuesday14Wib, null, "reminder", tuesday14Wib);
+
+  // List all
+  const allRems = store.listReminders("user1");
+  assert.strictEqual(allRems.length, 2);
+
+  // List Monday only
+  const mondayRems = store.listReminders("user1", "2026-09-28");
+  assert.strictEqual(mondayRems.length, 1);
+  assert.strictEqual(mondayRems[0].message, "Acara Senin");
+
+  // Format Monday list
+  const formattedMonday = formatRemindersList(mondayRems, { targetDate: "2026-09-28" });
+  assert.ok(formattedMonday.includes("Jadwal Hari Senin, 28 Sep 2026"));
+  assert.ok(formattedMonday.includes("Acara Senin"));
+  assert.ok(!formattedMonday.includes("Acara Selasa"));
+
+  // Format empty day
+  const formattedWednesday = formatRemindersList([], { targetDate: "2026-09-30" });
+  assert.ok(formattedWednesday.includes("Tidak ada jadwal acara atau pengingat untuk hari Rabu, 30 Sep 2026"));
+
+  // Add todos: 1 on Monday, 1 on Tuesday
+  store.addTodo("user1", "Tugas Senin", monday10Wib, "#tugas");
+  store.addTodo("user1", "Tugas Selasa", tuesday14Wib, "#tugas");
+
+  // Filter todos Monday only
+  const mondayTodos = store.getTodos("user1", false, null, false, "2026-09-28");
+  assert.strictEqual(mondayTodos.length, 1);
+  assert.strictEqual(mondayTodos[0].task, "Tugas Senin");
+
+  const formattedTodosMonday = formatTodoList(mondayTodos, false, { targetDate: "2026-09-28" });
+  assert.ok(formattedTodosMonday.includes("Tugas Hari Senin, 28 Sep 2026"));
+  assert.ok(formattedTodosMonday.includes("Tugas Senin"));
+  assert.ok(!formattedTodosMonday.includes("Tugas Selasa"));
+
+  const formattedTodosEmpty = formatTodoList([], false, { targetDate: "2026-09-30" });
+  assert.ok(formattedTodosEmpty.includes("Tidak ada tugas atau deadline untuk hari Rabu, 30 Sep 2026"));
 });

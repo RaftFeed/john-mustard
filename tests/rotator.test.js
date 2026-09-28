@@ -1,22 +1,40 @@
 import test from "node:test";
 import assert from "node:assert";
 import { KeyRotator } from "../src/rotator.js";
+import { Storage } from "../src/db.js";
 
-test("KeyRotator: rotates keys in pool", () => {
+test("KeyRotator: uses active key sequentially (sticky) until limited", () => {
   const rotator = new KeyRotator(["keyA", "keyB", "keyC"]);
   assert.strictEqual(rotator.getKey(), "keyA");
-  assert.strictEqual(rotator.getKey(), "keyB");
-  assert.strictEqual(rotator.getKey(), "keyC");
+  assert.strictEqual(rotator.getKey(), "keyA"); // sticks to keyA
+
+  rotator.markLimited("keyA");
+  assert.strictEqual(rotator.getKey(), "keyB"); // switches to keyB
+  assert.strictEqual(rotator.getKey(), "keyB"); // sticks to keyB
 });
 
 test("KeyRotator: skips cooling key and respects dead key blacklist", () => {
   const rotator = new KeyRotator(["keyA", "keyB", "keyC"]);
   rotator.markLimited("keyB");
   assert.strictEqual(rotator.getKey(), "keyA");
-  assert.strictEqual(rotator.getKey(), "keyC");
 
   rotator.markDead("keyA");
-  assert.strictEqual(rotator.getKey(), "keyC"); // keyA is dead, keyB is limited
+  assert.strictEqual(rotator.getKey(), "keyC"); // keyA is dead, keyB is limited -> advances to keyC
+  assert.strictEqual(rotator.getKey(), "keyC"); // sticks to keyC
+});
+
+test("KeyRotator: persists active key in store and restores on restart", () => {
+  const store = new Storage(":memory:");
+  const rotator1 = new KeyRotator(["keyA", "keyB", "keyC"], { store });
+  assert.strictEqual(rotator1.getKey(), "keyA");
+
+  rotator1.markLimited("keyA");
+  assert.strictEqual(rotator1.getKey(), "keyB"); // switches to keyB (index 1)
+
+  // Simulate bot reboot with fresh rotator using same store
+  const rotator2 = new KeyRotator(["keyA", "keyB", "keyC"], { store });
+  assert.strictEqual(rotator2.index, 1);
+  assert.strictEqual(rotator2.getKey(), "keyB"); // remains on keyB, never reverts to keyA!
 });
 
 test("KeyRotator: fatal error (404 / 400) stops retry without rotating", async () => {

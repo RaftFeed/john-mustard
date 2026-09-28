@@ -50,13 +50,14 @@ export const TOOLS = [
       },
       {
         name: "listTodos",
-        description: "Tampilkan daftar tugas / to-do list aktif beserta countdown deadline",
+        description: "Tampilkan daftar tugas / to-do list aktif beserta countdown deadline. Bisa difilter per tanggal jika pengguna menanyakan tugas/deadline hari tertentu (misal: 'tugas senin', 'deadline besok').",
         parameters: {
           type: "OBJECT",
           properties: {
             includeRoutine: { type: "BOOLEAN", description: "Set true untuk menyertakan tugas rutin/kuliah/absen (default false)" },
             assignee: { type: "STRING", description: "Filter to-do list berdasarkan orang yang ditugaskan (opsional)" },
-            includeDone: { type: "BOOLEAN", description: "Set true jika user minta melihat tugas yang sudah selesai atau meminta semua tugas termasuk yang sudah dikerjakan (default false)" }
+            includeDone: { type: "BOOLEAN", description: "Set true jika user minta melihat tugas yang sudah selesai atau meminta semua tugas termasuk yang sudah dikerjakan (default false)" },
+            targetDateIso: { type: "STRING", description: "Filter tugas yang jatuh tempo/deadline pada tanggal spesifik dalam format YYYY-MM-DD (contoh: '2026-09-28'). Wajib hitung dari konteks waktu saat ini jika user menyebutkan hari ('senin', 'besok', dsb). Kosongkan jika ingin melihat semua tugas." }
           }
         }
       },
@@ -133,10 +134,15 @@ export const TOOLS = [
       },
       {
         name: "listReminders",
-        description: "Lihat daftar semua pengingat/reminder aktif yang belum terkirim",
+        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
         parameters: {
           type: "OBJECT",
-          properties: {}
+          properties: {
+            targetDateIso: {
+              type: "STRING",
+              description: "Filter tanggal spesifik dalam format YYYY-MM-DD (contoh: '2026-09-28' untuk hari Senin). Wajib hitung tanggal dari konteks waktu saat ini jika user menyebutkan hari ('senin', 'selasa', 'besok', 'hari ini'). Kosongkan jika pengguna ingin melihat semua pengingat/acara tanpa batasan hari."
+            }
+          }
         }
       },
       {
@@ -702,10 +708,11 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null, Boolean(args.includeDone));
-    formattedList = formatTodoList(todos, isGroup);
+    const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null, Boolean(args.includeDone), args.targetDateIso);
+    formattedList = formatTodoList(todos, isGroup, { targetDate: args.targetDateIso });
     toolResult = {
       count: todos.length,
+      targetDate: args.targetDateIso || null,
       formatted: formattedList,
       instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya. DILARANG memformat ulang, DILARANG mengubah emoji, dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir (seperti 'ada yang mau dibantu?', 'mau diapain list ini?')."
     };
@@ -827,11 +834,12 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "listReminders") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const reminders = store.listReminders(queryChatId);
-    formattedList = formatRemindersList(reminders);
+    const reminders = store.listReminders(queryChatId, args.targetDateIso);
+    formattedList = formatRemindersList(reminders, { targetDate: args.targetDateIso });
     toolResult = {
       success: true,
       count: reminders.length,
+      targetDate: args.targetDateIso || null,
       formatted: formattedList,
       instruction: "WAJIB kembalikan persis isi teks di field 'formatted' apa adanya. DILARANG memformat ulang dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir."
     };

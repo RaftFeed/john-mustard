@@ -17,9 +17,9 @@ if (keys.length === 0) {
   console.warn("PERINGATAN: GEMINI_KEYS di .env masih kosong.");
 }
 
-const rotator = new KeyRotator(keys.length > 0 ? keys : ["dummy_key"]);
 const dbPath = process.env.DB_PATH || "bot.db";
 const store = new Storage(dbPath);
+const rotator = new KeyRotator(keys.length > 0 ? keys : ["dummy_key"], { store });
 
 // Jalankan runner pengingat (cek tiap 15 detik)
 startScheduler(store, { rotator });

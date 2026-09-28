@@ -212,4 +212,18 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   const rem3 = store.getReminderById(res3.toolResult.id);
   assert.strictEqual(rem3.event_at, null);
   assert.strictEqual(rem3.remind_at, new Date(regIso).getTime());
+
+  // Test listReminders with targetDateIso
+  const monTime = new Date("2026-09-28T10:00:00+07:00").getTime();
+  const tueTime = new Date("2026-09-29T10:00:00+07:00").getTime();
+  store.addReminder("test-chat", "TM Valorant Senin", monTime, null, "reminder", monTime);
+  store.addReminder("test-chat", "Match Valorant Selasa", tueTime, null, "reminder", tueTime);
+
+  const resListMon = await executeTool("listReminders", {
+    targetDateIso: "2026-09-28"
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(resListMon.toolResult.count, 1);
+  assert.ok(resListMon.formattedList.includes("TM Valorant Senin"));
+  assert.ok(!resListMon.formattedList.includes("Match Valorant Selasa"));
 });

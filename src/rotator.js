@@ -1,14 +1,65 @@
 import assert from "node:assert";
 
 export class KeyRotator {
-  constructor(keys, cooldownMs = 60_000) {
+  // ponytail: sticky key with SQLite fallback index persistence. Skipped: multi-process distributed locks. Add when scaling across multiple bot instances.
+  constructor(keys, optionsOrCooldown = 60_000, maybeStore = null) {
     if (!keys || keys.length === 0) throw new Error("Keys kosong.");
     this.keys = keys.map((k) => k.trim()).filter(Boolean);
     if (this.keys.length === 0) throw new Error("Tidak ada key valid ditemukan.");
+
+    let cooldownMs = 60_000;
+    let store = null;
+    if (typeof optionsOrCooldown === "object" && optionsOrCooldown !== null) {
+      cooldownMs = optionsOrCooldown.cooldownMs ?? 60_000;
+      store = optionsOrCooldown.store ?? null;
+    } else {
+      cooldownMs = typeof optionsOrCooldown === "number" ? optionsOrCooldown : 60_000;
+      store = maybeStore;
+    }
+
     this.index = 0;
     this.cooldowns = new Map();
     this.deadKeys = new Set();
     this.cooldownMs = cooldownMs;
+    this.store = store;
+
+    this.restoreSavedIndex();
+  }
+
+  attachStore(store) {
+    this.store = store;
+    this.restoreSavedIndex();
+  }
+
+  restoreSavedIndex() {
+    if (!this.store || typeof this.store.getSetting !== "function") return;
+    try {
+      const savedKey = this.store.getSetting("active_gemini_key");
+      const keyIdx = savedKey ? this.keys.indexOf(savedKey) : -1;
+      if (keyIdx !== -1) {
+        this.index = keyIdx;
+        return;
+      }
+      const savedIdxStr = this.store.getSetting("active_gemini_key_index");
+      if (savedIdxStr !== null && savedIdxStr !== undefined) {
+        const parsed = parseInt(savedIdxStr, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed < this.keys.length) {
+          this.index = parsed;
+        }
+      }
+    } catch {}
+  }
+
+  setIndex(idx) {
+    this.index = idx;
+    if (this.store && typeof this.store.setSetting === "function") {
+      try {
+        this.store.setSetting("active_gemini_key_index", String(this.index));
+        if (this.keys[this.index]) {
+          this.store.setSetting("active_gemini_key", this.keys[this.index]);
+        }
+      } catch {}
+    }
   }
 
   getKey() {
@@ -16,16 +67,30 @@ export class KeyRotator {
     let bestKey = null;
     let minUntil = Infinity;
 
-    // Prioritaskan key yang belum ditandai mati/suspend
-    const candidateKeys = this.keys.filter((k) => !this.deadKeys.has(k));
-    const pool = candidateKeys.length > 0 ? candidateKeys : this.keys;
+    const hasLivingKeys = this.keys.some((k) => !this.deadKeys.has(k));
+    const isUsable = (k) => (!hasLivingKeys || !this.deadKeys.has(k));
 
-    for (let i = 0; i < pool.length; i++) {
-      const idx = (this.index + i) % pool.length;
-      const key = pool[idx];
+    if (this.index >= this.keys.length || this.index < 0) {
+      this.setIndex(0);
+    }
+
+    const activeKey = this.keys[this.index];
+    const activeUntil = this.cooldowns.get(activeKey) || 0;
+
+    // Sticky: tetap gunakan key aktif saat ini jika tidak mati dan tidak cooling
+    if (activeKey && isUsable(activeKey) && activeUntil <= now) {
+      return activeKey;
+    }
+
+    // Key aktif tidak usable atau sedang cooldown -> cari key berikutnya secara sekuensial
+    for (let i = 1; i < this.keys.length; i++) {
+      const idx = (this.index + i) % this.keys.length;
+      const key = this.keys[idx];
+      if (!isUsable(key)) continue;
+
       const until = this.cooldowns.get(key) || 0;
       if (until <= now) {
-        this.index = (idx + 1) % pool.length;
+        this.setIndex(idx);
         return key;
       }
       if (until < minUntil) {
@@ -34,7 +99,12 @@ export class KeyRotator {
       }
     }
 
-    // Jika semua key sedang cooldown, pakai key yang masa cooldown-nya paling cepat selesai
+    // Jika semua key sedang cooldown, cek apakah key aktif yang paling cepat selesai
+    if (activeKey && isUsable(activeKey) && activeUntil < minUntil) {
+      minUntil = activeUntil;
+      bestKey = activeKey;
+    }
+
     if (bestKey) {
       return bestKey;
     }
@@ -149,13 +219,17 @@ export class KeyRotator {
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/rotator.js")) {
   const rotator = new KeyRotator(["keyA", "keyB", "keyC"]);
   assert.strictEqual(rotator.getKey(), "keyA");
-  assert.strictEqual(rotator.getKey(), "keyB");
+  assert.strictEqual(rotator.getKey(), "keyA"); // sticky on keyA
+  rotator.markLimited("keyA");
+  assert.strictEqual(rotator.getKey(), "keyB"); // switches to keyB
+  assert.strictEqual(rotator.getKey(), "keyB"); // sticky on keyB
   rotator.markLimited("keyB");
   assert.strictEqual(rotator.getKey(), "keyC");
 
   // Test dead key exclusion
+  rotator.markDead("keyC");
   rotator.markDead("keyA");
-  assert.strictEqual(rotator.getKey(), "keyC"); // should skip keyA because it's marked dead
+  assert.strictEqual(rotator.getKey(), "keyB"); // keyA & keyC dead, keyB is only living key even if cooling
 
   // Test fatal payload error does not rotate
   let calledCount = 0;

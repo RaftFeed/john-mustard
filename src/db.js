@@ -266,6 +266,11 @@ export class Storage {
         model TEXT PRIMARY KEY,
         until_ms INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS bot_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     try { this.db.exec("ALTER TABLE todos ADD COLUMN deadline INTEGER"); } catch {}
@@ -428,17 +433,24 @@ export class Storage {
     this.db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?").run(id);
   }
 
-  listReminders(chatId) {
+  listReminders(chatId, targetDate = null) {
     const scope = getUserTodoScope(chatId, this);
+    const dayRange = parseWibDayRange(targetDate);
+    let dateFilter = "";
+    const dateParams = [];
+    if (dayRange) {
+      dateFilter = " AND COALESCE(event_at, remind_at) >= ? AND COALESCE(event_at, remind_at) <= ?";
+      dateParams.push(dayRange.startOfDay, dayRange.endOfDay);
+    }
     if (scope.isGroup) {
       return this.db
-        .prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending' ORDER BY COALESCE(event_at, remind_at) ASC")
-        .all(chatId);
+        .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending'${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+        .all(chatId, ...dateParams);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     return this.db
-      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' ORDER BY COALESCE(event_at, remind_at) ASC`)
-      .all(...scope.chatIds);
+      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending'${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+      .all(...scope.chatIds, ...dateParams);
   }
 
   deleteReminder(chatId, idOrQuery) {
@@ -504,7 +516,7 @@ export class Storage {
     return stmt.run(chatId, task, deadline, tag, cat, assignee || "", Date.now()).lastInsertRowid;
   }
 
-  getTodos(chatId, includeRoutine = false, assignee = null, includeDone = false) {
+  getTodos(chatId, includeRoutine = false, assignee = null, includeDone = false, targetDate = null) {
     const scope = getUserTodoScope(chatId, this);
     let showDone = Boolean(includeDone);
 
@@ -527,6 +539,12 @@ export class Storage {
       sql += " AND done = 0";
     }
     const params = [];
+
+    const dayRange = parseWibDayRange(targetDate);
+    if (dayRange) {
+      sql += " AND deadline >= ? AND deadline <= ?";
+      params.push(dayRange.startOfDay, dayRange.endOfDay);
+    }
 
     const isExplicitAll = assignee && /^(all|semua|keluarga|household)$/i.test(assignee.trim());
 
@@ -1194,6 +1212,26 @@ export class Storage {
       this.db.prepare("DELETE FROM model_cooldowns").run();
     } catch {}
   }
+
+  getSetting(key, defaultValue = null) {
+    if (!key) return defaultValue;
+    try {
+      const row = this.db.prepare("SELECT value FROM bot_settings WHERE key = ?").get(key);
+      return row ? row.value : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  setSetting(key, value) {
+    if (!key) return;
+    const now = Date.now();
+    try {
+      this.db
+        .prepare("INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES (?, ?, ?)")
+        .run(key, String(value), now);
+    } catch {}
+  }
 }
 
 export function formatPersonList(persons = []) {
@@ -1209,6 +1247,35 @@ export function formatPersonList(persons = []) {
     lines.push(`${idx + 1}. *${p.name}*${relStr}${roleStr}${phoneStr}${notesStr}`);
   });
   return lines.join("\n\n");
+}
+
+export function parseWibDayRange(dateInput) {
+  if (!dateInput) return null;
+  let y, m, d;
+  if (typeof dateInput === "string") {
+    const match = dateInput.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      [, y, m, d] = match;
+    } else {
+      const parsed = new Date(dateInput);
+      if (isNaN(parsed.getTime())) return null;
+      const wib = new Date(parsed.getTime() + 7 * 3600 * 1000);
+      y = String(wib.getUTCFullYear());
+      m = String(wib.getUTCMonth() + 1).padStart(2, "0");
+      d = String(wib.getUTCDate()).padStart(2, "0");
+    }
+  } else if (dateInput instanceof Date && !isNaN(dateInput.getTime())) {
+    const wib = new Date(dateInput.getTime() + 7 * 3600 * 1000);
+    y = String(wib.getUTCFullYear());
+    m = String(wib.getUTCMonth() + 1).padStart(2, "0");
+    d = String(wib.getUTCDate()).padStart(2, "0");
+  } else {
+    return null;
+  }
+
+  const startOfDay = new Date(`${y}-${m}-${d}T00:00:00+07:00`).getTime();
+  const endOfDay = new Date(`${y}-${m}-${d}T23:59:59.999+07:00`).getTime();
+  return { startOfDay, endOfDay, y: Number(y), m: Number(m), d: Number(d), dateStr: `${y}-${m}-${d}` };
 }
 
 export function formatWibDateTime(dateInput) {
@@ -1227,14 +1294,22 @@ export function formatWibDateTime(dateInput) {
   return `${dayName}, ${dateNum} ${monthName} ${year} ${hours}.${minutes} WIB`;
 }
 
-export function formatRemindersList(reminders = []) {
+export function formatRemindersList(reminders = [], options = {}) {
+  const dayRange = options?.targetDate ? parseWibDayRange(options.targetDate) : null;
+  const fullDaysId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
   if (!reminders || reminders.length === 0) {
+    if (dayRange) {
+      const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
+      const dayName = fullDaysId[dObj.getUTCDay()];
+      return `*[Daftar Acara & Pengingat]*\nTidak ada jadwal acara atau pengingat untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+    }
     return "*[Daftar Acara & Pengingat]*\nBelum ada jadwal acara atau pengingat aktif.";
   }
 
   const now = new Date();
   const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
   const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
   function getWibMidnight(date) {
@@ -1249,9 +1324,14 @@ export function formatRemindersList(reminders = []) {
   else if (hour >= 15 && hour < 18) salam = "Selamat sore";
   else if (hour >= 18 || hour < 4) salam = "Selamat malam";
 
-  const lines = [
-    `🗓️ [Daftar Acara & Pengingat]\n_${salam}!_\n`
-  ];
+  let header = `🗓️ [Daftar Acara & Pengingat]\n_${salam}!_\n`;
+  if (dayRange) {
+    const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
+    const dayName = fullDaysId[dObj.getUTCDay()];
+    header = `🗓️ [Jadwal Hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
+  }
+
+  const lines = [header];
 
   reminders.forEach((r, idx) => {
     let badge = "⚪";
@@ -1392,14 +1472,22 @@ export function formatFeatureRequestsList(requests) {
   return lines.join("\n").trim();
 }
 
-export function formatTodoList(todos, isGroup = false) {
+export function formatTodoList(todos, isGroup = false, options = {}) {
+  const dayRange = options?.targetDate ? parseWibDayRange(options.targetDate) : null;
+  const fullDaysId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
   if (!todos || todos.length === 0) {
+    if (dayRange) {
+      const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
+      const dayName = fullDaysId[dObj.getUTCDay()];
+      return `*[Pengingat Tugas]*\nTidak ada tugas atau deadline untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+    }
     return "*Tidak ada tugas pending.* To-do list aman semua.";
   }
 
   const now = new Date();
   const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
   // WIB (UTC+7) midnight helper for exact calendar-day countdown
   const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -1415,9 +1503,14 @@ export function formatTodoList(todos, isGroup = false) {
   else if (hour >= 15 && hour < 18) salam = "Selamat sore";
   else if (hour >= 18 || hour < 4) salam = "Selamat malam";
 
-  const lines = [
-    `🌄 [Pengingat Tugas]\n_${salam}!_\n`
-  ];
+  let header = `🌄 [Pengingat Tugas]\n_${salam}!_\n`;
+  if (dayRange) {
+    const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
+    const dayName = fullDaysId[dObj.getUTCDay()];
+    header = `🌄 [Tugas Hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
+  }
+
+  const lines = [header];
 
   todos.forEach((item, index) => {
     let badge = "⚪";
