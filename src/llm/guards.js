@@ -315,8 +315,10 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
   const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan|benerin|atur|setel|setting|seting|pasang|masukin|masuk|beres|kelar)/i;
-  const promiseRegex = /(?:ini\s+langsung|segera|langsung)\s+(?:aku|saya|gw|ku)\s*(?:pc|japri|dm|wa|kirimkan\s+pesan|chat)/i;
-  return claimRegex.test(text) || promiseRegex.test(text);
+  const promiseRegex = /(?:ini\s+langsung|segera|langsung|coba|nanti|akan|biar)\s+(?:aku|saya|gw|gua|ku|di)\s*(?:yang\s+)?(?:coba\s+|bantu\s+)?(?:pc|japri|dm|wa|kirimkan?\s+pesan|chat|tanyain|tanyakan|hubungi|kontak|sambungkan)/i;
+  const contactPromiseRegex = /(?:aku|saya|gw|gua|ku)\s*(?:yang\s+)?(?:coba\s+|bantu\s+)?(?:tanyain|tanyakan|hubungi|kontak|pc|japri|dm|wa|chat|kirimkan?\s+pesan)/i;
+  const verbalHoldRegex = /(?:tanyain|hubungi|kontak|pc|japri|chat).*(?:sebentar\s+ya|tunggu\s+sebentar)/i;
+  return claimRegex.test(text) || promiseRegex.test(text) || contactPromiseRegex.test(text) || verbalHoldRegex.test(text);
 }
 
 export function isAmbiguousScheduleStatement(text = "") {

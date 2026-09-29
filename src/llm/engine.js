@@ -120,9 +120,11 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 - DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
 - PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.
 - DILARANG MENGARANG JAM / TUGAS (ANTI-ASUMSI WAKTU & TUGAS): Jika ada anggota keluarga yang memberi kabar, mengeluh, atau berkomentar waktu (contoh: "Jam 17 blom pulang", "masih di jalan", "belum kelar"), DILARANG KERAS mengarang jam baru (seperti menebak jam 19.00) dan DILARANG langsung memanggil updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau diundur ke jam berapa jadwalnya?".
-- RELAY PESAN DI GRUP ("BILANGIN X" / "KASIH TAU X"):
+- RELAY PESAN DI GRUP ("BILANGIN X" / "KASIH TAU X" / "TANYAIN X"):
+  • TARGET KONTAK WHITELIST: HANYA berlaku untuk kontak yang terdaftar di whitelist keluarga (Rafid, Karimah, Razita, Papi, Mami).
   • JALUR PRIBADI (PC / JAPRI / WA / SALURAN PRIBADI): Jika anggota grup meminta mengirim pesan secara pribadi (contoh: "pc", "japri", "japriii", "wa rafid", "dm", "saluran pribadi", "jangan di grup", "bangunin lewat pc", "telp/bangunin"), WAJIB panggil tool sendDirectMessage ke target kontak yang dimaksud! Di balasan grup, konfirmasi santun 1 kalimat ke pengirim bahwa pesan pribadi sudah terkirim (contoh: "Siap Mami, udah aku japri ke Rafid lewat chat pribadi ya."). DILARANG KERAS berteriak/meneruskan isi pesan atau me-mention target di obrolan grup saat disuruh mengirim jalur pribadi!
   • RELAY SANTAI DI GRUP: HANYA jika anggota grup meminta menyampaikan pesan santai tanpa instruksi jalur pribadi (contoh: "bilangin mami itu cuma typo doang", "kasih tau razita jangan lupa makan"), DILARANG memanggil sendDirectMessage; cukup balas di grup dengan me-mention/men-tag orangnya (misal: "@Mami katanya itu cuma typo doang").
+  • PIHAK LUAR / NON-WHITELIST (DILARANG KERAS SOK TAHU & JANJI PALSU): Jika anggota keluarga meminta menghubungi, menanyakan, atau mengirim pesan ke pihak luar, nomor asing, toko, customer service, atau pihak ketiga (contoh: "waLondon", pihak bank, olshop): DILARANG KERAS sok tahu atau mengumbar janji palsu (DILARANG berkata "coba aku tanyain pihak luar ya", "aku bantu hubungi sebentar ya", dsb). WAJIB tolak dengan jujur, hangat, dan santun bahwa bot adalah asisten internal keluarga yang hanya punya akses ke kontak whitelist, tidak punya akses menghubungi pihak luar, dan sarankan anggota keluarga menghubungi pihak tersebut secara langsung!
 - MENTION / TAG ANGGOTA: Jika me-mention atau ngetag seseorang di obrolan grup, bisa gunakan '@Nama' (misal: @Mami, @Razita, @Rafid) atau format nomor telepon '@<nomor_telepon>' (misal: @6281234567890). DILARANG menggunakan ID LID internal atau nomor acak.`
     : "";
 
@@ -375,15 +377,15 @@ ${isBotQuoted
           contents.push({
             role: "user",
             parts: [{
-              text: "SYSTEM INTEGRITY FAULT: Kamu mengklaim telah melakukan tindakan/mutasi data pada sistem, tapi BELUM memanggil functionCall ke tool terkait! Eksekusi functionCall ke tool sekarang."
+              text: "SYSTEM INTEGRITY FAULT: Kamu mengklaim telah melakukan tindakan/mutasi data atau berjanji menghubungi pihak luar, tapi BELUM memanggil functionCall ke tool terkait! Jika diminta menghubungi pihak luar yang tidak terdaftar di whitelist (misal: waLondon, orang asing, pihak ketiga), DILARANG KERAS mengumbar janji palsu; WAJIB jelaskan dengan jujur dan tolak secara santun bahwa kamu tidak punya akses menghubungi pihak luar!"
             }]
           });
           toolConfig = { functionCallingConfig: { mode: "ANY" } };
           continue;
         } else {
           return isGroupChat
-            ? "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik."
-            : "Waduh, belum ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik, Lord.";
+            ? "Waduh, aku kan cuma asisten internal keluarga dan cuma bisa kirim pesan ke kontak whitelist yang terdaftar. Aku gak punya akses buat hubungi pihak luar, coba hubungi langsung ya!"
+            : "Woles Lord, gw kan cuma asisten internal dan gak punya akses buat hubungi pihak luar. Coba kontak langsung aja ya!";
         }
       }
       break;

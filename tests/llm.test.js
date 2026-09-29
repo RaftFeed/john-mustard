@@ -35,6 +35,10 @@ test("LLM Guards: detectUnexecutedMutationClaim identifies false completion clai
   assert.strictEqual(detectUnexecutedMutationClaim("Udah masuk to-do list", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("udah aku japri ke Rafid ya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, coba aku tanyain atau bantu hubungi pihak waLondon-nya lewat pesan pribadi ya, Mi. Sebentar ya!", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Bentar ya, biar aku hubungi admin tokonya via WA.", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Nanti aku tanyakan langsung ke pihak CS ya.", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Maaf Mami, aku hanya asisten internal keluarga dan tidak punya akses untuk menghubungi pihak waLondon. Mami bisa langsung chat atau hubungi mereka sendiri yaa.", []), false);
   assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", ["sendDirectMessage"]), false);
   assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
   assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
