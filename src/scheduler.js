@@ -102,12 +102,17 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
       const monthName = monthsId[nowWib.getUTCMonth()];
       const year = nowWib.getUTCFullYear();
 
+      const isEvent = Boolean(item.event_at || item.task_type === "event");
+      const title = isEvent ? "⏰ [Pengingat Acara & Agenda]\n_Waktunya jadwal kegiatan!_\n" : "⏰ [Pengingat]\n_Waktunya pengingat!_\n";
+      const badge = isEvent ? "[ACARA]" : "[PENGINGAT]";
+      const tag = isEvent ? "`#acara`" : "`#pengingat`";
+
       const lines = [
-        "⏰ [Pengingat Acara & Agenda]",
-        "_Waktunya jadwal kegiatan!_\n",
-        `🔔 *[ACARA] ${item.message}*`,
+        title.trim(),
+        "",
+        `🔔 *${badge} ${item.message}*`,
         `├── Hari ini (${dayName}, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`,
-        "└── `#acara`"
+        `└── ${tag}`
       ];
       await textSender(item.chat_id, lines.join("\n"));
     }

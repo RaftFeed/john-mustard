@@ -230,6 +230,30 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   assert.strictEqual(rem3.event_at, null);
   assert.strictEqual(rem3.remind_at, new Date(regIso).getTime());
 
+  // Event where LLM set remindAtIso == eventAtIso (must fallback to 1h before)
+  const resSameTime = await executeTool("addReminder", {
+    message: "Latihan OSIS",
+    isEvent: true,
+    eventAtIso: eventIso,
+    remindAtIso: eventIso
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(resSameTime.toolResult.success, true);
+  const remSame = store.getReminderById(resSameTime.toolResult.id);
+  assert.strictEqual(remSame.event_at, new Date(eventIso).getTime());
+  assert.strictEqual(remSame.remind_at, remSame.event_at - 3600_000);
+
+  // Inferred event from message keyword "jadwal" when isEvent omitted
+  const resInferred = await executeTool("addReminder", {
+    message: "Pengingat jadwal dan agenda hari ini",
+    remindAtIso: eventIso
+  }, { store, chatId: "test-chat" });
+
+  assert.strictEqual(resInferred.toolResult.success, true);
+  const remInf = store.getReminderById(resInferred.toolResult.id);
+  assert.strictEqual(remInf.event_at, new Date(eventIso).getTime());
+  assert.strictEqual(remInf.remind_at, remInf.event_at - 3600_000);
+
   // Test listReminders with targetDateIso
   const monTime = new Date("2026-09-28T10:00:00+07:00").getTime();
   const tueTime = new Date("2026-09-29T10:00:00+07:00").getTime();

@@ -132,5 +132,24 @@ test("Scheduler: 2-stage event reminder pings early then pings on event start", 
   assert.ok(sentMessages[1].text.includes("Waktunya jadwal kegiatan"));
   assert.ok(sentMessages[1].text.includes("Rapat Pleno"));
 
+  // Phase 3: Regular reminder without event_at
+  const regItem = {
+    id: 11,
+    chat_id: "user1",
+    message: "Minum obat batuk",
+    remind_at: Date.now() - 500,
+    event_at: null,
+    status: "pending"
+  };
+  mockStore.getPendingReminders = () => [regItem];
+  mockStore.claimReminder = (id) => (id === 11 ? true : false);
+  mockStore.markReminderDone = (id) => { regItem.status = "sent"; };
+
+  const res3 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res3.sent, 1);
+  assert.ok(sentMessages[2].text.includes("[PENGINGAT] Minum obat batuk"));
+  assert.ok(sentMessages[2].text.includes("#pengingat"));
+  assert.ok(!sentMessages[2].text.includes("[ACARA]"));
+
   clearActiveTimers();
 });

@@ -838,8 +838,18 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (isNaN(eventAt)) eventAt = null;
     if (isNaN(remindAt)) remindAt = null;
 
-    if ((args.isEvent || args.eventAtIso) && !eventAt && remindAt) {
+    const isEventMessage = Boolean(
+      args.isEvent ||
+      args.eventAtIso ||
+      /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas)\b/i.test(args.message || "")
+    );
+
+    if (isEventMessage && !eventAt && remindAt) {
       eventAt = remindAt;
+      remindAt = null;
+    }
+
+    if (eventAt && remindAt && remindAt >= eventAt) {
       remindAt = null;
     }
 

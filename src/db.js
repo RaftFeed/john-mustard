@@ -352,7 +352,7 @@ export class Storage {
     let finalRemindAt = typeof remindAtTimestamp === "number" ? remindAtTimestamp : null;
 
     if (finalEventAt) {
-      if (!finalRemindAt) {
+      if (!finalRemindAt || finalRemindAt >= finalEventAt) {
         finalRemindAt = finalEventAt - 3600_000;
       }
       if (finalRemindAt <= Date.now()) {
@@ -520,7 +520,7 @@ export class Storage {
     const newMessage = message !== undefined && message !== null ? message : row.message;
     const newEventAt = eventAt !== undefined ? eventAt : (row.event_at || null);
     let newRemindAt = remindAt !== undefined && remindAt !== null ? remindAt : row.remind_at;
-    if (eventAt !== undefined && remindAt === undefined && newEventAt) {
+    if (newEventAt && (remindAt === undefined || newRemindAt >= newEventAt)) {
       newRemindAt = Math.max(Date.now(), newEventAt - 3600_000);
     }
     const newRecurrence = recurrence !== undefined ? recurrence : row.recurrence;
