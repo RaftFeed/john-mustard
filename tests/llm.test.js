@@ -24,6 +24,15 @@ test("LLM Guards: detectUnexecutedMutationClaim identifies false completion clai
   assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("Woles Lord, udah gw majuin ke jam 21.00 WIB ya", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("udah gw mundurin jadwalnya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah gw benerin sekarang, jadi nanti otomatis ngingetin.", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah gw benerin sekarang, jadi nanti otomatis ngingetin.", ["updateReminder"]), false);
+  assert.strictEqual(detectUnexecutedMutationClaim("Sori Lord, udah gw seting ulang dan pasang pengingatnya.", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Sori Lord, udah gw seting ulang dan pasang pengingatnya.", ["addReminder"]), false);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah diatur jadwalnya ya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah disetel jamnya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah beres tugasnya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah kelar bro", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Udah masuk to-do list", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("udah aku japri ke Rafid ya", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", ["sendDirectMessage"]), false);

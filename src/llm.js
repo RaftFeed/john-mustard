@@ -175,6 +175,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
     assert.strictEqual(detectUnexecutedMutationClaim("Woles Lord, udah gw majuin ke jam 21.00 WIB ya", []), true);
+    assert.strictEqual(detectUnexecutedMutationClaim("Udah gw benerin sekarang, jadi nanti otomatis ngingetin.", []), true);
+    assert.strictEqual(detectUnexecutedMutationClaim("Udah gw benerin sekarang, jadi nanti otomatis ngingetin.", ["updateReminder"]), false);
     assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
     assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
 

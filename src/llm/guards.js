@@ -314,7 +314,7 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   if (!text) return false;
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
-  const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan)/i;
+  const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan|benerin|atur|setel|setting|seting|pasang|masukin|masuk|beres|kelar)/i;
   const promiseRegex = /(?:ini\s+langsung|segera|langsung)\s+(?:aku|saya|gw|ku)\s*(?:pc|japri|dm|wa|kirimkan\s+pesan|chat)/i;
   return claimRegex.test(text) || promiseRegex.test(text);
 }

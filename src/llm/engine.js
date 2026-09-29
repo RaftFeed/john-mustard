@@ -301,7 +301,7 @@ ${isBotQuoted
       });
     }
   } else if (audio && !media) {
-    userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya." });
+    userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya. PENTING: Jika audio tidak jelas, hening, atau instruksi gagal dipahami, JANGAN PERNAH berasumsi atau mengarang data/deadline, dan JANGAN katakan beres. Katakan terus terang bahwa audio tidak jelas atau gagal diproses." });
   }
 
   const contents = [];
@@ -490,15 +490,19 @@ ${isBotQuoted
       finalReply = text;
     }
   } else {
-    finalReply = lastFormattedList || (isGroupChat ? "Beres." : "Beres, Lord.");
+    finalReply = lastFormattedList || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Gagal memproses aksi nih. Coba sebutkan lagi perintahnya." : "Gagal memproses aksi nih, Lord. Coba sebutkan lagi perintahnya."));
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);
   finalReply = sanitizeLatexForWhatsApp(finalReply);
   finalReply = formatForWhatsApp(finalReply);
 
-  if (isAmbiguousSchedule && detectUnexecutedMutationClaim(finalReply, successfulMutations)) {
-    finalReply = "Mau diundur ke jam berapa jadwalnya?";
+  if (detectUnexecutedMutationClaim(finalReply, successfulMutations)) {
+    finalReply = isAmbiguousSchedule
+      ? "Mau diundur ke jam berapa jadwalnya?"
+      : (isGroupChat
+          ? "Waduh, belum sempat ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik."
+          : "Waduh, belum sempat ke-update di database nih. Coba sebutin perintahnya lagi lebih spesifik, Lord.");
   }
 
   const noFluff = isNoFluffRequest(userText);
