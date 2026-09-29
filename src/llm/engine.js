@@ -256,11 +256,15 @@ ${isBotQuoted
     const base64Data = Buffer.isBuffer(audio.buffer)
       ? audio.buffer.toString("base64")
       : (audio.base64 || audio.data);
+    const cleanMime = String(audio.mimetype || "audio/ogg").split(";")[0].trim();
     userParts.push({
       inlineData: {
-        mimeType: audio.mimetype || "audio/ogg",
+        mimeType: cleanMime || "audio/ogg",
         data: base64Data
       }
+    });
+    userParts.push({
+      text: "[INSTRUKSI AUDIO/PESAN SUARA]: Audio ini menggunakan Bahasa Indonesia (mungkin ada bahasa percakapan sehari-hari, slang/gaul, dialek, atau istilah teknis/campuran bahasa Inggris). Dengarkan dengan sangat teliti setiap pengucapan kata kunci, nama agenda, dan angka jam/waktu dalam bahasa Indonesia (contoh: 'jam 3 sore' = 15.00, 'jam 5 sore' = 17.00, 'jam 7 malam' = 19.00, 'balikin', 'undur', 'bukan').\n- Jika audio berisi perintah mengubah atau menambah to-do/acara/reminder, pastikan jam target dan nama tugas dipahami secara presisi sebelum memanggil tools.\n- Pada kalimat pertama responmu, sebutkan secara singkat apa yang kamu dengar (contoh: 'Mendengar VN: undur acara ke jam 15.00...') agar pengguna tahu audio ditangkap dengan benar.\n- PENTING: Jika audio tidak jelas, hening, atau instruksi gagal dipahami, JANGAN PERNAH berasumsi atau mengarang data/deadline/jam, dan JANGAN katakan beres. Katakan terus terang bahwa suaranya kurang jelas dan tanyakan konfirmasinya."
     });
   }
   if (media) {
@@ -302,8 +306,6 @@ ${isBotQuoted
         text: "[INSTRUKSI SISTEM PENGINGAT ACARA]: Pengguna meminta diingatkan lagi (bukan mengundur acara). WAJIB panggil 'addReminder' untuk waktu tersebut (isEvent: false, taskType: 'reminder'). DILARANG memanggil 'updateReminder' atau menggeser jam mulai acara! Beritahukan ke pengguna bahwa pengingat telah diset dan jam acara tetap sama."
       });
     }
-  } else if (audio && !media) {
-    userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya. PENTING: Jika audio tidak jelas, hening, atau instruksi gagal dipahami, JANGAN PERNAH berasumsi atau mengarang data/deadline, dan JANGAN katakan beres. Katakan terus terang bahwa audio tidak jelas atau gagal diproses." });
   }
 
   const contents = [];

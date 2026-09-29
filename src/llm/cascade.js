@@ -16,9 +16,22 @@ export const SMART_CASCADE = [
   "gemini-flash-lite-latest"
 ];
 
+export const AUDIO_CASCADE = [
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest"
+];
+
 export const DEFAULT_CASCADE = FAST_CASCADE;
 
 export function selectModelCascade(text = "", options = {}) {
+  if (options && options.audio) {
+    return AUDIO_CASCADE;
+  }
+  if (options && options.media) {
+    return SMART_CASCADE;
+  }
   const t = String(text || "").trim();
   if (/(?:^|\s)[#!]pro\b|\b(?:mode\s+pro|pake\s+pro)\b/i.test(t)) {
     return SMART_CASCADE;

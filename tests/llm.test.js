@@ -13,7 +13,11 @@ import {
   isFollowUpReminderIntent,
   isQuotedEventReminder,
   isAmbiguousEventReply,
-  processChat
+  processChat,
+  selectModelCascade,
+  AUDIO_CASCADE,
+  SMART_CASCADE,
+  FAST_CASCADE
 } from "../src/llm.js";
 import { formatOutboundMentions } from "../src/waha.js";
 import { executeTool } from "../src/llm/tools.js";
@@ -725,6 +729,68 @@ test("LLM Engine: Tool guard blocks updateReminder if user said 'ingetin lagi' o
     // Verify reminder in DB was NOT moved to 19:00
     const rem = store.getReminderById(remId);
     assert.strictEqual(rem.event_at, eventTime);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Cascade: selectModelCascade routes audio to AUDIO_CASCADE and media to SMART_CASCADE", () => {
+  const audioCascade = selectModelCascade("", { audio: { buffer: Buffer.from("test") } });
+  assert.strictEqual(audioCascade[0], "gemini-3.5-flash");
+  assert.strictEqual(audioCascade, AUDIO_CASCADE);
+
+  const mediaCascade = selectModelCascade("", { media: { buffer: Buffer.from("test") } });
+  assert.strictEqual(mediaCascade, SMART_CASCADE);
+
+  const defaultCascade = selectModelCascade("halo apa kabar");
+  assert.strictEqual(defaultCascade, FAST_CASCADE);
+});
+
+test("LLM Engine: audio input injects Indonesian voice note instructions and cleans mimetype", async () => {
+  const store = new Storage(":memory:");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Mendengar VN: undur acara. Sip Lord, udah diundur ya." }] } }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838",
+      audio: {
+        buffer: Buffer.from("fake-audio"),
+        mimetype: "audio/ogg; codecs=opus",
+        filename: "audio.ogg"
+      }
+    });
+
+    assert.ok(capturedPayload, "Payload must be sent to LLM");
+    const userContent = capturedPayload.contents.find((c) => c.role === "user");
+    assert.ok(userContent, "Must have user content");
+
+    // Verify inlineData clean mimetype (codecs stripped)
+    const inlineData = userContent.parts.find((p) => p.inlineData);
+    assert.ok(inlineData, "Must have inlineData");
+    assert.strictEqual(inlineData.inlineData.mimeType, "audio/ogg");
+
+    // Verify Indonesian audio prompt injection
+    const textPart = userContent.parts.find((p) => p.text?.includes("[INSTRUKSI AUDIO/PESAN SUARA]"));
+    assert.ok(textPart, "Must have audio instructions");
+    assert.ok(textPart.text.includes("Bahasa Indonesia"));
+    assert.ok(textPart.text.includes("Mendengar VN:"));
   } finally {
     globalThis.fetch = originalFetch;
   }
