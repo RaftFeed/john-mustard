@@ -745,7 +745,7 @@ test("LLM Engine: Tool guard blocks updateReminder if user said 'ingetin lagi' o
 
 test("LLM Cascade: selectModelCascade routes audio to AUDIO_CASCADE and media to SMART_CASCADE", () => {
   const audioCascade = selectModelCascade("", { audio: { buffer: Buffer.from("test") } });
-  assert.strictEqual(audioCascade[0], "gemini-3.5-flash");
+  assert.strictEqual(audioCascade[0], "ag/gemini-3.8-flash");
   assert.strictEqual(audioCascade, AUDIO_CASCADE);
 
   const mediaCascade = selectModelCascade("", { media: { buffer: Buffer.from("test") } });

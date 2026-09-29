@@ -21,10 +21,16 @@ Gunakan bahasa Indonesia yang ringkas.`;
 
   try {
     const data = await rotator.execute(async (key) => {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${key}`;
+      const baseUrl = (process.env.NINEROUTER_URL || "http://localhost:20128").replace(/\/+$/, "");
+      const model = process.env.GEMINI_VISION_MODEL || "ag/gemini-3.8-flash";
+      const url = `${baseUrl}/v1beta/models/${model}:generateContent`;
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+          "x-goog-api-key": key
+        },
         body: JSON.stringify({
           contents: [
             {

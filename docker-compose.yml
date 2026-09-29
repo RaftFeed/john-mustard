@@ -21,6 +21,19 @@ services:
     networks:
       - bot-net
 
+  9router:
+    image: decolua/9router:latest
+    container_name: john-mustard-9router
+    restart: unless-stopped
+    ports:
+      - "20128:20128"
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - ./9router-data:/app/data
+    networks:
+      - bot-net
+
   bot:
     build: .
     container_name: john-mustard-bot
@@ -28,6 +41,7 @@ services:
     depends_on:
       - waha
       - runner
+      - 9router
     ports:
       - "4500:4500"
     environment:
@@ -37,6 +51,8 @@ services:
       - DB_PATH=/app/data/bot.db
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - PYTHON_RUNNER_URL=http://runner:8000/run
+      - NINEROUTER_URL=${NINEROUTER_URL:-http://john-mustard-9router:20128}
+      - NINEROUTER_KEY=${NINEROUTER_KEY}
     volumes:
       - ./.env:/app/.env:ro
       - ./config:/app/config:ro

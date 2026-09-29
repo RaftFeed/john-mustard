@@ -1,0 +1,8 @@
+9router-data
+node_modules
+.git
+.env
+data
+vault
+waha_sessions
+bot.db

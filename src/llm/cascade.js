@@ -1,26 +1,23 @@
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
-const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "gemini-3.5-flash-lite";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "ag/gemini-3.8-flash-high";
+const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "ag/gemini-3.8-flash-high";
 
 export const FAST_CASCADE = [
   DEFAULT_MODEL,
-  "gemini-3.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-3.8-flash",
-  "gemini-3.6-flash"
+  "ag/gemini-3.8-flash",
+  "ag/gemini-3.7-flash-high",
+  "ag/gemini-3.6-flash-high"
 ];
 
 export const SMART_CASCADE = [
   PRO_MODEL,
-  "gemini-3.5-flash",
-  "gemini-3.8-flash",
-  "gemini-flash-lite-latest"
+  "ag/gemini-3.8-flash",
+  "ag/gemini-3.7-flash-high"
 ];
 
 export const AUDIO_CASCADE = [
-  "gemini-3.5-flash",
-  "gemini-3.8-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-flash-lite-latest"
+  "ag/gemini-3.8-flash",
+  "ag/gemini-3.8-flash-high",
+  "ag/gemini-3.7-flash-high"
 ];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;
@@ -87,14 +84,21 @@ export function getActiveModels(baseModels = DEFAULT_CASCADE, store = null) {
   return [...healthy, ...cooling];
 }
 
+const NINEROUTER_BASE_URL = () => (process.env.NINEROUTER_URL || "http://localhost:20128").replace(/\/+$/, "");
+
 async function callGemini(rotator, model, payload) {
   return rotator.execute(async (key) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    const baseUrl = NINEROUTER_BASE_URL();
+    const url = `${baseUrl}/v1beta/models/${model}:generateContent`;
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${key}`,
+        "x-goog-api-key": key
+      },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(25000)
     });
     if (!res.ok) {
       const err = new Error(await res.text());
@@ -152,10 +156,15 @@ export async function generateContent(rotator, payload, baseCascade = null) {
 export async function getEmbedding(rotator, text) {
   if (!text || typeof text !== "string" || !text.trim() || !rotator) return null;
   return rotator.execute(async (key) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${key}`;
+    const baseUrl = NINEROUTER_BASE_URL();
+    const url = `${baseUrl}/v1beta/models/gemini-embedding-001:embedContent`;
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${key}`,
+        "x-goog-api-key": key
+      },
       body: JSON.stringify({
         model: "models/gemini-embedding-001",
         content: { parts: [{ text: text.trim().slice(0, 2048) }] }
@@ -165,5 +174,5 @@ export async function getEmbedding(rotator, text) {
     if (!res.ok) throw new Error(`Embedding API error (${res.status}): ${await res.text()}`);
     const data = await res.json();
     return data.embedding?.values || null;
-  });
+  }).catch(() => null);
 }

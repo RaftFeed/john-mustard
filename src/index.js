@@ -10,16 +10,25 @@ import { autoCrystallizeTurn } from "./crystallize.js";
 import { initSkillsWatcher } from "./skills_sync.js";
 
 const PORT = process.env.PORT || 4000;
-const rawKeys = process.env.GEMINI_KEYS || "";
+const rawKeys = process.env.NINEROUTER_KEY || process.env.GEMINI_KEYS || "";
 const keys = rawKeys.split(",").map((k) => k.trim()).filter(Boolean);
 
 if (keys.length === 0) {
-  console.warn("PERINGATAN: GEMINI_KEYS di .env masih kosong.");
+  console.warn("PERINGATAN: NINEROUTER_KEY atau GEMINI_KEYS di .env masih kosong.");
 }
 
 const dbPath = process.env.DB_PATH || "bot.db";
 const store = new Storage(dbPath);
 setWahaStore(store);
+
+// Scrub legacy Gemini API key from persistent settings
+try {
+  const oldActiveKey = store.getSetting("active_gemini_key");
+  if (oldActiveKey && (oldActiveKey.startsWith("AQ.") || oldActiveKey.startsWith("AIza"))) {
+    store.setSetting("active_gemini_key", keys[0] || "");
+  }
+} catch {}
+
 const rotator = new KeyRotator(keys.length > 0 ? keys : ["dummy_key"], { store });
 
 // Jalankan runner pengingat (cek tiap 15 detik)
@@ -487,7 +496,7 @@ async function handleIncomingMessage(msg) {
 const app = createServer(handleIncomingMessage, { store, rotator });
 app.listen(PORT, () => {
   console.log(`[Server] John Mustard Bot aktif di port ${PORT}`);
-  console.log(`[Auth] Terpasang ${keys.length} Gemini API Key`);
+  console.log(`[Auth] Terpasang ${keys.length} Gateway/API Key`);
   console.log(`[Whitelist] Nomor WA: ${process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE || "SEMUA"}`);
   console.log(`[Vault] Document Vault siap di folder ./vault`);
   console.log(`[Skills] 2-Way Skills Sync aktif di folder ./${SKILLS_DIR}`);
