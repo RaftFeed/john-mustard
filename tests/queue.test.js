@@ -45,3 +45,31 @@ test("ChatQueue: mid-turn mailbox injection routes messages while turn is active
   assert.strictEqual(midTurnReceived.length, 1);
   assert.strictEqual(midTurnReceived[0].body, "pesan susulan saat turn jalan");
 });
+
+test("ChatQueue: fast commands bypass mid-turn mailbox and execute as separate sequential turn", async () => {
+  const processed = [];
+  const midTurnReceived = [];
+
+  const fakeHandler = async (msg) => {
+    processed.push(msg.body);
+    await new Promise((r) => setTimeout(r, 60));
+    if (msg.mailbox && msg.mailbox.length > 0) {
+      const steered = msg.mailbox.splice(0, msg.mailbox.length);
+      midTurnReceived.push(...steered);
+    }
+  };
+
+  const queue = createDebounceQueue(fakeHandler, 20);
+  queue({ from: "chat3", body: "pesan awal turn panjang", id: "m1" });
+
+  setTimeout(() => {
+    queue({ from: "chat3", body: "1 apus", id: "m2" });
+  }, 35);
+
+  await new Promise((r) => setTimeout(r, 180));
+
+  assert.strictEqual(midTurnReceived.length, 0); // Not injected into active mailbox!
+  assert.strictEqual(processed.length, 2); // Executed as clean second turn!
+  assert.strictEqual(processed[1], "1 apus");
+});
+

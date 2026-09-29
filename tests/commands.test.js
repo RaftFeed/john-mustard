@@ -56,3 +56,82 @@ test("Commands: executeFastCommand executes ping, dew, and task commands", async
   const delRes = await executeFastCommand(delCmd, ctx);
   assert.ok(delRes.includes("berhasil dihapus"));
 });
+
+test("Commands: parseFastCommand parses explicit target keywords", () => {
+  const remDel1 = parseFastCommand("hapus acara 1");
+  assert.strictEqual(remDel1.type, "delete");
+  assert.strictEqual(remDel1.target, "reminder");
+  assert.strictEqual(remDel1.id, 1);
+
+  const remDel2 = parseFastCommand("1 acara apus");
+  assert.strictEqual(remDel2.type, "delete");
+  assert.strictEqual(remDel2.target, "reminder");
+  assert.strictEqual(remDel2.id, 1);
+
+  const todoDel = parseFastCommand("hapus tugas 2");
+  assert.strictEqual(todoDel.type, "delete");
+  assert.strictEqual(todoDel.target, "todo");
+  assert.strictEqual(todoDel.id, 2);
+
+  const remDone = parseFastCommand("acara 1 kelar");
+  assert.strictEqual(remDone.type, "done");
+  assert.strictEqual(remDone.target, "reminder");
+  assert.strictEqual(remDone.id, 1);
+
+  const todoDone = parseFastCommand("tugas 3 beres");
+  assert.strictEqual(todoDone.type, "done");
+  assert.strictEqual(todoDone.target, "todo");
+  assert.strictEqual(todoDone.id, 3);
+});
+
+test("Commands: executeFastCommand resolves context between To-Do and Reminder", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "context_chat";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Lord" };
+
+  // Setup: 1 To-Do and 1 Reminder
+  store.addTodo(chatId, "LKP Praktikum AI");
+  store.addReminder(chatId, "Pasar malam sama Dorime", Date.now() + 86400000);
+
+  assert.strictEqual(store.getTodos(chatId, true).length, 1);
+  assert.strictEqual(store.listReminders(chatId).length, 1);
+
+  // Scenario 1: User quotes an Acara list with "1 apus" -> deletes Reminder, NOT Todo
+  const quotedAcara = {
+    content: "[Daftar Acara & Pengingat]\nSelamat siang!\n\n[1] Pasar malam sama Dorime\n— H-16 (Kam, 15 Okt 2026 17:00)\n  sekali"
+  };
+  const res1 = await executeFastCommand({ type: "delete", id: 1, target: "auto" }, { ...ctx, quoted: quotedAcara });
+  assert.ok(res1.includes("Acara/pengingat #1 berhasil dihapus"));
+  assert.strictEqual(store.listReminders(chatId).length, 0); // Reminder deleted
+  assert.strictEqual(store.getTodos(chatId, true).length, 1); // Todo remains intact!
+
+  // Re-add reminder for scenario 2
+  store.addReminder(chatId, "Meeting Proyek", Date.now() + 86400000);
+
+  // Scenario 2: User quotes a To-Do list with "1 apus" -> deletes Todo, NOT Reminder
+  const quotedTodo = {
+    content: "🌄 [To-Do List]\nSelamat siang!\n\n🟡 [1] LKP Praktikum AI"
+  };
+  const res2 = await executeFastCommand({ type: "delete", id: 1, target: "auto" }, { ...ctx, quoted: quotedTodo });
+  assert.ok(res2.includes("Tugas #1 berhasil dihapus"));
+  assert.strictEqual(store.getTodos(chatId, true).length, 0); // Todo deleted
+  assert.strictEqual(store.listReminders(chatId).length, 1); // Reminder remains intact!
+
+  // Re-add todo and setup scenario 3 (Chat history context without quote)
+  store.addTodo(chatId, "Beli beras");
+  store.saveChatMessage(chatId, "model", "[Daftar Acara & Pengingat]\n[1] Meeting Proyek\n— H-1");
+
+  // User sends "1 apus" without quote, but last bot message was Acara list -> deletes Reminder!
+  const res3 = await executeFastCommand({ type: "delete", id: 1, target: "auto" }, ctx);
+  assert.ok(res3.includes("Acara/pengingat #1 berhasil dihapus"));
+  assert.strictEqual(store.listReminders(chatId).length, 0); // Reminder deleted
+  assert.strictEqual(store.getTodos(chatId, true).length, 1); // Todo remains intact!
+
+  // Scenario 4: "1 kelar" on reminder list marks/deletes reminder
+  store.addReminder(chatId, "Webinar AI", Date.now() + 86400000);
+  store.saveChatMessage(chatId, "model", "[Daftar Acara & Pengingat]\n[1] Webinar AI");
+  const res4 = await executeFastCommand({ type: "done", id: 1, target: "auto" }, ctx);
+  assert.ok(res4.includes("selesai & dihapus dari agenda"));
+  assert.strictEqual(store.listReminders(chatId).length, 0);
+});
+

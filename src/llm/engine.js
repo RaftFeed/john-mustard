@@ -35,11 +35,18 @@ import {
   sanitizeLatexForWhatsApp,
   formatForWhatsApp
 } from "./formatters.js";
+import { parseFastCommand } from "../commands.js";
 
 export function injectMailboxSteering(mailbox, contents) {
   if (!mailbox || mailbox.length === 0) return false;
   const steered = mailbox.splice(0, mailbox.length);
-  const texts = steered.map((m) => m.body).filter(Boolean);
+  const texts = steered
+    .filter((m) => {
+      const clean = (m.body || "").replace(/^@\S+\s*/, "").trim();
+      return !parseFastCommand(clean) && !parseFastCommand(m.body || "");
+    })
+    .map((m) => m.body)
+    .filter(Boolean);
   if (texts.length === 0) return false;
 
   const directive = `[UPDATE INSTRUKSI PENGGUNA SAAT INI]:\n${texts.join("\n")}\nSesuaikan sisa tindakan dengan instruksi terbaru ini.`;

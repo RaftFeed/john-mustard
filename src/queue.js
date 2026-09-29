@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { parseFastCommand } from "./commands.js";
 
 /**
  * Per-Chat FIFO Queue with 1.0s Burst Debouncing & Mid-Turn Mailbox Steering (Helmis pattern)
@@ -34,7 +35,10 @@ export class ChatQueue {
     }
 
     // 1. Jika turn sedang aktif berjalan di chat ini, rute pesan langsung ke mailbox aktif (Mid-Turn Steering)
-    if (chat.mailbox) {
+    // KECUALI jika pesan adalah Fast Command: tahan di queue agar dieksekusi terpisah & bersih setelah turn selesai
+    const cleanBody = (incoming.body || "").replace(/^@\S+\s*/, "").trim();
+    const isFast = Boolean(parseFastCommand(cleanBody) || parseFastCommand(incoming.body || ""));
+    if (chat.mailbox && !isFast) {
       chat.mailbox.push(incoming);
       return;
     }

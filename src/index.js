@@ -411,7 +411,8 @@ async function handleIncomingMessage(msg) {
         chatId: msg.from,
         isOwner: isOwnerUser,
         senderNumber: msg.senderNumber,
-        senderName: person?.name || ""
+        senderName: person?.name || "",
+        quoted: msg.quoted
       });
       if (cmdReply) {
         await sendText(msg.from, cmdReply);
