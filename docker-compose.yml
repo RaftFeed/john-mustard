@@ -31,6 +31,7 @@ services:
       - DATA_DIR=/app/data
     volumes:
       - ./9router-data:/app/data
+      - ./9router-data/route.js:/app/.next/server/app/api/v1beta/models/[...path]/route.js:ro
     networks:
       - bot-net
 
@@ -51,10 +52,14 @@ services:
       - DB_PATH=/app/data/bot.db
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - PYTHON_RUNNER_URL=http://runner:8000/run
+      - HERMES_API_URL=${HERMES_API_URL}
+      - HERMES_API_KEY=${HERMES_API_KEY}
+      - HERMES_TIMEOUT_MS=${HERMES_TIMEOUT_MS:-120000}
       - NINEROUTER_URL=${NINEROUTER_URL:-http://john-mustard-9router:20128}
       - NINEROUTER_KEY=${NINEROUTER_KEY}
     volumes:
       - ./.env:/app/.env:ro
+      - ./src:/app/src
       - ./config:/app/config:ro
       - ./system-prompt.md:/app/system-prompt.md:ro
       - ./data:/app/data

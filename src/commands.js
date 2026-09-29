@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
+import { queryHermesAgent, formatHermesResponse } from "./hermes.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
 function formatUptime(seconds) {
@@ -247,6 +248,11 @@ export function parseFastCommand(text = "") {
 
   if (/^#(health|server|sys|system)\b/i.test(trimmed)) {
     return { type: "health" };
+  }
+
+    if (/^#(vps|hermes)\b/i.test(trimmed)) {
+    const instruction = trimmed.replace(/^#(vps|hermes)\s*/i, "").trim();
+    return { type: "hermes", instruction };
   }
 
   if (/^#(mc|minecraft)\b/i.test(trimmed)) {
@@ -784,6 +790,20 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return formatServerHealth(store);
     }
 
+    case "hermes": {
+      if (!isOwner) return `[!] Fitur #vps / #hermes khusus owner (+${OWNER_PHONE}).`;
+      if (!cmd.instruction) {
+        return `*Format Perintah Hermes VPS:*
+- #vps <instruksi>
+Contoh:
+- #vps cek status docker
+- #vps restart container mc-paper-geyser
+- #vps cek pemakaian ram dan disk`;
+      }
+      const res = await queryHermesAgent(cmd.instruction);
+      return formatHermesResponse(res);
+    }
+
     case "minecraft": {
       if (!isOwner) return `[!] Fitur #mc khusus owner (+${OWNER_PHONE}).`;
       const status = await getMinecraftStatus();
@@ -824,6 +844,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
 - #mc / #minecraft — Cek status server Minecraft & player aktif
+- #vps / #hermes <instruksi> — Delegasi task atau diagnosa VPS via Hermes Agent
 - #requests — Lihat daftar request fitur dari pengguna
 - #request done <id> — Tandai request selesai
 - #backlog <ide> — Catat ide fitur/perbaikan
@@ -898,6 +919,10 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("jam 1 ganti ke 14:30").newTime, "14:30");
 
       assert.strictEqual(parseFastCommand("#mc").type, "minecraft");
+      assert.strictEqual(parseFastCommand("#vps cek docker").type, "hermes");
+      assert.strictEqual(parseFastCommand("#vps cek docker").instruction, "cek docker");
+      assert.strictEqual(parseFastCommand("#hermes status").type, "hermes");
+      assert.strictEqual(parseFastCommand("#hermes status").instruction, "status");
       assert.strictEqual(parseFastCommand("#help").type, "help");
       assert.strictEqual(parseFastCommand("halo john"), null);
 

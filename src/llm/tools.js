@@ -18,6 +18,7 @@ import {
 import { sendFile, sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
 import { scheduleNearHorizonReminder } from "../scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "../minecraft.js";
+import { queryHermesAgent, formatHermesResponse } from "../hermes.js";
 import { formatServerHealth } from "../commands.js";
 import {
   proposeSkill,
@@ -675,6 +676,20 @@ export const TOOLS = [
         parameters: {
           type: "OBJECT",
           properties: {}
+        }
+      },
+      {
+        name: "manageRemoteServer",
+        description: "Jalankan perintah administrasi atau diagnosa server VPS / Minecraft via Hermes Agent (cek log docker, restart container, cek disk/load). Khusus owner.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            instruction: {
+              type: "STRING",
+              description: "Instruksi teknis yang ingin didelegasikan ke Hermes Agent di VPS (contoh: 'cek docker logs mc-paper-geyser --tail 50' atau 'cek free -m')"
+            }
+          },
+          required: ["instruction"]
         }
       },
       {
@@ -1671,6 +1686,18 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const formatted = formatMinecraftStatus(status);
       formattedList = formatted;
       toolResult = { success: true, status, formatted };
+    }
+  } else if (name === "manageRemoteServer") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: `Fitur manageRemoteServer hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
+    } else {
+      const res = await queryHermesAgent(args.instruction);
+      if (!res.success) {
+        toolResult = { success: false, error: res.error };
+      } else {
+        toolResult = { success: true, output: res.reply };
+        formattedList = `*[HERMES VPS]*\n${res.reply}`;
+      }
     }
   } else if (name === "sendDirectMessage") {
     if (isGroup && !isExplicitPrivateRequest(userText)) {

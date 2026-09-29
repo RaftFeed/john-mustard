@@ -54,7 +54,8 @@ export {
 
 export {
   injectMailboxSteering,
-  processChat
+  processChat,
+  extractCandidateText
 } from "./llm/engine.js";
 
 // Self-test block for standalone invocation
@@ -62,6 +63,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
   import("node:assert").then(async ({ default: assert }) => {
     const {
       processChat,
+      extractCandidateText,
       executeTool,
       isActionIntent,
       isGreetingIntent,
@@ -84,6 +86,30 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/llm.js")) {
     } = await import("./llm.js");
 
     assert.strictEqual(typeof processChat, "function");
+    assert.strictEqual(typeof extractCandidateText, "function");
+
+    // Test thought filtering in candidate parts
+    const mockThoughtContent = {
+      parts: [
+        { thought: true, text: "Analyzing the User\'s Request\n\nRafid wants something..." },
+        { text: "Siap Lord, pesan diterima." }
+      ]
+    };
+    assert.strictEqual(extractCandidateText(mockThoughtContent), "Siap Lord, pesan diterima.");
+
+    const mockOnlyThought = {
+      parts: [
+        { thought: true, text: "Analyzing the User\'s Request\n\nThinking trace only..." }
+      ]
+    };
+    assert.strictEqual(extractCandidateText(mockOnlyThought), "");
+
+    const mockInlineThoughtTag = {
+      parts: [
+        { text: "<thought>mikir dulu</thought>\n\nHalo apa kabar?" }
+      ]
+    };
+    assert.strictEqual(extractCandidateText(mockInlineThoughtTag), "Halo apa kabar?");
     assert.strictEqual(typeof executeTool, "function");
     assert.strictEqual(isActionIntent("tambahkan tugas"), true);
     assert.strictEqual(isActionIntent("ingatkan besok jam 7"), true);

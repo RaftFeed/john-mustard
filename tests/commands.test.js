@@ -15,6 +15,9 @@ test("Commands: parseFastCommand parses keywords and prefix commands", () => {
   assert.strictEqual(parseFastCommand("#del 3").id, 3);
   assert.strictEqual(parseFastCommand("#add Kerjakan PR #kuliah").raw, "Kerjakan PR #kuliah");
   assert.strictEqual(parseFastCommand("#dew").type, "dew");
+  assert.strictEqual(parseFastCommand("#vps cek docker").type, "hermes");
+  assert.strictEqual(parseFastCommand("#vps cek docker").instruction, "cek docker");
+  assert.strictEqual(parseFastCommand("#hermes status").type, "hermes");
   assert.strictEqual(parseFastCommand("halo john"), null);
 });
 
@@ -27,6 +30,12 @@ test("Commands: executeFastCommand executes ping, dew, and task commands", async
 
   const dewRes = await executeFastCommand({ type: "dew" }, ctx);
   assert.ok(dewRes.includes("DEW DEW DEW"));
+
+  const vpsNonOwner = await executeFastCommand({ type: "hermes", instruction: "cek docker" }, { ...ctx, isOwner: false });
+  assert.ok(vpsNonOwner.includes("khusus owner"));
+
+  const vpsEmpty = await executeFastCommand({ type: "hermes", instruction: "" }, ctx);
+  assert.ok(vpsEmpty.includes("Format Perintah Hermes VPS"));
 
   const addRes = await executeFastCommand({ type: "add", raw: "Belajar matematika" }, ctx);
   assert.ok(addRes.includes("Tugas #1 dicatat"));

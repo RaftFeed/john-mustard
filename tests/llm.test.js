@@ -14,6 +14,7 @@ import {
   isQuotedEventReminder,
   isAmbiguousEventReply,
   processChat,
+  extractCandidateText,
   selectModelCascade,
   AUDIO_CASCADE,
   SMART_CASCADE,
@@ -858,3 +859,27 @@ test("LLM Tools: 2-step deletion flow buffers pending deletion draft and execute
 
 
 
+
+test("LLM Engine: extractCandidateText filters out thought parts and CoT leaks", () => {
+  const candidateWithThought = {
+    parts: [
+      { thought: true, text: "Analyzing the User's Request\n\nRafid says his friends..." },
+      { text: "Siap, saya catat feedback mod server Minecraft-nya." }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateWithThought), "Siap, saya catat feedback mod server Minecraft-nya.");
+
+  const candidateOnlyThought = {
+    parts: [
+      { thought: true, text: "Analyzing the User's Request\n\nThinking trace only..." }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateOnlyThought), "");
+
+  const candidateWithThoughtTag = {
+    parts: [
+      { text: "<thought>\nAnalyzing query\n</thought>\n\nServer Minecraft online." }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateWithThoughtTag), "Server Minecraft online.");
+});

@@ -23,31 +23,38 @@ Gunakan bahasa Indonesia yang ringkas.`;
     const data = await rotator.execute(async (key) => {
       const baseUrl = (process.env.NINEROUTER_URL || "http://localhost:20128").replace(/\/+$/, "");
       const model = process.env.GEMINI_VISION_MODEL || "ag/gemini-3.8-flash";
-      const url = `${baseUrl}/v1beta/models/${model}:generateContent`;
+      const url = `${baseUrl}/v1/chat/completions`;
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${key}`,
-          "x-goog-api-key": key
+          "Authorization": `Bearer ${key}`
         },
         body: JSON.stringify({
-          contents: [
+          model,
+          messages: [
             {
               role: "user",
-              parts: [
-                { inlineData: { mimeType: mimetype, data: base64Data } },
-                { text: prompt }
+              content: [
+                { type: "text", text: prompt },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${mimetype};base64,${base64Data}`
+                  }
+                }
               ]
             }
-          ]
-        })
+          ],
+          stream: false
+        }),
+        signal: AbortSignal.timeout(30000)
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     });
 
-    return data.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text || "Dokumen tersimpan.";
+    return data.choices?.[0]?.message?.content || "Dokumen tersimpan.";
   } catch (err) {
     console.warn("Vision analysis skipped / error:", err.message);
     return caption ? `Deskripsi: ${caption}` : "Dokumen berhasil disimpan di vault.";

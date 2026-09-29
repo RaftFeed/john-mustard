@@ -1,3 +1,52 @@
+export function isInternalThoughtText(text) {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().replace(/^[\s#*_~`>]+/, "");
+  return /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here's|let's)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:)/i.test(t);
+}
+
+export function stripThoughtBlocks(text) {
+  if (!text || typeof text !== "string") return "";
+  let cleaned = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
+
+  if (isInternalThoughtText(cleaned)) {
+    // Check if there is an Indonesian response section after thought paragraphs
+    const match = cleaned.match(/\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i);
+    if (match && match.index !== undefined) {
+      return cleaned.slice(match.index).trim();
+    }
+    // Entire text is internal thinking trace
+    return "";
+  }
+
+  return cleaned;
+}
+
+export function extractCandidateText(content) {
+  if (!content || !Array.isArray(content.parts)) return "";
+
+  // 1. Prioritaskan parts yang bukan internal thought/reasoning (thought !== true)
+  const nonThoughtParts = content.parts.filter((p) => p.text && !p.thought);
+  if (nonThoughtParts.length > 0) {
+    let combined = nonThoughtParts.map((p) => p.text).join("\n").trim();
+    combined = stripThoughtBlocks(combined);
+    if (isInternalThoughtText(combined)) {
+      return "";
+    }
+    return combined;
+  }
+
+  // 2. Fallback jika seluruh part bertanda thought atau hanya 1 text part
+  const anyTextPart = content.parts.find((p) => p.text);
+  if (!anyTextPart) return "";
+  let raw = anyTextPart.text;
+  raw = stripThoughtBlocks(raw);
+  if (isInternalThoughtText(raw)) {
+    // Seluruh teks adalah CoT internal yang bocor, jangan kirim ke user
+    return "";
+  }
+  return raw;
+}
+
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -372,7 +421,7 @@ ${isBotQuoted
     const fnCallParts = currentCandidate.content.parts?.filter((p) => p.functionCall) || [];
     if (fnCallParts.length === 0) {
       // Anti-Hallucination & Mutation Guardrail Check
-      const candidateText = currentCandidate.content.parts?.find((p) => p.text)?.text || "";
+      const candidateText = extractCandidateText(currentCandidate.content);
       if (detectUnexecutedMutationClaim(candidateText, successfulMutations)) {
         if (isAmbiguousSchedule) {
           return "Mau diundur ke jam berapa jadwalnya?";
@@ -482,7 +531,7 @@ ${isBotQuoted
     }
   }
 
-  const directText = currentCandidate?.content?.parts?.find((p) => p.text)?.text;
+  const directText = extractCandidateText(currentCandidate?.content);
   const text = directText?.trim();
   let finalReply = "";
 
