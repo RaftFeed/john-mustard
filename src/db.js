@@ -293,6 +293,9 @@ export class Storage {
 
     // Seed default contact & whitelist directory
     this.initDefaultProfiles();
+
+    // Migrate existing reminder data to 2-stage event schema (H-1h)
+    this.migrateExistingEventReminders();
   }
 
   initDefaultProfiles() {
@@ -372,6 +375,48 @@ export class Storage {
 
   advanceReminderToEventTime(id, eventAt) {
     return this.db.prepare("UPDATE reminders SET remind_at = ?, status = 'pending' WHERE id = ?").run(eventAt, id).changes > 0;
+  }
+
+  migrateExistingEventReminders(now = Date.now()) {
+    const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
+    try {
+      const rows = this.db.prepare(
+        "SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE status = 'pending' AND (event_at > ? OR remind_at > ?)"
+      ).all(now, now);
+
+      let updatedCount = 0;
+      for (const row of rows) {
+        if (row.task_type === "scheduled_action") continue;
+
+        const isEvent = Boolean(
+          row.event_at ||
+          row.task_type === "event" ||
+          EVENT_REGEX.test(row.message || "")
+        );
+        if (!isEvent) continue;
+
+        const eventAt = row.event_at || row.remind_at;
+        let targetRemindAt = row.remind_at;
+
+        if (eventAt - now > 3600_000) {
+          targetRemindAt = eventAt - 3600_000;
+        } else {
+          targetRemindAt = eventAt;
+        }
+
+        const newTaskType = row.task_type === "reminder" ? "event" : row.task_type;
+
+        if (row.event_at !== eventAt || row.remind_at !== targetRemindAt || row.task_type !== newTaskType) {
+          this.db.prepare(
+            "UPDATE reminders SET event_at = ?, remind_at = ?, task_type = ? WHERE id = ?"
+          ).run(eventAt, targetRemindAt, newTaskType, row.id);
+          updatedCount++;
+        }
+      }
+      return updatedCount;
+    } catch {
+      return 0;
+    }
   }
 
   getPendingReminders(now = Date.now()) {

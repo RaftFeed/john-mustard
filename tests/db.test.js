@@ -195,3 +195,71 @@ test("Storage: LID mappings and group chat isOwner guard", async () => {
   // 4. Group chat where sender is LID of non-owner -> NOT owner
   assert.strictEqual(isOwner("120363029582992016@g.us", "123456789012345"), false);
 });
+
+test("Storage: migrateExistingEventReminders converts old events to 1h early reminder idempotently", () => {
+  const store = new Storage(":memory:");
+  const now = Date.now();
+
+  // 1. Old event with null event_at and future remind_at (> 1h)
+  const remEventId = store.db.prepare(
+    "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run("user1", "Rapat Koordinasi Divisi", now + 7200_000, null, "reminder", null).lastInsertRowid;
+
+  // 2. Old near-event with null event_at and future remind_at (< 1h)
+  const remNearEventId = store.db.prepare(
+    "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run("user1", "Webinar Mepet", now + 1800_000, null, "reminder", null).lastInsertRowid;
+
+  // 3. Regular non-event reminder (> 1h)
+  const remRegId = store.db.prepare(
+    "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run("user1", "Minum vitamin C", now + 7200_000, null, "reminder", null).lastInsertRowid;
+
+  // 4. Scheduled action (> 1h)
+  const remActionId = store.db.prepare(
+    "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run("user1", "Cek agenda rapat harian", now + 7200_000, "6h", "scheduled_action", null).lastInsertRowid;
+
+  // 5. Existing event where event_at is set but remind_at was equal to event_at (> 1h)
+  const remSameTimeId = store.db.prepare(
+    "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run("user1", "Jadwal Kuliah Pemrograman", now + 10800_000, null, "event", now + 10800_000).lastInsertRowid;
+
+  // Run migration
+  const updatedCount = store.migrateExistingEventReminders(now);
+  assert.strictEqual(updatedCount, 3); // remEventId, remNearEventId, remSameTimeId
+
+  // Verify item 1: event_at set to original time, remind_at set to H-1h, task_type = 'event'
+  const item1 = store.getReminderById(remEventId);
+  assert.strictEqual(item1.event_at, now + 7200_000);
+  assert.strictEqual(item1.remind_at, now + 3600_000);
+  assert.strictEqual(item1.task_type, "event");
+
+  // Verify item 2: near event (< 1h) skips H-1, remind_at stays at event time
+  const item2 = store.getReminderById(remNearEventId);
+  assert.strictEqual(item2.event_at, now + 1800_000);
+  assert.strictEqual(item2.remind_at, now + 1800_000);
+  assert.strictEqual(item2.task_type, "event");
+
+  // Verify item 3: regular non-event reminder unmodified
+  const item3 = store.getReminderById(remRegId);
+  assert.strictEqual(item3.event_at, null);
+  assert.strictEqual(item3.remind_at, now + 7200_000);
+  assert.strictEqual(item3.task_type, "reminder");
+
+  // Verify item 4: scheduled action unmodified
+  const item4 = store.getReminderById(remActionId);
+  assert.strictEqual(item4.event_at, null);
+  assert.strictEqual(item4.remind_at, now + 7200_000);
+  assert.strictEqual(item4.task_type, "scheduled_action");
+
+  // Verify item 5: event_at retained, remind_at updated to H-1h
+  const item5 = store.getReminderById(remSameTimeId);
+  assert.strictEqual(item5.event_at, now + 10800_000);
+  assert.strictEqual(item5.remind_at, now + 10800_000 - 3600_000);
+
+  // Idempotency: running again should change 0 items
+  const repeatCount = store.migrateExistingEventReminders(now);
+  assert.strictEqual(repeatCount, 0);
+});
+
