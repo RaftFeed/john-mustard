@@ -160,6 +160,8 @@ export class Storage {
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
     this.lastDoneByChat = new Map();
+    this.lastDeletedByChat = new Map();
+    this.pendingDeletions = new Map();
     this.init();
   }
 
@@ -186,7 +188,8 @@ export class Storage {
         status TEXT DEFAULT 'pending',
         recurrence TEXT DEFAULT NULL,
         task_type TEXT DEFAULT 'reminder',
-        event_at INTEGER DEFAULT NULL
+        event_at INTEGER DEFAULT NULL,
+        deleted_at INTEGER DEFAULT NULL
       );
       CREATE TABLE IF NOT EXISTS todos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,7 +200,8 @@ export class Storage {
         category TEXT DEFAULT 'work',
         done INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
-        description TEXT DEFAULT ''
+        description TEXT DEFAULT '',
+        deleted_at INTEGER DEFAULT NULL
       );
       CREATE TABLE IF NOT EXISTS vault_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,9 +311,11 @@ export class Storage {
     try { this.db.exec("ALTER TABLE todos ADD COLUMN assignee TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN reminded INTEGER DEFAULT 0"); } catch {}
     try { this.db.exec("ALTER TABLE todos ADD COLUMN description TEXT DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE todos ADD COLUMN deleted_at INTEGER DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN task_type TEXT DEFAULT 'reminder'"); } catch {}
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN event_at INTEGER DEFAULT NULL"); } catch {}
+    try { this.db.exec("ALTER TABLE reminders ADD COLUMN deleted_at INTEGER DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
 
@@ -471,13 +477,13 @@ export class Storage {
 
   getPendingReminders(now = Date.now()) {
     return this.db
-      .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at <= ?")
+      .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at <= ? AND deleted_at IS NULL")
       .all(now);
   }
 
   // ponytail: atomic claim via status 'processing', eliminates race between cron & near-horizon timers
   claimReminder(id) {
-    const res = this.db.prepare("UPDATE reminders SET status = 'processing' WHERE id = ? AND status = 'pending'").run(id);
+    const res = this.db.prepare("UPDATE reminders SET status = 'processing' WHERE id = ? AND status = 'pending' AND deleted_at IS NULL").run(id);
     return res.changes > 0;
   }
 
@@ -486,17 +492,17 @@ export class Storage {
   }
 
   getReminderById(id) {
-    return this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(id);
+    return this.db.prepare("SELECT * FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id);
   }
 
   getNearHorizonReminders(horizonMs = 600_000, now = Date.now()) {
     return this.db
-      .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at > ? AND remind_at <= ?")
+      .prepare("SELECT * FROM reminders WHERE status = 'pending' AND remind_at > ? AND remind_at <= ? AND deleted_at IS NULL")
       .all(now, now + horizonMs);
   }
 
   advanceRecurringReminder(id, recurrence) {
-    const rem = this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(id);
+    const rem = this.db.prepare("SELECT * FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id);
     if (!rem) return null;
     const oneDay = 24 * 60 * 60 * 1000;
     let step = oneDay;
