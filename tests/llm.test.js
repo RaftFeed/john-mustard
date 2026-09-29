@@ -796,4 +796,56 @@ test("LLM Engine: audio input injects Indonesian voice note instructions and cle
   }
 });
 
+test("LLM Tools: 2-step deletion flow buffers pending deletion draft and executes upon confirmation", async () => {
+  const { executeTool } = await import("../src/llm/tools.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+
+  // Create a todo item
+  const todoId = store.addTodo(chatId, "Beli telur ayam 1kg");
+
+  // Step 1: Unconfirmed delete request (e.g. conversational prompt without explicit confirmation)
+  const step1 = await executeTool("deleteTodo", { todoId }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "tolong bersihin to-do beli telur dong"
+  });
+
+  assert.strictEqual(step1.toolResult.status, "pending_confirmation");
+  assert.ok(step1.toolResult.message.includes("membutuhkan konfirmasi"));
+  // Item must NOT be deleted yet!
+  assert.strictEqual(store.getTodos(chatId).length, 1);
+
+  // Check pending deletion buffer in store
+  const pending = store.getPendingDeletion(chatId);
+  assert.ok(pending);
+  assert.strictEqual(pending.type, "todo");
+  assert.strictEqual(pending.id, todoId);
+
+  // Step 2: User confirms with "ya" or confirmed: true
+  const step2 = await executeTool("deleteTodo", { todoId, confirmed: true }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "ya hapus aja"
+  });
+
+  assert.strictEqual(step2.toolResult.success, true);
+  assert.strictEqual(store.getTodos(chatId).length, 0); // Now soft-deleted!
+  assert.strictEqual(store.getPendingDeletion(chatId), null); // Pending cleared
+
+  // Step 3: undoLastTodo tool restores the soft-deleted todo
+  const undoResult = await executeTool("undoLastTodo", {}, {
+    store,
+    chatId,
+    senderNumber: chatId
+  });
+  assert.strictEqual(undoResult.toolResult.success, true);
+  assert.strictEqual(undoResult.toolResult.restoredType, "todo");
+  assert.strictEqual(store.getTodos(chatId).length, 1);
+  assert.strictEqual(store.getTodos(chatId)[0].task, "Beli telur ayam 1kg");
+});
+
+
 

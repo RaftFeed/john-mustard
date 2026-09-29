@@ -289,3 +289,61 @@ test("Storage: isSimilarReminder and addReminder duplicate prevention", () => {
   assert.strictEqual(pending[0].task_type, "event");
 });
 
+test("Storage: soft delete and restoreLastDeleted for todos and reminders", () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_softdel";
+
+  // 1. Todo Soft Delete & Restore
+  const tId = store.addTodo(chatId, "Beli beras ramos", Date.now() + 3600_000);
+  assert.strictEqual(store.getTodos(chatId).length, 1);
+
+  // Soft delete todo
+  const delTodoChanges = store.deleteTodo(tId, chatId);
+  assert.strictEqual(delTodoChanges, 1);
+  assert.strictEqual(store.getTodos(chatId).length, 0);
+  assert.strictEqual(store.getTodoById(tId, chatId), undefined);
+
+  // Restore via restoreLastDeleted
+  const restoredTodo = store.restoreLastDeleted(chatId);
+  assert.ok(restoredTodo);
+  assert.strictEqual(restoredTodo.type, "todo");
+  assert.strictEqual(restoredTodo.item.id, tId);
+  assert.strictEqual(store.getTodos(chatId).length, 1);
+
+  // 2. Reminder Soft Delete & Restore
+  const rId = store.addReminder(chatId, "Webinar Cloud Computing", Date.now() + 7200_000);
+  assert.strictEqual(store.listReminders(chatId).length, 1);
+
+  // Soft delete reminder
+  const delRemChanges = store.deleteReminder(chatId, rId);
+  assert.strictEqual(delRemChanges, 1);
+  assert.strictEqual(store.listReminders(chatId).length, 0);
+  assert.strictEqual(store.getReminderById(rId), undefined);
+
+  // Restore via restoreLastDeleted
+  const restoredRem = store.restoreLastDeleted(chatId);
+  assert.ok(restoredRem);
+  assert.strictEqual(restoredRem.type, "reminder");
+  assert.strictEqual(restoredRem.item.id, rId);
+  assert.strictEqual(store.listReminders(chatId).length, 1);
+
+  // 3. Fallback to DB when in-memory cache is empty
+  store.deleteTodo(tId, chatId);
+  store.lastDeletedByChat.clear(); // Clear in-memory cache
+  const dbFallback = store.restoreLastDeleted(chatId);
+  assert.ok(dbFallback);
+  assert.strictEqual(dbFallback.type, "todo");
+  assert.strictEqual(dbFallback.item.id, tId);
+  assert.strictEqual(store.getTodos(chatId).length, 1);
+
+  // 4. Pending Deletion Buffer (TTL 2 minutes)
+  store.setPendingDeletion(chatId, { type: "todo", id: tId, title: "Beli beras ramos" }, 50);
+  const pendingDel = store.getPendingDeletion(chatId);
+  assert.ok(pendingDel);
+  assert.strictEqual(pendingDel.id, tId);
+
+  store.clearPendingDeletion(chatId);
+  assert.strictEqual(store.getPendingDeletion(chatId), null);
+});
+
+

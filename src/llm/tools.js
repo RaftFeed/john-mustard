@@ -97,7 +97,7 @@ export const TOOLS = [
       },
       {
         name: "undoLastTodo",
-        description: "Batalkan penandaan selesai pada tugas to-do list terakhir yang baru saja di-done",
+        description: "Batalkan penghapusan tugas/agenda terakhir atau batalkan penandaan selesai pada tugas to-do list terakhir yang baru saja di-done (undo)",
         parameters: {
           type: "OBJECT",
           properties: {}
@@ -126,7 +126,8 @@ export const TOOLS = [
           type: "OBJECT",
           properties: {
             todoId: { type: "NUMBER", description: "Nomor urut visual (1..N) atau ID tugas yang mau dihapus" },
-            taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika ID tidak disebutkan" }
+            taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika ID tidak disebutkan" },
+            confirmed: { type: "BOOLEAN", description: "Set true HANYA jika pengguna sudah secara eksplisit mengonfirmasi penghapusan (misal: 'ya', 'iya', 'hapus aja', 'lanjut'). Biarkan false jika baru permintaan awal agar sistem meminta konfirmasi." }
           }
         }
       },
@@ -166,7 +167,8 @@ export const TOOLS = [
           type: "OBJECT",
           properties: {
             reminderId: { type: "NUMBER", description: "Nomor urut visual (1..N) atau ID reminder yang ingin dibatalkan/dihapus (opsional)" },
-            query: { type: "STRING", description: "Pesan atau topik reminder yang ingin dicari untuk dihapus (opsional)" }
+            query: { type: "STRING", description: "Pesan atau topik reminder yang ingin dicari untuk dihapus (opsional)" },
+            confirmed: { type: "BOOLEAN", description: "Set true HANYA jika pengguna sudah secara eksplisit mengonfirmasi penghapusan (misal: 'ya', 'iya', 'hapus aja', 'lanjut'). Biarkan false jika baru permintaan awal agar sistem meminta konfirmasi." }
           }
         }
       },
@@ -779,15 +781,40 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
   } else if (name === "undoLastTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const undone = store.undoLastDone(queryChatId);
-    if (!undone) {
-      toolResult = { error: "Tidak ada tugas selesai yang bisa dibatalkan (undo)." };
+    const restoredDel = store.restoreLastDeleted ? store.restoreLastDeleted(queryChatId) : null;
+    if (restoredDel) {
+      if (restoredDel.type === "todo") {
+        const remaining = store.getTodos(queryChatId, false);
+        formattedList = formatTodoList(remaining, isGroup);
+        toolResult = {
+          success: true,
+          restoredType: "todo",
+          restoredItem: restoredDel.item,
+          formattedList,
+          message: `Tugas #${restoredDel.item.id} ('${restoredDel.item.task}') berhasil dipulihkan dari status terhapus.`
+        };
+      } else {
+        const remaining = store.listReminders(queryChatId);
+        formattedList = formatRemindersList(remaining);
+        toolResult = {
+          success: true,
+          restoredType: "reminder",
+          restoredItem: restoredDel.item,
+          formattedList,
+          message: `Acara/pengingat #${restoredDel.item.id} ('${restoredDel.item.message}') berhasil dipulihkan dari status terhapus.`
+        };
+      }
     } else {
-      toolResult = {
-        success: true,
-        undoneTodo: undone,
-        message: `Tugas #${undone.id} ('${undone.task}') berhasil dikembalikan ke status belum selesai.`
-      };
+      const undone = store.undoLastDone(queryChatId);
+      if (!undone) {
+        toolResult = { error: "Tidak ada tugas selesai atau terhapus yang bisa dibatalkan (undo)." };
+      } else {
+        toolResult = {
+          success: true,
+          undoneTodo: undone,
+          message: `Tugas #${undone.id} ('${undone.task}') berhasil dikembalikan ke status belum selesai.`
+        };
+      }
     }
   } else if (name === "updateTodo") {
     let targetId = args.todoId;
@@ -818,19 +845,43 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const found = store.findTodo(queryChatId, args.taskQuery);
       if (found) targetId = found.id;
     }
-    if (!targetId) {
+    const targetTodo = targetId ? store.getTodoById(targetId, queryChatId) : null;
+    if (!targetTodo) {
       toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
     } else {
-      const changes = store.deleteTodo(targetId, queryChatId);
-      const remaining = store.getTodos(queryChatId, false);
-      formattedList = formatTodoList(remaining, isGroup);
-      toolResult = {
-        success: changes > 0,
-        deletedId: targetId,
-        remainingCount: remaining.length,
-        formattedList,
-        instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus."
-      };
+      const isConfirmed = Boolean(
+        args.confirmed === true ||
+        (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
+        (userText && /\b(hapus|apus|del|delete)\s+(?:tugas|todo)\s+\d+\b/i.test(userText)) ||
+        (userText && /\b\d+\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+      );
+
+      const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
+      const isPendingMatch = pending && pending.type === "todo" && pending.id === targetTodo.id;
+
+      if (!isConfirmed && !isPendingMatch) {
+        if (store.setPendingDeletion) {
+          store.setPendingDeletion(queryChatId, { type: "todo", id: targetTodo.id, title: targetTodo.task });
+        }
+        toolResult = {
+          status: "pending_confirmation",
+          todoId: targetTodo.id,
+          task: targetTodo.task,
+          message: `Penghapusan tugas #${targetTodo.id} ("${targetTodo.task}") membutuhkan konfirmasi pengguna. Minta konfirmasi ke pengguna dengan jelas (contoh: "Apakah kamu yakin ingin menghapus to-do '${targetTodo.task}'? Ketik ya untuk menghapus"). DILARANG menyatakan tugas sudah terhapus sebelum ada konfirmasi.`
+        };
+      } else {
+        if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
+        const changes = store.deleteTodo(targetTodo.id, queryChatId);
+        const remaining = store.getTodos(queryChatId, false);
+        formattedList = formatTodoList(remaining, isGroup);
+        toolResult = {
+          success: changes > 0,
+          deletedId: targetTodo.id,
+          remainingCount: remaining.length,
+          formattedList,
+          instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus. Informasikan ke pengguna bahwa tugas bisa dipulihkan dengan mengetik #undo."
+        };
+      }
     }
   } else if (name === "addReminder") {
     let eventAt = args.eventAtIso ? new Date(args.eventAtIso).getTime() : null;
@@ -904,17 +955,50 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (!target) {
       toolResult = { error: "ID reminder atau teks query wajib diisi untuk menghapus pengingat." };
     } else {
-      const changes = store.deleteReminder(queryChatId, target);
-      const remaining = store.listReminders(queryChatId);
-      formattedList = formatRemindersList(remaining);
-      toolResult = {
-        success: changes > 0,
-        deletedCount: changes,
-        remainingCount: remaining.length,
-        formattedList,
-        instruction: "Jika menampilkan sisa pengingat/agenda, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan agenda yang sudah dihapus.",
-        message: changes > 0 ? "Pengingat/agenda berhasil dihapus." : "Pengingat tidak ditemukan."
-      };
+      let targetReminder = null;
+      if (typeof target === "number" || /^\d+$/.test(String(target).trim())) {
+        const realId = store.resolveReminderId ? store.resolveReminderId(target, queryChatId) : parseInt(target, 10);
+        targetReminder = store.getReminderById ? store.getReminderById(realId) : null;
+      } else {
+        const list = store.listReminders ? store.listReminders(queryChatId) : [];
+        const clean = String(target).toLowerCase();
+        targetReminder = list.find((r) => (r.message || "").toLowerCase().includes(clean)) || null;
+      }
+
+      const isConfirmed = Boolean(
+        args.confirmed === true ||
+        (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
+        (userText && /\b(hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event|reminder)\s+\d+\b/i.test(userText)) ||
+        (userText && /\b\d+\s+(?:acara|agenda|jadwal|event|reminder)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+      );
+
+      const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
+      const isPendingMatch = pending && pending.type === "reminder" && (!targetReminder || pending.id === targetReminder.id);
+
+      if (targetReminder && !isConfirmed && !isPendingMatch) {
+        if (store.setPendingDeletion) {
+          store.setPendingDeletion(queryChatId, { type: "reminder", id: targetReminder.id, title: targetReminder.message });
+        }
+        toolResult = {
+          status: "pending_confirmation",
+          reminderId: targetReminder.id,
+          messageTitle: targetReminder.message,
+          message: `Penghapusan pengingat/acara "${targetReminder.message}" membutuhkan konfirmasi pengguna. Minta konfirmasi ke pengguna dengan jelas (contoh: "Apakah kamu yakin ingin menghapus acara '${targetReminder.message}'? Ketik ya untuk menghapus"). DILARANG menyatakan acara sudah terhapus sebelum ada konfirmasi.`
+        };
+      } else {
+        if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
+        const changes = store.deleteReminder(queryChatId, target);
+        const remaining = store.listReminders(queryChatId);
+        formattedList = formatRemindersList(remaining);
+        toolResult = {
+          success: changes > 0,
+          deletedCount: changes,
+          remainingCount: remaining.length,
+          formattedList,
+          instruction: "Jika menampilkan sisa pengingat/agenda, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan agenda yang sudah dihapus. Beritahu pengguna acara bisa dipulihkan dengan #undo.",
+          message: changes > 0 ? "Pengingat/agenda berhasil dihapus." : "Pengingat tidak ditemukan."
+        };
+      }
     }
   } else if (name === "updateReminder") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);

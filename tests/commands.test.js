@@ -133,5 +133,29 @@ test("Commands: executeFastCommand resolves context between To-Do and Reminder",
   const res4 = await executeFastCommand({ type: "done", id: 1, target: "auto" }, ctx);
   assert.ok(res4.includes("selesai & dihapus dari agenda"));
   assert.strictEqual(store.listReminders(chatId).length, 0);
+
+  // Scenario 5: Ambiguous "1 apus" when both lists exist and no recent list in history
+  const initialTodosCount = store.getTodos(chatId, true).length;
+  store.addReminder(chatId, "Acara Wisuda", Date.now() + 86400000);
+  // Clear recent chat history with non-list message
+  store.saveChatMessage(chatId, "model", "Siap Lord, ada yang bisa dibantu?");
+
+  const resAmbiguous = await executeFastCommand({ type: "delete", id: 1, target: "auto" }, ctx);
+  assert.ok(resAmbiguous.includes("Mau hapus nomor #1 dari To-Do List atau dari Daftar Acara?"));
+  assert.strictEqual(store.getTodos(chatId, true).length, initialTodosCount);
+  assert.strictEqual(store.listReminders(chatId).length, 1);
+
+  // Scenario 6: Explicit command "hapus tugas 1" deletes todo and gives #undo hint
+  const resExplicit = await executeFastCommand({ type: "delete", id: 1, target: "todo" }, ctx);
+  assert.ok(resExplicit.includes("Tugas #1 berhasil dihapus"));
+  assert.ok(resExplicit.includes("#undo"));
+  assert.strictEqual(store.getTodos(chatId, true).length, initialTodosCount - 1);
+
+  // Scenario 7: #undo restores recently deleted todo
+  const resUndo = await executeFastCommand({ type: "undo" }, ctx);
+  assert.ok(resUndo.includes("berhasil dipulihkan"));
+  assert.ok(resUndo.includes("Beli beras"));
+  assert.strictEqual(store.getTodos(chatId, true).length, initialTodosCount);
 });
+
 

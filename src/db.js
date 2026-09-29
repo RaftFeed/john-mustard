@@ -167,8 +167,8 @@ export class Storage {
 
   getHealthStats() {
     try {
-      const todos = this.db.prepare("SELECT count(*) as count FROM todos").get()?.count || 0;
-      const pendingTodos = this.db.prepare("SELECT count(*) as count FROM todos WHERE done = 0").get()?.count || 0;
+      const todos = this.db.prepare("SELECT count(*) as count FROM todos WHERE deleted_at IS NULL").get()?.count || 0;
+      const pendingTodos = this.db.prepare("SELECT count(*) as count FROM todos WHERE done = 0 AND deleted_at IS NULL").get()?.count || 0;
       const vault = this.db.prepare("SELECT count(*) as count FROM vault_files").get()?.count || 0;
       const notes = this.db.prepare("SELECT count(*) as count FROM notes").get()?.count || 0;
       const logs = this.db.prepare("SELECT count(*) as count FROM usage_logs").get()?.count || 0;
@@ -362,9 +362,13 @@ export class Storage {
   }
 
   getRecentChatHistory(chatId, limit = 8, maxIdleMs = 3600_000) {
+    const scope = getUserTodoScope(chatId, this);
+    const chatIds = (scope.chatIds && scope.chatIds.length > 0) ? scope.chatIds : [chatId];
+    const placeholders = chatIds.map(() => "?").join(", ");
+
     const latest = this.db.prepare(
-      "SELECT created_at FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(chatId);
+      `SELECT created_at FROM chat_history WHERE chat_id IN (${placeholders}) ORDER BY id DESC LIMIT 1`
+    ).get(...chatIds);
 
     // Jeda lebih dari 1 jam -> sesi lama expired, dianggap sesi baru (empty history)
     if (!latest || (Date.now() - latest.created_at) > maxIdleMs) {
@@ -372,8 +376,8 @@ export class Storage {
     }
 
     const rows = this.db.prepare(
-      "SELECT role, content FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?"
-    ).all(chatId, limit);
+      `SELECT role, content FROM chat_history WHERE chat_id IN (${placeholders}) ORDER BY id DESC LIMIT ?`
+    ).all(...chatIds, limit);
     return rows.reverse();
   }
 
@@ -402,7 +406,7 @@ export class Storage {
       if (scope.chatIds && scope.chatIds.length > 0) {
         const cond = scope.chatIds.map(() => "chat_id = ?").join(" OR ");
         const pendingRows = this.db.prepare(
-          `SELECT * FROM reminders WHERE (${cond}) AND status = 'pending'`
+          `SELECT * FROM reminders WHERE (${cond}) AND status = 'pending' AND deleted_at IS NULL`
         ).all(...scope.chatIds);
 
         for (const row of pendingRows) {
@@ -567,12 +571,12 @@ export class Storage {
     }
     if (scope.isGroup) {
       return this.db
-        .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending'${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+        .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending' AND deleted_at IS NULL${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
         .all(chatId, ...dateParams);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     return this.db
-      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending'${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' AND deleted_at IS NULL${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
       .all(...scope.chatIds, ...dateParams);
   }
 
@@ -605,13 +609,21 @@ export class Storage {
       : `chat_id IN (${scope.chatIds.map(() => "?").join(", ")})`;
     const params = scope.isGroup ? [chatId] : [...scope.chatIds];
 
+    let row = null;
     if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
       const targetId = this.resolveReminderId(idOrQuery, chatId);
-      const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND id = ?`).run(...params, targetId);
-      return res.changes;
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, targetId);
+    } else {
+      const clean = `%${String(idOrQuery || "").trim()}%`;
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`).get(...params, clean);
     }
-    const clean = `%${String(idOrQuery || "").trim()}%`;
-    const res = this.db.prepare(`DELETE FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending'`).run(...params, clean);
+
+    if (!row) return 0;
+    const now = Date.now();
+    const res = this.db.prepare("UPDATE reminders SET deleted_at = ? WHERE id = ?").run(now, row.id);
+    if (res.changes > 0) {
+      this.recordDeletedItem(chatId, { type: "reminder", item: { ...row, deleted_at: now } });
+    }
     return res.changes;
   }
 
@@ -625,10 +637,10 @@ export class Storage {
     let row = null;
     if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
       const targetId = this.resolveReminderId(idOrQuery, chatId);
-      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ?`).get(...params, targetId);
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, targetId);
     } else {
       const clean = `%${String(idOrQuery || "").trim()}%`;
-      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending' ORDER BY id DESC LIMIT 1`).get(...params, clean);
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND message LIKE ? AND status = 'pending' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`).get(...params, clean);
     }
 
     if (!row) return null;
@@ -674,7 +686,7 @@ export class Storage {
     let sql = `
       SELECT id, task, deadline, tag, category, assignee, done 
       FROM todos 
-      WHERE 1=1
+      WHERE 1=1 AND deleted_at IS NULL
     `;
     if (!showDone) {
       sql += " AND done = 0";
@@ -765,17 +777,17 @@ export class Storage {
   getTodoById(id, chatId) {
     const realId = this.resolveTodoId(id, chatId);
     if (!chatId || isOwner(chatId)) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(realId);
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND deleted_at IS NULL").get(realId);
     }
     const scope = getUserTodoScope(chatId, this);
     if (scope.isGroup) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ?").get(realId, chatId);
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ? AND deleted_at IS NULL").get(realId, chatId);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     const namePlaceholders = scope.names.map(() => "?").join(", ");
     let cond = `chat_id IN (${cidPlaceholders})`;
     if (scope.names.length > 0) cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
-    return this.db.prepare(`SELECT * FROM todos WHERE id = ? AND (${cond})`).get(realId, ...scope.chatIds, ...scope.names);
+    return this.db.prepare(`SELECT * FROM todos WHERE id = ? AND (${cond}) AND deleted_at IS NULL`).get(realId, ...scope.chatIds, ...scope.names);
   }
 
   getTodosDue(chatId, daysAhead = 0, assignee = null) {
@@ -786,7 +798,7 @@ export class Storage {
     let sql = `
       SELECT id, task, deadline, tag, category, assignee, done
       FROM todos
-      WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ?
+      WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND deleted_at IS NULL
     `;
     const params = [targetEnd];
 
@@ -832,11 +844,11 @@ export class Storage {
   setDailyDigest(chatId, enable = true) {
     if (!enable) {
       return this.db.prepare(
-        "DELETE FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%'"
-      ).run(chatId).changes;
+        "UPDATE reminders SET deleted_at = ? WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND deleted_at IS NULL"
+      ).run(Date.now(), chatId).changes;
     }
     const exist = this.db.prepare(
-      "SELECT id FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND status = 'pending'"
+      "SELECT id FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND status = 'pending' AND deleted_at IS NULL"
     ).get(chatId);
     if (exist) return exist.id;
 
@@ -1018,20 +1030,20 @@ export class Storage {
     if (!lastId) {
       const scope = getUserTodoScope(chatId, this);
       if (scope.isGroup) {
-        const row = this.db.prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 ORDER BY id DESC LIMIT 1").get(chatId);
+        const row = this.db.prepare("SELECT id FROM todos WHERE chat_id = ? AND done = 1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1").get(chatId);
         if (row) lastId = row.id;
       } else {
         const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
         const namePlaceholders = scope.names.map(() => "?").join(", ");
         let cond = `chat_id IN (${cidPlaceholders})`;
         if (scope.names.length > 0) cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
-        const row = this.db.prepare(`SELECT id FROM todos WHERE (${cond}) AND done = 1 ORDER BY id DESC LIMIT 1`).get(...scope.chatIds, ...scope.names);
+        const row = this.db.prepare(`SELECT id FROM todos WHERE (${cond}) AND done = 1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`).get(...scope.chatIds, ...scope.names);
         if (row) lastId = row.id;
       }
     }
     if (!lastId) return null;
     const changes = this.db
-      .prepare("UPDATE todos SET done = 0 WHERE id = ?")
+      .prepare("UPDATE todos SET done = 0 WHERE id = ? AND deleted_at IS NULL")
       .run(lastId).changes;
     if (changes === 0) return null;
     this.lastDoneByChat.delete(chatId);
@@ -1042,7 +1054,7 @@ export class Storage {
     const scope = getUserTodoScope(chatId, this);
     if (scope.isGroup) {
       return this.db
-        .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1")
+        .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 0 AND deleted_at IS NULL AND task LIKE ? ORDER BY id DESC LIMIT 1")
         .get(chatId, `%${query}%`);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
@@ -1052,7 +1064,7 @@ export class Storage {
       cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
     }
     return this.db
-      .prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 0 AND task LIKE ? ORDER BY id DESC LIMIT 1`)
+      .prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 0 AND deleted_at IS NULL AND task LIKE ? ORDER BY id DESC LIMIT 1`)
       .get(...scope.chatIds, ...scope.names, `%${query}%`);
   }
 
@@ -1075,7 +1087,7 @@ export class Storage {
     const now = Date.now();
     return this.db
       .prepare(
-        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND (reminded = 0 OR reminded IS NULL) ORDER BY deadline ASC LIMIT ?"
+        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND (reminded = 0 OR reminded IS NULL) AND deleted_at IS NULL ORDER BY deadline ASC LIMIT ?"
       )
       .all(now, limit);
   }
@@ -1087,9 +1099,109 @@ export class Storage {
   deleteTodo(id, chatId) {
     const existing = this.getTodoById(id, chatId);
     if (!existing) return 0;
-    return this.db
-      .prepare("DELETE FROM todos WHERE id = ?")
-      .run(existing.id).changes;
+    const now = Date.now();
+    const changes = this.db
+      .prepare("UPDATE todos SET deleted_at = ? WHERE id = ?")
+      .run(now, existing.id).changes;
+    if (changes > 0) {
+      this.recordDeletedItem(chatId, { type: "todo", item: { ...existing, deleted_at: now } });
+    }
+    return changes;
+  }
+
+  recordDeletedItem(chatId, data) {
+    if (!chatId || !data) return;
+    const scope = getUserTodoScope(chatId, this);
+    const key = (scope.chatIds && scope.chatIds[0]) || chatId;
+    this.lastDeletedByChat.set(key, data);
+    this.lastDeletedByChat.set(chatId, data);
+  }
+
+  restoreLastDeleted(chatId) {
+    const scope = getUserTodoScope(chatId, this);
+    const key = (scope.chatIds && scope.chatIds[0]) || chatId;
+    let last = this.lastDeletedByChat.get(chatId) || this.lastDeletedByChat.get(key);
+
+    if (!last) {
+      const cidCond = scope.isGroup
+        ? "chat_id = ?"
+        : `chat_id IN (${scope.chatIds.map(() => "?").join(", ")})`;
+      const params = scope.isGroup ? [chatId] : [...scope.chatIds];
+
+      const lastTodo = this.db.prepare(
+        `SELECT * FROM todos WHERE (${cidCond}) AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`
+      ).get(...params);
+      const lastReminder = this.db.prepare(
+        `SELECT * FROM reminders WHERE (${cidCond}) AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`
+      ).get(...params);
+
+      if (lastTodo && lastReminder) {
+        if ((lastTodo.deleted_at || 0) >= (lastReminder.deleted_at || 0)) {
+          last = { type: "todo", item: lastTodo };
+        } else {
+          last = { type: "reminder", item: lastReminder };
+        }
+      } else if (lastTodo) {
+        last = { type: "todo", item: lastTodo };
+      } else if (lastReminder) {
+        last = { type: "reminder", item: lastReminder };
+      }
+    }
+
+    if (!last) return null;
+
+    if (last.type === "todo") {
+      const res = this.db.prepare("UPDATE todos SET deleted_at = NULL WHERE id = ?").run(last.item.id);
+      if (res.changes > 0) {
+        this.lastDeletedByChat.delete(chatId);
+        this.lastDeletedByChat.delete(key);
+        return { type: "todo", item: { ...last.item, deleted_at: null } };
+      }
+    } else if (last.type === "reminder") {
+      const res = this.db.prepare("UPDATE reminders SET deleted_at = NULL WHERE id = ?").run(last.item.id);
+      if (res.changes > 0) {
+        this.lastDeletedByChat.delete(chatId);
+        this.lastDeletedByChat.delete(key);
+        return { type: "reminder", item: { ...last.item, deleted_at: null } };
+      }
+    }
+
+    return null;
+  }
+
+  setPendingDeletion(chatId, data, ttlMs = 120_000) {
+    if (!chatId || !data) return;
+    const expiresAt = Date.now() + ttlMs;
+    const entry = { ...data, expiresAt };
+    this.pendingDeletions.set(chatId, entry);
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.chatIds) {
+      for (const cid of scope.chatIds) {
+        this.pendingDeletions.set(cid, entry);
+      }
+    }
+  }
+
+  getPendingDeletion(chatId) {
+    if (!chatId) return null;
+    const entry = this.pendingDeletions.get(chatId);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.clearPendingDeletion(chatId);
+      return null;
+    }
+    return entry;
+  }
+
+  clearPendingDeletion(chatId) {
+    if (!chatId) return;
+    this.pendingDeletions.delete(chatId);
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.chatIds) {
+      for (const cid of scope.chatIds) {
+        this.pendingDeletions.delete(cid);
+      }
+    }
   }
 
   // --- Backlog (Owner Only) ---

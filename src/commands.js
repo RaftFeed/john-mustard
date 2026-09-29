@@ -331,6 +331,7 @@ export function resolveItemScope(target = "auto", { store, chatId, quoted } = {}
           const isTodo = /\[To-Do List\]|🌄|\[Tugas Hari Ini\]|\[Tugas 7 Hari Ke Depan\]/i.test(msg.content);
           if (isReminder && !isTodo) return "reminder";
           if (isTodo && !isReminder) return "todo";
+          break;
         }
       }
     } catch {}
@@ -408,11 +409,26 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     }
 
     case "undo": {
+      const isGroup = String(chatId).endsWith("@g.us");
+      if (store.restoreLastDeleted) {
+        const restoredDel = store.restoreLastDeleted(chatId);
+        if (restoredDel) {
+          if (restoredDel.type === "todo") {
+            const remaining = store.getTodos ? store.getTodos(chatId, false) : [];
+            const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
+            return `[OK] Tugas #${restoredDel.item.id} ("${restoredDel.item.task}") berhasil dipulihkan.${formatted}`;
+          } else if (restoredDel.type === "reminder") {
+            const remaining = store.listReminders ? store.listReminders(chatId) : [];
+            const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
+            return `[OK] Acara/pengingat #${restoredDel.item.id} ("${restoredDel.item.message}") berhasil dipulihkan.${formatted}`;
+          }
+        }
+      }
       const restored = store.undoLastDone(chatId);
       if (restored) {
         return `[OK] Tugas #${restored.id} ("${restored.task}") dibalikin jadi pending.`;
       }
-      return "[!] Gak ada riwayat tugas yang baru ditandai selesai.";
+      return "[!] Gak ada riwayat tugas atau pengingat yang baru dihapus/ditandai selesai.";
     }
 
     case "delete": {
@@ -424,7 +440,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
           if (remChanged > 0) {
             const remaining = store.listReminders ? store.listReminders(chatId) : [];
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
-            return `[OK] Acara/pengingat #${cmd.id} berhasil dihapus.${formatted}`;
+            return `[OK] Acara/pengingat #${cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
           }
         }
         return `[!] Acara/pengingat #${cmd.id} gak ketemu.`;
@@ -434,7 +450,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         if (changed > 0) {
           const remaining = store.getTodos ? store.getTodos(chatId) : [];
           const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
-          return `[OK] Tugas #${cmd.id} berhasil dihapus.${formatted}`;
+          return `[OK] Tugas #${cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
         }
         return `[!] Tugas #${cmd.id} gak ketemu atau udah dihapus.`;
       }
@@ -444,6 +460,9 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "deleteMultiple": {
       const isGroup = String(chatId).endsWith("@g.us");
       const scope = resolveItemScope(cmd.target, { store, chatId, quoted });
+      if (scope === "ambiguous") {
+        return `Mau hapus [${cmd.ids.join(", ")}] dari To-Do List atau dari Daftar Acara? Contoh: "hapus tugas ${cmd.ids.join(" ")}" atau "hapus acara ${cmd.ids.join(" ")}".`;
+      }
       const deletedTodos = [];
       const deletedRems = [];
       for (const id of cmd.ids) {
@@ -455,19 +474,13 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
           if (store.deleteTodo(id, chatId) > 0) {
             deletedTodos.push(id);
           }
-        } else {
-          if (store.deleteTodo(id, chatId) > 0) {
-            deletedTodos.push(id);
-          } else if (store.deleteReminder && store.deleteReminder(chatId, id) > 0) {
-            deletedRems.push(id);
-          }
         }
       }
       const totalDeleted = deletedTodos.length + deletedRems.length;
       if (totalDeleted === 0) {
         return `[!] Tidak ada item dari [${cmd.ids.join(", ")}] yang ditemukan.`;
       }
-      let reply = `[OK] Berhasil menghapus ${totalDeleted} item.`;
+      let reply = `[OK] Berhasil menghapus ${totalDeleted} item (Ketik #undo untuk memulihkan).`;
       if (deletedTodos.length > 0) {
         const remaining = store.getTodos ? store.getTodos(chatId) : [];
         reply += `\n\n${formatTodoList(remaining, isGroup)}`;
