@@ -47,18 +47,17 @@ const ownerProfile = DEFAULT_CONTACT_PROFILES.find((p) => /owner|master/i.test(p
 export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || process.env.PRIMARY_USER_PHONE || ownerProfile?.phone || "6281234567890");
 
 export function isOwner(chatId = "", senderNumber = "") {
-  const norm1 = normalizePhone(chatId);
-  const norm2 = normalizePhone(senderNumber);
+  const isGroup = Boolean(chatId && String(chatId).endsWith("@g.us"));
+  const target = isGroup ? senderNumber : (senderNumber || chatId);
+  if (!target) return false;
+  const norm = normalizePhone(target);
   const ownerLid = process.env.OWNER_LID || "228140156772422";
   const ownerSuffix = OWNER_PHONE.length >= 4 ? OWNER_PHONE.slice(-4) : "7838";
   return (
-    norm1 === OWNER_PHONE ||
-    norm2 === OWNER_PHONE ||
-    norm1.endsWith(ownerSuffix) ||
-    norm2.endsWith(ownerSuffix) ||
-    norm1 === ownerLid ||
-    norm2 === ownerLid ||
-    String(chatId).includes(ownerLid)
+    norm === OWNER_PHONE ||
+    norm.endsWith(ownerSuffix) ||
+    norm === ownerLid ||
+    String(target).includes(ownerLid)
   );
 }
 
@@ -270,6 +269,12 @@ export class Storage {
       CREATE TABLE IF NOT EXISTS bot_settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS lid_mappings (
+        lid TEXT PRIMARY KEY,
+        phone TEXT NOT NULL,
+        name TEXT DEFAULT '',
         updated_at INTEGER NOT NULL
       );
     `);
@@ -1172,14 +1177,56 @@ export class Storage {
     if (!nameOrPhone) return null;
     const q = String(nameOrPhone).trim();
     const norm = normalizePhone(q);
+    const mappedPhone = typeof this.getLidMapping === "function" ? this.getLidMapping(q)?.phone : null;
     return this.db.prepare(`
       SELECT * FROM contacts 
       WHERE LOWER(name) = LOWER(?) 
          OR LOWER(name) LIKE LOWER(?) 
-         OR (phone != '' AND (phone = ? OR phone = ?))
+         OR (phone != '' AND (phone = ? OR phone = ? OR phone = ?))
+         OR (notes != '' AND (notes LIKE ? OR notes LIKE ?))
       ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id ASC
       LIMIT 1
-    `).get(q, `%${q}%`, q, norm, q) || null;
+    `).get(q, `%${q}%`, q, norm, mappedPhone || norm, `%${q}%`, `%(LID: ${q})%`, q) || null;
+  }
+
+  saveLidMapping(lid, phone, name = "") {
+    if (!lid || !phone) return;
+    const cleanLid = String(lid).replace(/\D/g, "");
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO lid_mappings (lid, phone, name, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(lid) DO UPDATE SET
+          phone = excluded.phone,
+          name = CASE WHEN excluded.name != '' THEN excluded.name ELSE lid_mappings.name END,
+          updated_at = excluded.updated_at
+      `).run(cleanLid, cleanPhone, name, Date.now());
+    } catch {}
+  }
+
+  getLidMapping(lid) {
+    if (!lid) return null;
+    const cleanLid = String(lid).replace(/\D/g, "");
+    if (!cleanLid) return null;
+    try {
+      return this.db.prepare("SELECT * FROM lid_mappings WHERE lid = ?").get(cleanLid) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getLidForPhone(phone) {
+    if (!phone) return null;
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (!cleanPhone) return null;
+    try {
+      const row = this.db.prepare("SELECT lid FROM lid_mappings WHERE phone = ? ORDER BY updated_at DESC LIMIT 1").get(cleanPhone);
+      return row?.lid || null;
+    } catch {
+      return null;
+    }
   }
 
   listPersons() {

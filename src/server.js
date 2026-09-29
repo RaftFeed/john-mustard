@@ -52,7 +52,7 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
         }
 
         console.log(">> Webhook Event:", body.event, "from:", body.payload?.from, "body:", body.payload?.body);
-        const incoming = parseIncoming(body, process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE);
+        const incoming = parseIncoming(body, process.env.WHITELIST_PHONE || process.env.ALLOWED_PHONE, store);
         if (incoming) {
           debouncedHandler(incoming);
         }

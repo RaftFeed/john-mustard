@@ -115,24 +115,80 @@ export async function fetchBotNumber() {
   return currentBotNumber;
 }
 
-export function resolveLidToPhone(lid) {
+const lidMemoryCache = new Map();
+// Pre-seed known mappings from environment or defaults
+lidMemoryCache.set("228140156772422", "6285236467838");
+lidMemoryCache.set("51934979461357", "6289514718700");
+
+export function registerLidMapping(lid, phone, name = "", store = null) {
+  const cleanLid = String(lid || "").replace(/\D/g, "");
+  let cleanPhone = String(phone || "").replace(/\D/g, "");
+  if (cleanPhone.startsWith("0")) cleanPhone = "62" + cleanPhone.slice(1);
+  if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return;
+  lidMemoryCache.set(cleanLid, cleanPhone);
+  if (store && typeof store.saveLidMapping === "function") {
+    store.saveLidMapping(cleanLid, cleanPhone, name);
+  }
+}
+
+export function resolveLidToPhone(lid, store = null) {
   try {
     const cleanLid = String(lid).replace(/\D/g, "");
     if (!cleanLid) return null;
+
+    if (lidMemoryCache.has(cleanLid)) {
+      return lidMemoryCache.get(cleanLid);
+    }
+    if (cleanLid === "228140156772422" || cleanLid.endsWith("7838")) {
+      const p = (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "");
+      lidMemoryCache.set(cleanLid, p);
+      return p;
+    }
+    if (cleanLid === "51934979461357") {
+      const p = (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "");
+      lidMemoryCache.set(cleanLid, p);
+      return p;
+    }
+
+    if (store && typeof store.getLidMapping === "function") {
+      const row = store.getLidMapping(cleanLid);
+      if (row?.phone) {
+        lidMemoryCache.set(cleanLid, row.phone);
+        return row.phone;
+      }
+    }
+
     const sessionDir = process.env.WAHA_SESSIONS_DIR || "/app/waha_sessions/noweb/default";
     const mappingFile = path.join(sessionDir, `lid-mapping-${cleanLid}_reverse.json`);
     if (fs.existsSync(mappingFile)) {
       const data = fs.readFileSync(mappingFile, "utf8");
-      return JSON.parse(data).replace(/\D/g, "");
+      const p = JSON.parse(data).replace(/\D/g, "");
+      if (p) {
+        lidMemoryCache.set(cleanLid, p);
+        return p;
+      }
     }
   } catch {}
   return null;
 }
 
-export function resolvePhoneToLid(phone) {
+export function resolvePhoneToLid(phone, store = null) {
   try {
-    const cleanPhone = String(phone).replace(/\D/g, "");
+    let cleanPhone = String(phone).replace(/\D/g, "");
+    if (cleanPhone.startsWith("0")) cleanPhone = "62" + cleanPhone.slice(1);
     if (!cleanPhone) return null;
+
+    for (const [l, p] of lidMemoryCache.entries()) {
+      if (p === cleanPhone) return l;
+    }
+    if (cleanPhone === "6285236467838") return "228140156772422";
+    if (cleanPhone === "6289514718700") return "51934979461357";
+
+    if (store && typeof store.getLidForPhone === "function") {
+      const l = store.getLidForPhone(cleanPhone);
+      if (l) return l;
+    }
+
     const sessionDir = process.env.WAHA_SESSIONS_DIR || "/app/waha_sessions/noweb/default";
     const mappingFile = path.join(sessionDir, `lid-mapping-${cleanPhone}.json`);
     if (fs.existsSync(mappingFile)) {
@@ -187,38 +243,32 @@ export function resolveWhitelistRecipient(rawTarget, store = null) {
   if (digits.length >= 9 && digits.length <= 15) {
     targetPhone = digits.startsWith("0") ? "62" + digits.slice(1) : digits;
   } else if (digits.length > 15) {
-    const fromLid = resolveLidToPhone(digits);
+    const fromLid = resolveLidToPhone(digits, store);
     if (fromLid) targetPhone = fromLid;
   }
 
-  // 2. Alias nama pengguna utama / sekunder dari environment
+  // 2. Alias nama pengguna utama / sekunder dari environment & nama keluarga
   if (!targetPhone) {
-    const lower = targetStr.toLowerCase();
+    const cleanName = targetStr.replace(/[\p{Emoji}\p{Extended_Pictographic}]/gu, "").trim().toLowerCase();
     const primaryName = (process.env.PRIMARY_USER_NAME || "rafid").toLowerCase();
     const secondaryName = (process.env.SECONDARY_USER_NAME || "karimah").toLowerCase();
 
     if (
-      lower.includes(primaryName) ||
-      lower === "owner" ||
-      lower === "master" ||
-      lower === "simas" ||
-      lower === "si mas" ||
-      lower === "mas" ||
-      lower === "mas rafid" ||
-      lower.includes("m3-083")
+      cleanName.includes(primaryName) ||
+      /\b(owner|master|simas|si mas|mas|mas rafid|m3-083|lord)\b/i.test(cleanName)
     ) {
       targetPhone = (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "");
       recipientDisplayName = process.env.PRIMARY_USER_NAME || "Rafid";
-    } else if (lower.includes(secondaryName) || lower === "istri" || lower === "pasangan") {
+    } else if (cleanName.includes(secondaryName) || /\b(istri|pasangan|karimah)\b/i.test(cleanName)) {
       targetPhone = (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "");
       recipientDisplayName = process.env.SECONDARY_USER_NAME || "Karimah";
-    } else if (lower === "mami" || lower === "mama" || lower === "ibu") {
+    } else if (/\b(mami|mama|ibu|bunda|umi|sabariyah)\b/i.test(cleanName) || cleanName.includes("mami") || cleanName.includes("sabariyah")) {
       targetPhone = "6282297432850";
       recipientDisplayName = "Mami";
-    } else if (lower === "papi" || lower === "papa" || lower === "ayah") {
+    } else if (/\b(papi|papa|ayah|abi)\b/i.test(cleanName) || cleanName.includes("papi") || cleanName.includes("papa")) {
       targetPhone = "62819703133";
       recipientDisplayName = "Papi";
-    } else if (lower.includes("razita") || lower === "zita") {
+    } else if (cleanName.includes("razita") || /\b(zita|ndut)\b/i.test(cleanName)) {
       targetPhone = "6282217584569";
       recipientDisplayName = "Razita Ndut";
     }
@@ -271,18 +321,29 @@ export function resolveWhitelistRecipient(rawTarget, store = null) {
 }
 
 export function formatSenderDisplay(senderNumber, senderName = "", store = null) {
-  const senderClean = String(senderNumber || "").replace(/\D/g, "");
+  let senderClean = String(senderNumber || "").replace(/\D/g, "");
+  const resolved = resolveLidToPhone(senderClean, store);
+  if (resolved) senderClean = resolved;
+
   if (senderClean === (process.env.PRIMARY_USER_PHONE || process.env.OWNER_PHONE || "6285236467838").replace(/\D/g, "")) {
     return process.env.PRIMARY_USER_NAME || "Rafid";
   }
   if (senderClean === (process.env.SECONDARY_USER_PHONE || "6289514718700").replace(/\D/g, "")) {
     return process.env.SECONDARY_USER_NAME || "Karimah";
   }
+  if (store?.getPerson) {
+    const p = store.getPerson(senderClean) || (senderName ? store.getPerson(senderName) : null);
+    if (p?.name) return p.name;
+  }
   if (store?.listPersons && senderClean) {
     const p = store.listPersons().find((c) => String(c.phone).replace(/\D/g, "") === senderClean);
     if (p?.name) return p.name;
   }
-  if (senderName && senderName.trim()) return senderName.trim();
+  if (senderName && senderName.trim()) {
+    const resolvedContact = resolveWhitelistRecipient(senderName, store);
+    if (resolvedContact?.recipientDisplayName) return resolvedContact.recipientDisplayName;
+    return senderName.trim();
+  }
   return senderClean ? `+${senderClean}` : "Pengguna";
 }
 
@@ -579,6 +640,15 @@ export function extractQuotedInfo(msg) {
 
   let text = "";
   let sender = "";
+  let senderName = String(
+    msg.replyTo?.pushName ||
+    msg.replyTo?.senderName ||
+    msg.replyTo?._data?.pushName ||
+    msg._data?.quotedMsg?.pushName ||
+    msg._data?.quotedMsg?.notifyName ||
+    msg._data?.Message?.extendedTextMessage?.contextInfo?.pushName ||
+    ""
+  ).trim();
   let hasMedia = false;
   let media = null;
 
@@ -674,6 +744,7 @@ export function extractQuotedInfo(msg) {
     return {
       text,
       sender,
+      senderName,
       fromMe: isFromMe,
       id: replyId,
       hasMedia,
@@ -684,7 +755,7 @@ export function extractQuotedInfo(msg) {
   return null;
 }
 
-export function parseIncoming(body, allowedPhone) {
+export function parseIncoming(body, allowedPhone, store = null) {
   if (body.event !== "message") return null;
 
   const msg = body.payload;
@@ -704,9 +775,54 @@ export function parseIncoming(body, allowedPhone) {
     : (msg.from || "");
   const senderNumber = rawSender.split("@")[0].split(":")[0].replace(/\D/g, "");
 
-  const altJid = msg._data?.key?.remoteJidAlt || msg._data?.key?.participantAlt;
-  const altNumber = altJid ? altJid.split("@")[0].replace(/\D/g, "") : null;
-  const resolvedPhone = resolveLidToPhone(senderNumber);
+  const pushName = String(
+    msg.pushName ||
+    msg._data?.pushName ||
+    msg._data?.notifyName ||
+    msg._data?.verifiedName ||
+    msg._data?.key?.pushName ||
+    msg._data?.key?.notifyName ||
+    ""
+  ).trim();
+
+  const altJid =
+    msg._data?.key?.participantPn ||
+    msg._data?.participantPn ||
+    msg.participantPn ||
+    msg._data?.key?.remoteJidAlt ||
+    msg._data?.key?.participantAlt ||
+    msg._data?.participantAlt ||
+    msg._data?.remoteJidAlt ||
+    msg.participantAlt ||
+    msg._data?.key?.senderPn ||
+    msg._data?.senderPn ||
+    msg.senderPn ||
+    msg.pn ||
+    msg._data?.pn ||
+    "";
+  const altNumber = altJid ? String(altJid).split("@")[0].split(":")[0].replace(/\D/g, "") : null;
+  let resolvedPhone = resolveLidToPhone(senderNumber, store);
+
+  // Jika altNumber tersedia dan senderNumber adalah LID, daftarkan mapping
+  if (altNumber && altNumber.length >= 9 && altNumber.length <= 15) {
+    if (senderNumber && senderNumber !== altNumber) {
+      registerLidMapping(senderNumber, altNumber, pushName, store);
+    }
+    resolvedPhone = altNumber;
+  }
+
+  // Jika pushName cocok dengan kontak terdaftar / alias (misal Mami, Papi, Razita)
+  let resolvedSenderName = pushName;
+  if (!resolvedPhone && pushName) {
+    const contactFromPush = resolveWhitelistRecipient(pushName, store);
+    if (contactFromPush?.targetPhone) {
+      resolvedPhone = contactFromPush.targetPhone;
+      resolvedSenderName = contactFromPush.recipientDisplayName || pushName;
+      if (senderNumber && senderNumber !== resolvedPhone) {
+        registerLidMapping(senderNumber, resolvedPhone, resolvedSenderName, store);
+      }
+    }
+  }
 
   const quoted = extractQuotedInfo(msg);
   const botNumber = currentBotNumber || (process.env.BOT_PHONE || "").replace(/\D/g, "") || botTo;
@@ -816,12 +932,17 @@ export function parseIncoming(body, allowedPhone) {
 
   let bodyText = normalizeMentionsInText(msg.body || "");
   let resolvedQuotedNum = null;
+  let resolvedQuotedName = quoted?.senderName || "";
   if (quoted && (quoted.text || quoted.hasMedia)) {
     const rawQuotedNum = (quoted.sender || "").split("@")[0].split(":")[0].replace(/\D/g, "");
-    resolvedQuotedNum = resolveLidToPhone(rawQuotedNum) || rawQuotedNum;
+    resolvedQuotedNum = resolveLidToPhone(rawQuotedNum, store) || rawQuotedNum;
+    if (!resolvedQuotedName && rawQuotedNum) {
+      const qPerson = store?.getPerson ? store.getPerson(resolvedQuotedNum) : null;
+      if (qPerson?.name) resolvedQuotedName = qPerson.name;
+    }
     const senderTag = quoted.fromMe
       ? "BOT (John Mustard)"
-      : resolvedQuotedNum ? `+${resolvedQuotedNum}` : "";
+      : resolvedQuotedName ? `${resolvedQuotedName} (+${resolvedQuotedNum})` : (resolvedQuotedNum ? `+${resolvedQuotedNum}` : "");
     const fromSuffix = senderTag ? ` DARI ${senderTag}` : "";
 
     let mediaTag = "";
@@ -843,6 +964,9 @@ export function parseIncoming(body, allowedPhone) {
     id: msg.id,
     from: msg.from,
     senderNumber: resolvedPhone || altNumber || senderNumber,
+    senderName: resolvedSenderName || pushName || "",
+    rawSender,
+    pushName,
     body: bodyText,
     hasMedia: Boolean(msg.hasMedia || mediaUrl || quotedMedia),
     mediaUrl,
@@ -854,7 +978,8 @@ export function parseIncoming(body, allowedPhone) {
     timestamp: msg.timestamp,
     quoted: quoted ? {
       ...quoted,
-      senderNumber: resolvedQuotedNum
+      senderNumber: resolvedQuotedNum,
+      senderName: resolvedQuotedName
     } : null,
     isGroup,
     isFollowUpThread

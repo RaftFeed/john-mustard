@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid } from "./waha.js";
+import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid, registerLidMapping, resolveWhitelistRecipient } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
@@ -75,13 +75,30 @@ async function handleIncomingMessage(msg) {
   const typingTimer = setInterval(() => startTyping(msg.from), 6000);
 
   const isGroup = Boolean(msg.isGroup || String(msg.from).endsWith("@g.us"));
-  const person = store.getPerson ? (store.getPerson(msg.senderNumber) || store.getPerson(msg.from)) : null;
-  const senderDisplayName = person?.name || (msg.senderNumber ? `+${msg.senderNumber}` : "");
+  let person = store.getPerson ? (
+    store.getPerson(msg.senderNumber) ||
+    (msg.senderName ? store.getPerson(msg.senderName) : null) ||
+    store.getPerson(msg.from)
+  ) : null;
+  if (!person && msg.senderName) {
+    const matchedContact = resolveWhitelistRecipient(msg.senderName, store);
+    if (matchedContact?.targetPhone && store?.getPerson) {
+      person = store.getPerson(matchedContact.targetPhone);
+    }
+  }
+  if (person) {
+    if (person.phone && msg.senderNumber && msg.senderNumber !== person.phone) {
+      registerLidMapping(msg.senderNumber, person.phone, person.name, store);
+      msg.senderNumber = person.phone;
+    }
+    if (!msg.senderName) msg.senderName = person.name;
+  }
+  const senderDisplayName = person?.name || msg.senderName || (msg.senderNumber ? `+${msg.senderNumber}` : "");
   const senderLabel = isGroup && senderDisplayName ? `[${senderDisplayName}]: ` : "";
 
   // Resolusi nama pengirim quoted message jika ada
   if (msg.quoted && msg.quoted.senderNumber) {
-    const qPerson = store.getPerson ? (store.getPerson(msg.quoted.senderNumber) || store.getPerson(msg.quoted.sender)) : null;
+    const qPerson = store.getPerson ? (store.getPerson(msg.quoted.senderNumber) || (msg.quoted.senderName ? store.getPerson(msg.quoted.senderName) : null) || store.getPerson(msg.quoted.sender)) : null;
     if (qPerson?.name) {
       msg.quoted.senderName = qPerson.name;
       if (msg.body && msg.body.includes(`DARI +${msg.quoted.senderNumber}`)) {
@@ -108,6 +125,7 @@ async function handleIncomingMessage(msg) {
           store,
           chatId: msg.from,
           senderNumber: msg.senderNumber,
+          senderName: senderDisplayName,
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => audioTrajectory.push(...traj),
           audio: { buffer, mimetype: msg.mimetype, filename: msg.filename },
@@ -147,6 +165,7 @@ async function handleIncomingMessage(msg) {
           const buffer = await downloadMedia(msg.mediaUrl);
           const prompt = [
             "[Stiker WhatsApp diterima].",
+            isGroup && senderDisplayName ? `Stiker ini dikirim oleh: ${senderDisplayName}.` : "",
             msg.body ? `Teks pengiring: "${msg.body}".` : "",
             "Perhatikan stiker ini baik-baik. Karakter sedang melakukan apa dan bagaimana ekspresinya?",
             "Beri respon ledekin santai, celetukan kocak, atau reaksi akrab khas John Mustard sesuai konteks stikernya (1-2 kalimat pendek, santai, anti-slop, tanpa basa-basi)."
@@ -156,9 +175,11 @@ async function handleIncomingMessage(msg) {
             store,
             chatId: msg.from,
             senderNumber: msg.senderNumber,
+            senderName: senderDisplayName,
             onToolCall: (name) => toolsCalled.push(name),
             media: { buffer, mimetype: msg.mimetype || "image/webp", filename: "sticker.webp" },
-            mailbox: msg.mailbox
+            mailbox: msg.mailbox,
+            quoted: msg.quoted
           });
         } catch (err) {
           console.warn("[Sticker] Vision chat error, fallback used:", err.message);
@@ -229,6 +250,7 @@ async function handleIncomingMessage(msg) {
           store,
           chatId: msg.from,
           senderNumber: msg.senderNumber,
+          senderName: senderDisplayName,
           onToolCall: (name) => toolsCalled.push(name),
           onTrajectory: (traj) => mediaTrajectory.push(...traj),
           media: { buffer, mimetype: msg.mimetype, filename: msg.filename },
@@ -410,6 +432,7 @@ async function handleIncomingMessage(msg) {
       store,
       chatId: msg.from,
       senderNumber: msg.senderNumber,
+      senderName: senderDisplayName,
       onToolCall: (name) => toolsCalled.push(name),
       onTrajectory: (traj) => textTrajectory.push(...traj),
       mailbox: msg.mailbox,

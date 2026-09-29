@@ -8,7 +8,8 @@ import {
 } from "../db.js";
 import {
   sendText,
-  getWhitelistPhones
+  getWhitelistPhones,
+  resolveWhitelistRecipient
 } from "../waha.js";
 import {
   TOOLS,
@@ -46,7 +47,7 @@ export function injectMailboxSteering(mailbox, contents) {
   return true;
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", senderName = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -125,10 +126,22 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
   const callerPhone = normalizePhone(senderNumber || chatId);
   let speaker = null;
   if (store?.getPerson) {
-    speaker = store.getPerson(callerPhone) || store.getPerson(senderNumber) || store.getPerson(chatId);
+    speaker =
+      store.getPerson(callerPhone) ||
+      store.getPerson(senderNumber) ||
+      (senderName ? store.getPerson(senderName) : null) ||
+      store.getPerson(chatId);
+  }
+  if (!speaker && senderName) {
+    const resolved = resolveWhitelistRecipient(senderName, store);
+    if (resolved?.targetPhone && store?.getPerson) {
+      speaker = store.getPerson(resolved.targetPhone);
+    }
   }
   if (!speaker && DEFAULT_CONTACT_PROFILES) {
-    speaker = DEFAULT_CONTACT_PROFILES.find((p) => normalizePhone(p.phone) === callerPhone);
+    speaker =
+      DEFAULT_CONTACT_PROFILES.find((p) => normalizePhone(p.phone) === callerPhone) ||
+      (senderName ? DEFAULT_CONTACT_PROFILES.find((p) => p.name.toLowerCase() === senderName.toLowerCase()) : null);
   }
 
   const customTone = store?.getUserTonePreference ? store.getUserTonePreference(callerPhone || chatId) : null;
@@ -247,7 +260,7 @@ ${isBotQuoted
   }
   let effectiveUserText = userText;
   if (isGroupChat && userText && !userText.startsWith(`[Pengirim:`)) {
-    const senderTag = speaker?.name ? `${speaker.name} (+${callerPhone})` : `+${callerPhone}`;
+    const senderTag = speaker?.name ? `${speaker.name} (+${callerPhone})` : (senderName ? `${senderName} (+${callerPhone})` : `+${callerPhone}`);
     effectiveUserText = `[Pengirim: ${senderTag}]: ${userText}`;
   }
 

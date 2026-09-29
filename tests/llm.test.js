@@ -400,3 +400,88 @@ test("LLM Engine: injects quoted message context anchor when user replies to bot
     globalThis.fetch = originalFetch;
   }
 });
+
+test("WAHA & LLM: parseIncoming and processChat resolve WhatsApp LID & pushName to Mami", async () => {
+  const { parseIncoming, extractQuotedInfo, formatSenderDisplay } = await import("../src/waha.js");
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+
+  const store = new Storage(":memory:");
+
+  // Test 1: parseIncoming with WhatsApp LID and pushName "Mami"
+  const webhookBody = {
+    event: "message",
+    payload: {
+      id: "MSG_STICKER_123",
+      from: "120363029582992016@g.us",
+      participant: "338140156772422@lid",
+      pushName: "Mami",
+      type: "sticker",
+      hasMedia: true,
+      mediaUrl: "http://waha:3000/sticker.webp",
+      replyTo: {
+        id: "BOT_MSG_999",
+        fromMe: true,
+        body: "Bangunin Lord Rafid Kuliah jam 08.00"
+      },
+      timestamp: 1700000000
+    }
+  };
+
+  const parsed = parseIncoming(webhookBody, "6285236467838,6282297432850", store);
+  assert.ok(parsed, "Message should be parsed");
+  assert.strictEqual(parsed.isSticker, true);
+  assert.strictEqual(parsed.isGroup, true);
+  assert.strictEqual(parsed.senderName, "Mami");
+  assert.strictEqual(parsed.senderNumber, "6282297432850");
+  assert.strictEqual(parsed.quoted?.fromMe, true);
+
+  // Check that LID mapping was dynamically saved
+  const mapping = store.getLidMapping("338140156772422");
+  assert.ok(mapping);
+  assert.strictEqual(mapping.phone, "6282297432850");
+
+  // Test 2: formatSenderDisplay with LID
+  const display = formatSenderDisplay("338140156772422", "Mami", store);
+  assert.strictEqual(display, "Mami");
+
+  // Test 3: processChat in group chat with Mami
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Wkwk Mami ngirim stiker pasrah 😭" }] } }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "[Stiker WhatsApp diterima]. Stiker ini dikirim oleh: Mami.", {
+      store,
+      chatId: "120363029582992016@g.us",
+      senderNumber: parsed.senderNumber,
+      senderName: parsed.senderName,
+      quoted: parsed.quoted
+    });
+
+    assert.ok(capturedPayload, "Payload must be sent to LLM");
+    const sysPrompt = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sysPrompt.includes("Panggil \"Mami\". DILARANG KERAS memanggil Mami dengan sebutan \"Lord\""));
+    assert.ok(sysPrompt.includes("IDENTIFIKASI PENGIRIM (SANGAT PENTING)"));
+    assert.ok(sysPrompt.includes("PENGGUNA ME-REPLY PESAN BOT"));
+
+    const userContent = capturedPayload.contents.find((c) => c.role === "user");
+    const userText = userContent.parts.map((p) => p.text).join(" ");
+    assert.ok(userText.includes("[Pengirim: Mami (+6282297432850)]"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

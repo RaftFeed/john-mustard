@@ -164,3 +164,34 @@ test("Storage: listReminders and getTodos date filtering with WIB range", () => 
   const updatedDescTodo = store.getTodoById(descTodoId);
   assert.strictEqual(updatedDescTodo.description, "Prompt revisi: tambahkan fitur oauth google");
 });
+
+test("Storage: LID mappings and group chat isOwner guard", async () => {
+  const { isOwner } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+
+  // Save LID mapping
+  store.saveLidMapping("123456789012345", "6282297432850", "Mami");
+  const mapping = store.getLidMapping("123456789012345");
+  assert.ok(mapping);
+  assert.strictEqual(mapping.phone, "6282297432850");
+  assert.strictEqual(mapping.name, "Mami");
+
+  // Phone to LID reverse
+  const foundLid = store.getLidForPhone("6282297432850");
+  assert.strictEqual(foundLid, "123456789012345");
+
+  // getPerson via LID
+  const person = store.getPerson("123456789012345");
+  assert.ok(person);
+  assert.strictEqual(person.name, "Mami");
+
+  // isOwner checks
+  // 1. Direct message from owner
+  assert.strictEqual(isOwner("6285236467838@c.us"), true);
+  // 2. Group chat where sender is owner
+  assert.strictEqual(isOwner("120363029582992016@g.us", "6285236467838"), true);
+  // 3. Group chat where sender is Mami -> NOT owner
+  assert.strictEqual(isOwner("120363029582992016@g.us", "6282297432850"), false);
+  // 4. Group chat where sender is LID of non-owner -> NOT owner
+  assert.strictEqual(isOwner("120363029582992016@g.us", "123456789012345"), false);
+});
