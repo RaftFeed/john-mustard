@@ -133,6 +133,28 @@ export function cosineSimilarity(vecA, vecB) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+export function isSimilarReminder(msgA = "", msgB = "") {
+  const clean = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
+  const a = clean(msgA);
+  const b = clean(msgB);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  if (a.includes(b) || b.includes(a)) return true;
+
+  const stopWords = new Set(["zoom", "link", "acara", "agenda", "jadwal", "meeting", "rapat", "pengingat", "reminder", "online", "via"]);
+  const tokensA = new Set(a.split(/\s+/).filter((t) => t.length > 2 && !stopWords.has(t)));
+  const tokensB = new Set(b.split(/\s+/).filter((t) => t.length > 2 && !stopWords.has(t)));
+
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+  let intersection = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) intersection++;
+  }
+  const minTokens = Math.min(tokensA.size, tokensB.size);
+  return (intersection / minTokens) >= 0.75;
+}
+
 export class Storage {
   constructor(dbPath = "bot.db") {
     this.dbPath = dbPath;
@@ -367,6 +389,34 @@ export class Storage {
       finalRemindAt = Date.now();
     }
 
+    // Deduplication check: cari reminder pending dengan waktu dan topik serupa
+    try {
+      const targetTime = finalEventAt || finalRemindAt;
+      const scope = getUserTodoScope(chatId, this);
+      if (scope.chatIds && scope.chatIds.length > 0) {
+        const cond = scope.chatIds.map(() => "chat_id = ?").join(" OR ");
+        const pendingRows = this.db.prepare(
+          `SELECT * FROM reminders WHERE (${cond}) AND status = 'pending'`
+        ).all(...scope.chatIds);
+
+        for (const row of pendingRows) {
+          const rowTime = row.event_at || row.remind_at;
+          if (Math.abs(rowTime - targetTime) <= 30 * 60 * 1000 && isSimilarReminder(row.message, message)) {
+            const newEventAt = finalEventAt || row.event_at;
+            const newRemindAt = finalRemindAt || row.remind_at;
+            const newTaskType = (taskType === "event" || finalEventAt || row.task_type === "event" || row.event_at) ? "event" : row.task_type;
+            const bestMessage = String(message).length >= String(row.message).length ? message : row.message;
+
+            this.db.prepare(
+              "UPDATE reminders SET message = ?, remind_at = ?, event_at = ?, task_type = ?, recurrence = coalesce(?, recurrence) WHERE id = ?"
+            ).run(bestMessage, newRemindAt, newEventAt, newTaskType, recurrence, row.id);
+
+            return row.id;
+          }
+        }
+      }
+    } catch {}
+
     const stmt = this.db.prepare(
       "INSERT INTO reminders (chat_id, message, remind_at, recurrence, task_type, event_at) VALUES (?, ?, ?, ?, ?, ?)"
     );
@@ -483,6 +533,21 @@ export class Storage {
 
   markReminderDone(id) {
     this.db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?").run(id);
+  }
+
+  hasRecentSentReminder(chatId, message, windowMs = 15 * 60 * 1000, now = Date.now()) {
+    try {
+      const scope = getUserTodoScope(chatId, this);
+      if (!scope.chatIds || scope.chatIds.length === 0) return false;
+      const cond = scope.chatIds.map(() => "chat_id = ?").join(" OR ");
+      const sentRows = this.db.prepare(
+        `SELECT message, remind_at, event_at FROM reminders WHERE (${cond}) AND status = 'sent' AND (remind_at >= ? OR event_at >= ?)`
+      ).all(...scope.chatIds, now - windowMs, now - windowMs);
+
+      return sentRows.some((row) => isSimilarReminder(row.message, message));
+    } catch {
+      return false;
+    }
   }
 
   listReminders(chatId, targetDate = null) {

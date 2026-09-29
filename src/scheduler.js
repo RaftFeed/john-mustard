@@ -1,5 +1,6 @@
 import { sendText } from "./waha.js";
 import { processChat } from "./llm.js";
+import { isSimilarReminder } from "./db.js";
 
 export const NEAR_HORIZON_MS = 10 * 60 * 1000; // 10 menit
 const activeTimers = new Map(); // id -> NodeJS.Timeout
@@ -32,6 +33,16 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
   if (typeof store.claimReminder === "function") {
     const claimed = store.claimReminder(item.id);
     if (!claimed) return false;
+  }
+
+  // Deduplication check: jika pesan serupa sudah dikirim baru-baru ini ke chat yang sama, skip pengiriman
+  if (typeof store.hasRecentSentReminder === "function") {
+    if (store.hasRecentSentReminder(item.chat_id, item.message, 15 * 60 * 1000)) {
+      if (typeof store.markReminderDone === "function") {
+        store.markReminderDone(item.id);
+      }
+      return false;
+    }
   }
 
   try {
@@ -163,8 +174,39 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
   const pending = store.getPendingReminders();
   let count = 0;
 
-  // 1. Safety net: eksekusi pending yang overdue atau belum ter-claim
+  // 1. Safety net: eksekusi pending yang overdue atau belum ter-claim dengan batch deduplication
+  const processedChatMessages = new Map();
+  const dedupedPending = [];
+
   for (const item of pending) {
+    const chatKey = item.chat_id;
+    if (!processedChatMessages.has(chatKey)) {
+      processedChatMessages.set(chatKey, []);
+    }
+    const existing = processedChatMessages.get(chatKey);
+    const duplicateIdx = existing.findIndex((e) => isSimilarReminder(e.message, item.message));
+
+    if (duplicateIdx >= 0) {
+      const prev = existing[duplicateIdx];
+      const itemIsEvent = Boolean(item.event_at || item.task_type === "event");
+      const prevIsEvent = Boolean(prev.event_at || prev.task_type === "event");
+
+      if (itemIsEvent && !prevIsEvent) {
+        if (typeof store.markReminderDone === "function") store.markReminderDone(prev.id);
+        const pIdx = dedupedPending.findIndex((p) => p.id === prev.id);
+        if (pIdx >= 0) dedupedPending.splice(pIdx, 1);
+        existing[duplicateIdx] = item;
+        dedupedPending.push(item);
+      } else {
+        if (typeof store.markReminderDone === "function") store.markReminderDone(item.id);
+      }
+    } else {
+      existing.push(item);
+      dedupedPending.push(item);
+    }
+  }
+
+  for (const item of dedupedPending) {
     cancelActiveTimer(item.id);
     const executed = await executeSingleReminder(store, item, { rotator, textSender });
     if (executed) count++;

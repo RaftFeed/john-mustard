@@ -153,3 +153,68 @@ test("Scheduler: 2-stage event reminder pings early then pings on event start", 
 
   clearActiveTimers();
 });
+
+test("Scheduler: deduplicates similar pending reminders in same tick and suppresses double alerts", async () => {
+  const sentMessages = [];
+  const mockSender = async (chatId, text) => {
+    sentMessages.push({ chatId, text });
+  };
+
+  const now = Date.now();
+  const reminders = [
+    {
+      id: 29,
+      chat_id: "user_dup",
+      message: "SMTP 2026 Online Certificate Ceremony",
+      remind_at: now - 1000,
+      event_at: null,
+      task_type: "reminder",
+      status: "pending"
+    },
+    {
+      id: 64,
+      chat_id: "user_dup",
+      message: "Zoom SMTP 2026 Online Certificate Ceremony",
+      remind_at: now - 1000,
+      event_at: now - 1000,
+      task_type: "event",
+      status: "pending"
+    }
+  ];
+
+  const mockStore = {
+    claimReminder(id) {
+      const r = reminders.find((item) => item.id === id);
+      if (r && r.status === "pending") {
+        r.status = "claimed";
+        return true;
+      }
+      return false;
+    },
+    markReminderDone(id) {
+      const r = reminders.find((item) => item.id === id);
+      if (r) r.status = "sent";
+    },
+    getPendingReminders() {
+      return reminders.filter((r) => r.status === "pending");
+    },
+    getNearHorizonReminders() {
+      return [];
+    },
+    getReminderById(id) {
+      return reminders.find((r) => r.id === id);
+    },
+    getPendingTodoDeadlines() {
+      return [];
+    }
+  };
+
+  const result = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(result.sent, 1);
+  assert.strictEqual(sentMessages.length, 1);
+  assert.ok(sentMessages[0].text.includes("[ACARA] Zoom SMTP 2026 Online Certificate Ceremony"));
+  assert.strictEqual(reminders.find((r) => r.id === 29).status, "sent");
+  assert.strictEqual(reminders.find((r) => r.id === 64).status, "sent");
+
+  clearActiveTimers();
+});

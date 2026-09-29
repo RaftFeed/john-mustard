@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange } from "../src/db.js";
+import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -261,5 +261,31 @@ test("Storage: migrateExistingEventReminders converts old events to 1h early rem
   // Idempotency: running again should change 0 items
   const repeatCount = store.migrateExistingEventReminders(now);
   assert.strictEqual(repeatCount, 0);
+});
+
+test("Storage: isSimilarReminder and addReminder duplicate prevention", () => {
+  // Similarity tests
+  assert.strictEqual(isSimilarReminder("SMTP 2026 Online Certificate Ceremony", "Zoom SMTP 2026 Online Certificate Ceremony"), true);
+  assert.strictEqual(isSimilarReminder("Ujian Sistem Operasi", "Ujian Praktikum Sistem Operasi"), true);
+  assert.strictEqual(isSimilarReminder("Beli susu sapi", "Beli telur ayam"), false);
+  assert.strictEqual(isSimilarReminder("Minum obat pagi", "Minum obat siang"), false);
+
+  const store = new Storage(":memory:");
+  const eventTime = Date.now() + 7200_000;
+
+  // Add initial reminder
+  const id1 = store.addReminder("user_sim", "SMTP 2026 Online Certificate Ceremony", eventTime, null, "reminder");
+  assert.ok(id1 > 0);
+
+  // Add similar reminder around same time
+  const id2 = store.addReminder("user_sim", "Zoom SMTP 2026 Online Certificate Ceremony", eventTime, null, "event", eventTime);
+  // Must return same ID (updated in place), not create duplicate!
+  assert.strictEqual(id2, id1);
+
+  const pending = store.listReminders("user_sim");
+  assert.strictEqual(pending.length, 1);
+  assert.strictEqual(pending[0].id, id1);
+  assert.strictEqual(pending[0].message, "Zoom SMTP 2026 Online Certificate Ceremony");
+  assert.strictEqual(pending[0].task_type, "event");
 });
 
