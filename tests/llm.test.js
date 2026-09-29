@@ -7,7 +7,8 @@ import {
   sanitizeLatexForWhatsApp,
   parseHtmlTableToMarkdown,
   isActionIntent,
-  isGreetingIntent
+  isGreetingIntent,
+  isExplicitPrivateRequest
 } from "../src/llm.js";
 import { formatOutboundMentions } from "../src/waha.js";
 import { executeTool } from "../src/llm/tools.js";
@@ -18,6 +19,9 @@ test("LLM Guards: detectUnexecutedMutationClaim identifies false completion clai
   assert.strictEqual(detectUnexecutedMutationClaim("Berhasil dihapus dari to-do list.", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("Woles Lord, udah gw majuin ke jam 21.00 WIB ya", []), true);
   assert.strictEqual(detectUnexecutedMutationClaim("udah gw mundurin jadwalnya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("udah aku japri ke Rafid ya", []), true);
+  assert.strictEqual(detectUnexecutedMutationClaim("Siap Mami, ini langsung aku PC dan bangunin Lord Rafid sekarang juga ya.", ["sendDirectMessage"]), false);
   assert.strictEqual(detectUnexecutedMutationClaim("Sudah kutambahkan tugasnya bro!", ["addTodo"]), false);
   assert.strictEqual(detectUnexecutedMutationClaim("Halo ada yang bisa kubantu?", []), false);
 });
@@ -72,7 +76,20 @@ test("LLM Intents: isActionIntent and isGreetingIntent classification", () => {
   assert.strictEqual(isGreetingIntent("selamat pagi"), true);
   assert.strictEqual(isActionIntent("tambahkan tugas baru"), true);
   assert.strictEqual(isActionIntent("tolong ingatkan besok jam 7"), true);
+  assert.strictEqual(isActionIntent("@John Mustard WA @M3-083_Rafid..."), true);
+  assert.strictEqual(isActionIntent("jangan dgrup @John Mustard tapi di saluran pribadi kasih tau @M3-083_Rafid Harsyah"), true);
   assert.strictEqual(isActionIntent("halo bro"), false);
+
+  // isExplicitPrivateRequest tests
+  assert.strictEqual(isExplicitPrivateRequest("trus...!!! @John Mustard sampe @M3-083_... bangun...!!! di japriii...!!!"), true);
+  assert.strictEqual(isExplicitPrivateRequest("@John Mustard WA @M3-083_Rafid..."), true);
+  assert.strictEqual(isExplicitPrivateRequest("jangan dgrup @John Mustard tapi di saluran pribadi kasih tau @M3-083_Rafid Harsyah"), true);
+  assert.strictEqual(isExplicitPrivateRequest("TELP...!!! @John Mustard TELP...!!!"), true);
+  assert.strictEqual(isExplicitPrivateRequest("tolong pc mami"), true);
+  assert.strictEqual(isExplicitPrivateRequest("japri razita tugasnya"), true);
+  assert.strictEqual(isExplicitPrivateRequest("dm papi sekarang"), true);
+  assert.strictEqual(isExplicitPrivateRequest("bilangin mami itu cuma typo doang wlek"), false);
+  assert.strictEqual(isExplicitPrivateRequest("kasih tau razita jangan lupa makan"), false);
 });
 
 test("LLM Engine: group chat message prefixes active speaker identity", async () => {
@@ -264,6 +281,27 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
 
   // Will either succeed or fail at WhatsApp dispatch, but NOT blocked by group guard
   assert.strictEqual(resGroupExplicitDM.toolResult.error?.includes("Di obrolan grup dilarang"), false);
+
+  // Test sendDirectMessage allowed with repeated letters ("di japriii...!!!")
+  const resJapriii = await executeTool("sendDirectMessage", {
+    recipient: "Rafid",
+    message: "Bangun woy udah ada kelas"
+  }, { store, chatId: "120363029582992016@g.us", userText: "trus...!!! @John Mustard sampe @M3-083_... bangun...!!! di japriii...!!!" });
+  assert.strictEqual(resJapriii.toolResult.error?.includes("Di obrolan grup dilarang"), false);
+
+  // Test sendDirectMessage allowed with "WA @Rafid"
+  const resWA = await executeTool("sendDirectMessage", {
+    recipient: "Rafid",
+    message: "Bangun woy"
+  }, { store, chatId: "120363029582992016@g.us", userText: "@John Mustard WA @M3-083_Rafid..." });
+  assert.strictEqual(resWA.toolResult.error?.includes("Di obrolan grup dilarang"), false);
+
+  // Test sendDirectMessage allowed with "jangan dgrup tapi di saluran pribadi"
+  const resSaluran = await executeTool("sendDirectMessage", {
+    recipient: "Rafid",
+    message: "Bangun woy"
+  }, { store, chatId: "120363029582992016@g.us", userText: "jangan dgrup @John Mustard tapi di saluran pribadi kasih tau @M3-083_Rafid Harsyah" });
+  assert.strictEqual(resSaluran.toolResult.error?.includes("Di obrolan grup dilarang"), false);
 });
 
 test("LLM Engine: single-turn mutation short-circuits to avoid turn 2 delay", async () => {

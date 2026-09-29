@@ -26,7 +26,8 @@ export {
   isAmbiguousScheduleStatement,
   isNoFluffRequest,
   isActionIntent,
-  isGreetingIntent
+  isGreetingIntent,
+  isExplicitPrivateRequest
 } from "./llm/guards.js";
 
 export {

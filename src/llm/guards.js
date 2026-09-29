@@ -306,15 +306,17 @@ const MUTATION_TOOLS = new Set([
   "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",
   "processPdf", "mergePdf", "splitPdf", "compressPdf", "convertDocument",
   "proposeSkill", "approveSkill", "rejectSkill", "rollbackSkill",
-  "addPerson", "deletePerson"
+  "addPerson", "deletePerson",
+  "sendDirectMessage"
 ]);
 
 export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   if (!text) return false;
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
-  const claimRegex = /(sudah|udah|berhasil|telah)\s+(di|ku|saya|gw|gua|telah|berhasil)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin)/i;
-  return claimRegex.test(text);
+  const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan)/i;
+  const promiseRegex = /(?:ini\s+langsung|segera|langsung)\s+(?:aku|saya|gw|ku)\s*(?:pc|japri|dm|wa|kirimkan\s+pesan|chat)/i;
+  return claimRegex.test(text) || promiseRegex.test(text);
 }
 
 export function isAmbiguousScheduleStatement(text = "") {
@@ -342,9 +344,25 @@ export function isNoFluffRequest(text = "") {
   );
 }
 
+export function isExplicitPrivateRequest(text = "") {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  if (/\b(?:di-?)?japr+i+/i.test(t)) return true;
+  if (/\b(?:di-?)?p+c+\b/i.test(t)) return true;
+  if (/\b(?:di-?)?d+m+\b/i.test(t)) return true;
+  if (/\b(?:di-?)?p+m+\b/i.test(t)) return true;
+  if (/\b(?:di-?)?wa\b/i.test(t) || /\bwhatsapp\b/i.test(t)) return true;
+  if (/\b(?:saluran|jalur|chat|pesan|ruang|kontak|nomor|inbox)\s+(?:pribadi|private)\b/i.test(t)) return true;
+  if (/\b(?:lewat|via|melalui)\s+(?:pribadi|private|dm|pc|japri|wa)\b/i.test(t)) return true;
+  if (/\bjangan\s+(?:di\s+|d)?grup\b/i.test(t)) return true;
+  if (/\bdirect\s*message\b/i.test(t)) return true;
+  if (/\b(bangunin|telp|telepon|call|hubungi)\b/i.test(t)) return true;
+  return false;
+}
+
 export function isActionIntent(text = "") {
   if (!text) return false;
-  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|pc|japri|pm|dm|chat|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
+  return /\b(tambah|catat|buat|bikin|ingat|remind|jadwal|ubah|ganti|koreksi|update|hapus|delete|batal|cancel|selesai|done|mark|undo|simpan|brankas|cari|kirim|bagi|pc|japri|pm|dm|chat|wa|whatsapp|saluran\s+pribadi|jalur\s+pribadi|bangunin|telp|telepon|call|minta\s+akses|beri\s+akses|backlog|lihat|cek|tampil|hitung|python|script|plot|grafik|skill|macro|kristal|pelajari|baca|url|link|web|artikel|note|catatan|memo|health|server|mc|menkrep|minecraft|mabar|spek|spesifikasi|uptime|ram|cpu|disk|load|pdf|gabung|merge|split|pisah|render|kompres|compress|convert|konversi|docx|excel|xlsx|ocr|scan|digest|proposal|propose|approve|reject|rollback|versi|version|kontak|contact|orang|person|pasangan|direktori)/i.test(text);
 }
 
 export function isGreetingIntent(text = "") {
