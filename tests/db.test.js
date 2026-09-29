@@ -36,12 +36,24 @@ test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () =
   assert.ok(formattedOverdue.includes("[TERLEWAT]"));
   assert.ok(formattedOverdue.includes("🔴"));
 
-  // getPendingTodoDeadlines & markTodoReminded
+  // 2-stage todo deadline: getPendingTodoEarlyReminders → markTodoEarlyReminded → getPendingTodoDeadlines → markTodoReminded
+  // Stage 1: early reminder for approaching deadline (within 1h)
+  const approachingId = store.addTodo("user1", "Tugas Mendekati Deadline", Date.now() + 1800_000); // 30 min away
+  const earlyReminders = store.getPendingTodoEarlyReminders(3600_000);
+  assert.ok(earlyReminders.some((t) => t.id === approachingId), "Approaching todo should appear in early reminders");
+  assert.strictEqual(store.markTodoEarlyReminded(approachingId), 1);
+  const earlyAfter = store.getPendingTodoEarlyReminders(3600_000);
+  assert.ok(!earlyAfter.some((t) => t.id === approachingId), "Early-reminded todo should not reappear");
+
+  // Stage 2: overdue deadline (getPendingTodoDeadlines picks up reminded < 2)
   const pending = store.getPendingTodoDeadlines();
-  assert.ok(pending.some((t) => t.id === overdueId));
+  assert.ok(pending.some((t) => t.id === overdueId), "Overdue todo should appear in pending deadlines");
+  // Early-reminded todo not yet overdue, so not in getPendingTodoDeadlines
+  assert.ok(!pending.some((t) => t.id === approachingId), "Approaching (not overdue) todo should not be in overdue list");
+
   assert.strictEqual(store.markTodoReminded(overdueId), 1);
   const pendingAfter = store.getPendingTodoDeadlines();
-  assert.ok(!pendingAfter.some((t) => t.id === overdueId));
+  assert.ok(!pendingAfter.some((t) => t.id === overdueId), "Final-reminded todo should disappear from pending");
 
   // Contacts test (default loaded from config/contacts.json)
   const persons = store.listPersons();

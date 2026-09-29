@@ -220,7 +220,53 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
     }
   }
 
-  // 3. Scan pending to-do deadlines yang sudah jatuh tempo / overdue
+  // 3. Scan to-do deadlines approaching within 1 hour (Stage 1: H-1 jam siaga)
+  if (typeof store.getPendingTodoEarlyReminders === "function") {
+    const earlyTodos = store.getPendingTodoEarlyReminders(3600_000);
+    for (const todo of earlyTodos) {
+      if (typeof store.markTodoEarlyReminded === "function") {
+        const marked = store.markTodoEarlyReminded(todo.id);
+        if (!marked) continue;
+      }
+      try {
+        const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+        const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+        const dlWib = new Date(todo.deadline + 7 * 60 * 60 * 1000);
+        const dlHours = String(dlWib.getUTCHours()).padStart(2, "0");
+        const dlMinutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+        const dlDayName = daysId[dlWib.getUTCDay()];
+        const dlDateNum = dlWib.getUTCDate();
+        const dlMonthName = monthsId[dlWib.getUTCMonth()];
+        const dlYear = dlWib.getUTCFullYear();
+        const diffMinutes = Math.max(0, Math.round((todo.deadline - Date.now()) / 60000));
+        const timeUntil = diffMinutes >= 60
+          ? `${Math.round(diffMinutes / 60)} jam lagi`
+          : (diffMinutes > 0 ? `${diffMinutes} menit lagi` : "segera");
+
+        const tagBase = todo.tag ? todo.tag.trim() : "#tugas";
+        const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
+          const clean = t.replace(/^`+|`+$/g, "");
+          return clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`;
+        });
+
+        const lines = [
+          "⏰ [Pengingat Deadline Tugas]",
+          "_Tenggat waktu 1 jam lagi!_\n",
+          `🟡 *[SEGERA] ${todo.task}*`,
+          `├── Tenggat: ${dlDayName}, ${dlDateNum} ${dlMonthName} ${dlYear} ${dlHours}:${dlMinutes} (${timeUntil})`,
+          `└── \`${tagTokens.join(" ")}\`\n`,
+          `_Tandai selesai: ketik #done ${todo.id}_`
+        ];
+
+        await textSender(todo.chat_id, lines.join("\n"));
+        count++;
+      } catch (err) {
+        console.error(`Gagal kirim early reminder deadline to-do #${todo.id}:`, err.message);
+      }
+    }
+  }
+
+  // 4. Scan pending to-do deadlines yang sudah jatuh tempo / overdue (Stage 2)
   if (typeof store.getPendingTodoDeadlines === "function") {
     const dueTodos = store.getPendingTodoDeadlines();
     for (const todo of dueTodos) {
@@ -229,15 +275,15 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
         if (!marked) continue;
       }
       try {
-        const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
-        const hours = String(nowWib.getUTCHours()).padStart(2, "0");
-        const minutes = String(nowWib.getUTCMinutes()).padStart(2, "0");
         const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
         const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-        const dayName = daysId[nowWib.getUTCDay()];
-        const dateNum = nowWib.getUTCDate();
-        const monthName = monthsId[nowWib.getUTCMonth()];
-        const year = nowWib.getUTCFullYear();
+        const dlWib = new Date(todo.deadline + 7 * 60 * 60 * 1000);
+        const dlHours = String(dlWib.getUTCHours()).padStart(2, "0");
+        const dlMinutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+        const dlDayName = daysId[dlWib.getUTCDay()];
+        const dlDateNum = dlWib.getUTCDate();
+        const dlMonthName = monthsId[dlWib.getUTCMonth()];
+        const dlYear = dlWib.getUTCFullYear();
 
         const tagBase = todo.tag ? todo.tag.trim() : "#tugas";
         const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
@@ -250,7 +296,7 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
           "⏰ [Pengingat Deadline Tugas]",
           "_Tenggat waktu sudah tiba!_\n",
           `🔴 *[TERLEWAT] ${todo.task}*`,
-          `├── Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${hours}:${minutes})`,
+          `├── Terlewat (${dlDayName}, ${dlDateNum} ${dlMonthName} ${dlYear} ${dlHours}:${dlMinutes})`,
           `└── \`${tagTokens.join(" ")}\`\n`,
           `_Tandai selesai: ketik #done ${todo.id}_`
         ];

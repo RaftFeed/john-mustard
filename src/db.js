@@ -324,6 +324,9 @@ export class Storage {
 
     // Migrate existing reminder data to 2-stage event schema (H-1h)
     this.migrateExistingEventReminders();
+
+    // Migrate old todo reminded=1 (already overdue) to reminded=2 so they don't re-spam
+    try { this.db.prepare("UPDATE todos SET reminded = 2 WHERE reminded = 1 AND deadline <= ?").run(Date.now()); } catch {}
   }
 
   initDefaultProfiles() {
@@ -1083,17 +1086,32 @@ export class Storage {
       .run(newTask, newDeadline, newTag, newCategory, newAssignee, newDescription, resetReminded, existing.id).changes;
   }
 
+  // Stage 1: todos approaching deadline within windowMs (default 1h), not yet early-reminded
+  getPendingTodoEarlyReminders(windowMs = 3600_000, limit = 20) {
+    const now = Date.now();
+    return this.db
+      .prepare(
+        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline > ? AND deadline <= ? AND (reminded = 0 OR reminded IS NULL) AND deleted_at IS NULL ORDER BY deadline ASC LIMIT ?"
+      )
+      .all(now, now + windowMs, limit);
+  }
+
+  markTodoEarlyReminded(id) {
+    return this.db.prepare("UPDATE todos SET reminded = 1 WHERE id = ?").run(id).changes;
+  }
+
+  // Stage 2: todos whose deadline has passed, not yet final-reminded (reminded < 2)
   getPendingTodoDeadlines(limit = 20) {
     const now = Date.now();
     return this.db
       .prepare(
-        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND (reminded = 0 OR reminded IS NULL) AND deleted_at IS NULL ORDER BY deadline ASC LIMIT ?"
+        "SELECT id, chat_id, task, deadline, tag, category, assignee FROM todos WHERE done = 0 AND deadline IS NOT NULL AND deadline <= ? AND (reminded < 2 OR reminded IS NULL) AND deleted_at IS NULL ORDER BY deadline ASC LIMIT ?"
       )
       .all(now, limit);
   }
 
   markTodoReminded(id) {
-    return this.db.prepare("UPDATE todos SET reminded = 1 WHERE id = ?").run(id).changes;
+    return this.db.prepare("UPDATE todos SET reminded = 2 WHERE id = ?").run(id).changes;
   }
 
   deleteTodo(id, chatId) {

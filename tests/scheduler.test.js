@@ -39,8 +39,14 @@ test("Scheduler: tickScheduler handles overdue reminders, near-horizon schedulin
     getReminderById(id) {
       return reminders.find((r) => r.id === id);
     },
+    getPendingTodoEarlyReminders() {
+      return [];
+    },
+    markTodoEarlyReminded() {
+      return 1;
+    },
     getPendingTodoDeadlines() {
-      return [{ id: 99, chat_id: "user1", task: "PR Tes Deadline" }];
+      return [{ id: 99, chat_id: "user1", task: "PR Tes Deadline", deadline: now - 1000 }];
     },
     markTodoReminded(id) {
       return id === 99 ? 1 : 0;
@@ -109,6 +115,9 @@ test("Scheduler: 2-stage event reminder pings early then pings on event start", 
     },
     getReminderById(id) {
       return eventItem.id === id ? eventItem : null;
+    },
+    getPendingTodoEarlyReminders() {
+      return [];
     },
     getPendingTodoDeadlines() {
       return [];
@@ -204,6 +213,9 @@ test("Scheduler: deduplicates similar pending reminders in same tick and suppres
     getReminderById(id) {
       return reminders.find((r) => r.id === id);
     },
+    getPendingTodoEarlyReminders() {
+      return [];
+    },
     getPendingTodoDeadlines() {
       return [];
     }
@@ -215,6 +227,76 @@ test("Scheduler: deduplicates similar pending reminders in same tick and suppres
   assert.ok(sentMessages[0].text.includes("[ACARA] Zoom SMTP 2026 Online Certificate Ceremony"));
   assert.strictEqual(reminders.find((r) => r.id === 29).status, "sent");
   assert.strictEqual(reminders.find((r) => r.id === 64).status, "sent");
+
+  clearActiveTimers();
+});
+
+test("Scheduler: 2-stage todo deadline reminder sends SEGERA then TERLEWAT", async () => {
+  const sentMessages = [];
+  const mockSender = async (chatId, text) => {
+    sentMessages.push({ chatId, text });
+  };
+
+  const now = Date.now();
+  const todoDeadline = now + 1800_000; // 30 minutes from now
+  const todos = [
+    { id: 201, chat_id: "user_dl", task: "Submit proposal hackathon", deadline: todoDeadline, tag: "#hackathon", reminded: 0 }
+  ];
+
+  const mockStore = {
+    claimReminder() { return false; },
+    markReminderDone() {},
+    getPendingReminders() { return []; },
+    getNearHorizonReminders() { return []; },
+    getReminderById() { return null; },
+    getPendingTodoEarlyReminders() {
+      return todos.filter((t) => t.reminded === 0 && t.deadline > Date.now() && t.deadline <= Date.now() + 3600_000);
+    },
+    markTodoEarlyReminded(id) {
+      const t = todos.find((x) => x.id === id);
+      if (t) { t.reminded = 1; return 1; }
+      return 0;
+    },
+    getPendingTodoDeadlines() {
+      return todos.filter((t) => t.reminded < 2 && t.deadline <= Date.now());
+    },
+    markTodoReminded(id) {
+      const t = todos.find((x) => x.id === id);
+      if (t) { t.reminded = 2; return 1; }
+      return 0;
+    }
+  };
+
+  // Stage 1: H-1 jam siaga (deadline 30 min away, within 1h window)
+  const res1 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res1.sent, 1);
+  assert.strictEqual(todos[0].reminded, 1);
+  assert.ok(sentMessages[0].text.includes("🟡"));
+  assert.ok(sentMessages[0].text.includes("[SEGERA]"));
+  assert.ok(sentMessages[0].text.includes("Submit proposal hackathon"));
+  assert.ok(sentMessages[0].text.includes("Tenggat waktu 1 jam lagi"));
+  assert.ok(sentMessages[0].text.includes("#done 201"));
+
+  // Tick again before deadline: no duplicate
+  const res1b = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res1b.sent, 0);
+  assert.strictEqual(sentMessages.length, 1);
+
+  // Stage 2: Simulate deadline passed
+  todos[0].deadline = Date.now() - 1000;
+  const res2 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res2.sent, 1);
+  assert.strictEqual(todos[0].reminded, 2);
+  assert.ok(sentMessages[1].text.includes("🔴"));
+  assert.ok(sentMessages[1].text.includes("[TERLEWAT]"));
+  assert.ok(sentMessages[1].text.includes("Submit proposal hackathon"));
+  assert.ok(sentMessages[1].text.includes("Tenggat waktu sudah tiba"));
+  assert.ok(sentMessages[1].text.includes("#done 201"));
+
+  // Tick again after final reminder: no more notifications
+  const res3 = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res3.sent, 0);
+  assert.strictEqual(sentMessages.length, 2);
 
   clearActiveTimers();
 });
