@@ -24,7 +24,11 @@ import {
   isAmbiguousScheduleStatement,
   isActionIntent,
   isNoFluffRequest,
-  isGreetingIntent
+  isGreetingIntent,
+  hasExplicitRescheduleIntent,
+  isFollowUpReminderIntent,
+  isQuotedEventReminder,
+  isAmbiguousEventReply
 } from "./guards.js";
 import {
   stripHallucinatedToolChips,
@@ -220,12 +224,27 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
       ? "Bot (kamu sendiri)"
       : quoted.senderName || (qPerson?.name ? `${qPerson.name} (+${quoted.senderNumber})` : (quoted.senderNumber ? `+${quoted.senderNumber}` : "lawan bicara"));
 
+    const isQuotedEvent = isQuotedEventReminder(quoted);
+    let eventQuotedRule = "";
+    if (isQuotedEvent) {
+      eventQuotedRule = `\n- PERINGATAN KHUSUS PENGINGAT ACARA: Pesan yang di-reply adalah pengingat acara/agenda!
+  1. Jika pengguna meminta "ingetin lagi [waktu/jam]" (contoh: "ingetin lagi nanti malem jam 19.00", "remind lagi jam 8"):
+     • Ini adalah permintaan membuat pengingat terpisah di jam tersebut!
+     • WAJIB panggil tool 'addReminder' (message: pesan pengingat acara tersebut, isEvent: false, taskType: 'reminder', remindAtIso: waktu yang diminta).
+     • DILARANG KERAS memanggil 'updateReminder' atau menggeser/mengundur jam mulai acara aslinya!
+     • Di jawaban teks, konfirmasikan bahwa pengingat telah diset pada jam tersebut DAN jam mulai acara tetap di jadwal aslinya.
+  2. HANYA panggil 'updateReminder' untuk mengubah jam mulai acara jika pengguna EKSPLISIT menggunakan kata mutasi jadwal: 'undur', 'mundurin', 'geser', 'tunda', 'ganti jam'.
+  3. Jika pengguna me-reply pesan acara HANYA menyebutkan waktu tanpa kata kerja jelas (contoh: "jam 19.00 aja", "nanti malem aja"):
+     • DILARANG MENGARANG atau MENGASUMSIKAN mengundur acara! DILARANG memanggil tool mutasi.
+     • WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau dibuatkan pengingat jam [waktu] atau jam acaranya mau diundur?".`;
+    }
+
     quotedContext = `\n\n[KONTEKS PESAN YANG DI-REPLY]:
 - Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.
 ${isBotQuoted
   ? "- PENGGUNA ME-REPLY PESAN BOT: Sambungkan jawabanmu langsung dengan apa yang kamu sampaikan sebelumnya (pertanyaan, konfirmasi, atau daftar to-do/acara). Jika user menyebut nomor urut (contoh: 'nomor 2', 'yang ketiga') atau memberi jawaban singkat (contoh: 'jam 8 aja', 'udah beres'), rujuk ke konteks pesan bot tersebut!"
   : `- Pengguna me-reply pesan dari ${qSender}. Jadikan isi pesan yang di-reply sebagai dasar/rujukan tindakanmu.`}
-- DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!`;
+- DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!${eventQuotedRule}`;
   }
 
   const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
@@ -271,6 +290,16 @@ ${isBotQuoted
         text: "[PERINGATAN SISTEM ANTI-ASUMSI]: Pengguna hanya menyampaikan kabar/kendala waktu dan TIDAK memberikan jam target pengganti (contoh: 'jam 7 mah papi blm balik'). DILARANG KERAS MENGARANG JAM BARU (jangan nebak jam 19.00/21.00) dan DILARANG MEMANGGIL updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): 'Mau diundur ke jam berapa jadwalnya?'."
       });
     }
+    if (isAmbiguousEventReply(userText, quoted)) {
+      userParts.push({
+        text: "[PERINGATAN SISTEM ANTI-ASUMSI]: Pengguna me-reply pengingat acara HANYA dengan waktu/jam tanpa kata kerja jelas. DILARANG MENGUNDUR ACARA dan DILARANG memanggil updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): 'Mau dibuatkan pengingat jam tersebut atau jam acaranya mau diundur?'."
+      });
+    }
+    if (isFollowUpReminderIntent(userText) && isQuotedEventReminder(quoted)) {
+      userParts.push({
+        text: "[INSTRUKSI SISTEM PENGINGAT ACARA]: Pengguna meminta diingatkan lagi (bukan mengundur acara). WAJIB panggil 'addReminder' untuk waktu tersebut (isEvent: false, taskType: 'reminder'). DILARANG memanggil 'updateReminder' atau menggeser jam mulai acara! Beritahukan ke pengguna bahwa pengingat telah diset dan jam acara tetap sama."
+      });
+    }
   } else if (audio && !media) {
     userParts.push({ text: "Dengarkan pesan suara ini dan respon langsung instruksi atau pertanyaannya." });
   }
@@ -301,8 +330,9 @@ ${isBotQuoted
 
   // LLM Autonomy: mode AUTO default, tapi NONE jika jadwal ambigu atau kirim media santai
   const isAmbiguousSchedule = isAmbiguousScheduleStatement(userText);
+  const isAmbiguousEvent = isAmbiguousEventReply(userText, quoted);
   const isMediaWithoutAction = Boolean(media && !isActionIntent(userText));
-  let toolConfig = (isAmbiguousSchedule || isMediaWithoutAction)
+  let toolConfig = (isAmbiguousSchedule || isAmbiguousEvent || isMediaWithoutAction)
     ? { functionCallingConfig: { mode: "NONE" } }
     : { functionCallingConfig: { mode: "AUTO" } };
 
@@ -336,6 +366,9 @@ ${isBotQuoted
         if (isAmbiguousSchedule) {
           return "Mau diundur ke jam berapa jadwalnya?";
         }
+        if (isAmbiguousEvent) {
+          return "Mau dibuatkan pengingat baru atau jam acaranya mau diundur?";
+        }
         if (turns < MAX_STEPS - 1) {
           turns++;
           contents.push(currentCandidate.content);
@@ -364,10 +397,22 @@ ${isBotQuoted
       if (onToolCall) onToolCall(name);
 
       let resultObj = {};
+      const isQuotedEvent = isQuotedEventReminder(quoted);
+      const isReschedulingWithoutExplicitIntent = isQuotedEvent &&
+        name === "updateReminder" &&
+        (args.newEventAtIso || args.newRemindAtIso) &&
+        !hasExplicitRescheduleIntent(userText);
+
       if (isAmbiguousScheduleStatement(userText) && ((name === "updateTodo" && args.deadlineIso) || (name === "updateReminder" && args.remindAtIso))) {
         resultObj = {
           toolResult: {
             error: "DILARANG mengarang jam baru saat pengguna hanya memberi kabar waktu tanpa menyebutkan jam pengganti. Tanyakan konfirmasi terlebih dahulu: Mau diundur ke jam berapa jadwalnya?"
+          }
+        };
+      } else if (isReschedulingWithoutExplicitIntent) {
+        resultObj = {
+          toolResult: {
+            error: "DILARANG mengundur jam acara jika pengguna tidak secara eksplisit meminta mengundur/menggeser jadwal (misal: 'ingetin lagi nanti jam 19.00' adalah permintaan pengingat/addReminder, BUKAN mengundur acara). Jika pengguna minta 'ingetin lagi', panggil addReminder dengan isEvent: false. Jika maksud pengguna ambigu, tanyakan konfirmasi terlebih dahulu: Mau dibuatkan pengingat jam tersebut atau jam acaranya mau diundur?"
           }
         };
       } else {

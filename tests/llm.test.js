@@ -8,7 +8,12 @@ import {
   parseHtmlTableToMarkdown,
   isActionIntent,
   isGreetingIntent,
-  isExplicitPrivateRequest
+  isExplicitPrivateRequest,
+  hasExplicitRescheduleIntent,
+  isFollowUpReminderIntent,
+  isQuotedEventReminder,
+  isAmbiguousEventReply,
+  processChat
 } from "../src/llm.js";
 import { formatOutboundMentions } from "../src/waha.js";
 import { executeTool } from "../src/llm/tools.js";
@@ -509,3 +514,207 @@ test("WAHA & LLM: parseIncoming and processChat resolve WhatsApp LID & pushName 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LLM Guards: event reminder follow-up vs reschedule intent classification", () => {
+  // 1. hasExplicitRescheduleIntent
+  assert.strictEqual(hasExplicitRescheduleIntent("mundurin acaranya ke jam 19.00"), true);
+  assert.strictEqual(hasExplicitRescheduleIntent("tolong undur jadwalnya ya"), true);
+  assert.strictEqual(hasExplicitRescheduleIntent("geser ke jam 20.00"), true);
+  assert.strictEqual(hasExplicitRescheduleIntent("ganti jam acara jadi jam 14:00"), true);
+  assert.strictEqual(hasExplicitRescheduleIntent("tunda acaranya"), true);
+  assert.strictEqual(hasExplicitRescheduleIntent("Ingetin lagi nanti malem jam 19.00"), false);
+  assert.strictEqual(hasExplicitRescheduleIntent("jam 19.00 aja"), false);
+
+  // 2. isFollowUpReminderIntent
+  assert.strictEqual(isFollowUpReminderIntent("Ingetin lagi nanti malem jam 19.00"), true);
+  assert.strictEqual(isFollowUpReminderIntent("remind lagi jam 8"), true);
+  assert.strictEqual(isFollowUpReminderIntent("ping lagi nanti"), true);
+  assert.strictEqual(isFollowUpReminderIntent("nanti ingetin lagi ya"), true);
+  assert.strictEqual(isFollowUpReminderIntent("mundurin jadwal ke jam 19.00"), false);
+  assert.strictEqual(isFollowUpReminderIntent("jam 19.00 aja"), false);
+
+  // 3. isQuotedEventReminder
+  const quotedEvent = {
+    content: "⏰ [Pengingat Acara & Agenda]\n_Pengingat sebelum acara dimulai!_\n\n🔔 *[ACARA] Buat kuisioner Pemasaran*\n├── Mulai: Sel, 29 Sep 2026 12:00\n└── `#acara`"
+  };
+  const quotedTodo = {
+    content: "🌄 [To-Do List]\n[1] Beli beras\n└── `#tugas`"
+  };
+  assert.strictEqual(isQuotedEventReminder(quotedEvent), true);
+  assert.strictEqual(isQuotedEventReminder(quotedTodo), false);
+  assert.strictEqual(isQuotedEventReminder(null), false);
+
+  // 4. isAmbiguousEventReply
+  assert.strictEqual(isAmbiguousEventReply("jam 19.00 aja", quotedEvent), true);
+  assert.strictEqual(isAmbiguousEventReply("nanti malem aja", quotedEvent), true);
+  assert.strictEqual(isAmbiguousEventReply("Ingetin lagi nanti malem jam 19.00", quotedEvent), false);
+  assert.strictEqual(isAmbiguousEventReply("mundurin ke jam 19.00", quotedEvent), false);
+  assert.strictEqual(isAmbiguousEventReply("jam 19.00 aja", quotedTodo), false);
+});
+
+test("LLM Engine: Quoted event reminder with 'ingetin lagi' injects addReminder instruction and disables updateReminder", async () => {
+  const store = new Storage(":memory:");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Siap Lord, udah gw buatkan pengingat jam 19:00 WIB ya. Jam acaranya tetap jam 12:00 WIB." }] } }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const quotedEvent = {
+      fromMe: true,
+      content: "⏰ [Pengingat Acara & Agenda]\n🔔 *[ACARA] Buat kuisioner Pemasaran*\n├── Mulai: Sel, 29 Sep 2026 12:00\n└── `#acara`"
+    };
+
+    await processChat(mockRotator, "Ingetin lagi nanti malem jam 19.00", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838",
+      quoted: quotedEvent
+    });
+
+    assert.ok(capturedPayload, "Payload must be sent to LLM");
+    const sysPrompt = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sysPrompt.includes("PERINGATAN KHUSUS PENGINGAT ACARA"));
+    assert.ok(sysPrompt.includes("addReminder"));
+    assert.ok(sysPrompt.includes("DILARANG KERAS memanggil 'updateReminder'"));
+
+    const userContent = capturedPayload.contents.find((c) => c.role === "user");
+    const userTextParts = userContent.parts.map((p) => p.text).join(" ");
+    assert.ok(userTextParts.includes("[INSTRUKSI SISTEM PENGINGAT ACARA]"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: Ambiguous reply to quoted event forces toolConfig mode NONE to ask confirmation", async () => {
+  const store = new Storage(":memory:");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) {
+      capturedPayload = JSON.parse(opts.body);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Mau dibuatkan pengingat jam 19.00 atau jam acaranya mau diundur, Lord?" }] } }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const quotedEvent = {
+      fromMe: true,
+      content: "⏰ [Pengingat Acara & Agenda]\n🔔 *[ACARA] Buat kuisioner Pemasaran*\n├── Mulai: Sel, 29 Sep 2026 12:00\n└── `#acara`"
+    };
+
+    await processChat(mockRotator, "jam 19.00 aja", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838",
+      quoted: quotedEvent
+    });
+
+    assert.ok(capturedPayload, "Payload must be sent to LLM");
+    assert.strictEqual(capturedPayload.toolConfig?.functionCallingConfig?.mode, "NONE");
+
+    const userContent = capturedPayload.contents.find((c) => c.role === "user");
+    const userTextParts = userContent.parts.map((p) => p.text).join(" ");
+    assert.ok(userTextParts.includes("[PERINGATAN SISTEM ANTI-ASUMSI]"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: Tool guard blocks updateReminder if user said 'ingetin lagi' on quoted event", async () => {
+  const store = new Storage(":memory:");
+  const eventTime = Date.now() + 7200_000;
+  const remId = store.addReminder("6285236467838", "Buat kuisioner Pemasaran", eventTime, null, "event", eventTime);
+
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  let capturedToolResult = null;
+
+  globalThis.fetch = async (url, opts) => {
+    callCount++;
+    if (callCount === 1) {
+      // LLM mistakenly tries to call updateReminder to reschedule to 19:00
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [{
+                functionCall: {
+                  name: "updateReminder",
+                  args: {
+                    reminderId: remId,
+                    newRemindAtIso: "2026-09-29T19:00:00+07:00"
+                  }
+                }
+              }]
+            }
+          }]
+        })
+      };
+    }
+    // Turn 2: LLM receives guard rejection error and responds asking confirmation or explaining
+    const body = JSON.parse(opts.body);
+    const lastContent = body.contents[body.contents.length - 1];
+    capturedToolResult = lastContent.parts?.find((p) => p.functionResponse)?.functionResponse?.response?.result;
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{ text: "Siap Lord, jadwal acara tetap jam 12:00 ya. Mau dibuatkan pengingat jam 19:00?" }]
+          }
+        }]
+      })
+    };
+  };
+
+  try {
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const quotedEvent = {
+      fromMe: true,
+      content: "⏰ [Pengingat Acara & Agenda]\n🔔 *[ACARA] Buat kuisioner Pemasaran*\n├── Mulai: Sel, 29 Sep 2026 12:00\n└── `#acara`"
+    };
+
+    const reply = await processChat(mockRotator, "Ingetin lagi nanti malem jam 19.00", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838",
+      quoted: quotedEvent
+    });
+
+    assert.ok(capturedToolResult, "Tool response must be captured");
+    assert.ok(capturedToolResult.error.includes("DILARANG mengundur jam acara"), "Must return guard rejection error");
+
+    // Verify reminder in DB was NOT moved to 19:00
+    const rem = store.getReminderById(remId);
+    assert.strictEqual(rem.event_at, eventTime);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+

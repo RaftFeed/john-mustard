@@ -374,3 +374,27 @@ export function isGreetingIntent(text = "") {
     /(siapa\s+(kamu|lu|anda)|nama\s+(kamu|lu|anda)|kamu\s+siapa|lu\s+siapa|perkenal|kenalan|dew\s*dew|john\s+mustard)/i.test(t)
   );
 }
+
+export function hasExplicitRescheduleIntent(text = "") {
+  if (!text) return false;
+  return /\b(undur|mundur(?:in)?|geser|tunda|ganti\s+jam|reschedule|pindah(?:in)?\s+jam)\b/i.test(text);
+}
+
+export function isFollowUpReminderIntent(text = "") {
+  if (!text) return false;
+  return /\b(inget(?:in|kan)?\s+lagi|remind\s+lagi|ping\s+lagi|ingatkan\s+nanti|ingetin\s+nanti|nanti\s+ingetin\s+lagi|tolong\s+ingetin\s+lagi)\b/i.test(text);
+}
+
+export function isQuotedEventReminder(quoted) {
+  if (!quoted || !quoted.content) return false;
+  const c = typeof quoted.content === "string" ? quoted.content : (quoted.content?.text || "");
+  return /\[Pengingat Acara & Agenda\]|\[ACARA\]|#acara/i.test(c);
+}
+
+export function isAmbiguousEventReply(text = "", quoted = null) {
+  if (!isQuotedEventReminder(quoted)) return false;
+  if (hasExplicitRescheduleIntent(text)) return false;
+  if (isFollowUpReminderIntent(text)) return false;
+  return /(?:jam|pukul|\b\d{1,2}[.:]\d{2}\b|nanti\s+malem|nanti\s+sore|besok|nanti\s+aja|entar\s+aja)/i.test(text || "");
+}
+

@@ -27,7 +27,11 @@ export {
   isNoFluffRequest,
   isActionIntent,
   isGreetingIntent,
-  isExplicitPrivateRequest
+  isExplicitPrivateRequest,
+  hasExplicitRescheduleIntent,
+  isFollowUpReminderIntent,
+  isQuotedEventReminder,
+  isAmbiguousEventReply
 } from "./llm/guards.js";
 
 export {
