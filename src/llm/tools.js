@@ -679,7 +679,7 @@ export const TOOLS = [
       },
       {
         name: "sendDirectMessage",
-        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. CATATAN PENTING: DILARANG gunakan tool ini di obrolan grup jika hanya relay santai seperti 'bilangin si X' atau 'kasih tau si X'—cukup mention/tag orangnya (@Nama) langsung di balasan grup. TETAPI jika user meminta lewat jalur pribadi (seperti 'pc', 'japri', 'japriii', 'dm', 'wa rafid', 'saluran pribadi', 'jangan di grup', 'bangunin/telp'), WAJIB panggil tool ini. Target penerima WAJIB terdaftar di whitelist bot.",
+        description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. CATATAN PENTING: DILARANG gunakan tool ini di obrolan grup jika hanya relay santai seperti 'bilangin si X' atau 'kasih tau si X'—cukup mention/tag orangnya (@Nama) langsung di balasan grup. TETAPI jika user meminta lewat jalur pribadi (seperti 'pc', 'japri', 'japriii', 'dm', 'wa rafid', 'saluran pribadi', 'jangan di grup'), WAJIB panggil tool ini. Target penerima WAJIB terdaftar di whitelist bot.",
         parameters: {
           type: "OBJECT",
           properties: {

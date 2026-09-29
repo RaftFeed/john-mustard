@@ -120,14 +120,23 @@ const lidMemoryCache = new Map();
 lidMemoryCache.set("228140156772422", "6285236467838");
 lidMemoryCache.set("51934979461357", "6289514718700");
 
+let activeWahaStore = null;
+export function setWahaStore(store) {
+  activeWahaStore = store;
+}
+export function getWahaStore() {
+  return activeWahaStore;
+}
+
 export function registerLidMapping(lid, phone, name = "", store = null) {
   const cleanLid = String(lid || "").replace(/\D/g, "");
   let cleanPhone = String(phone || "").replace(/\D/g, "");
   if (cleanPhone.startsWith("0")) cleanPhone = "62" + cleanPhone.slice(1);
   if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return;
   lidMemoryCache.set(cleanLid, cleanPhone);
-  if (store && typeof store.saveLidMapping === "function") {
-    store.saveLidMapping(cleanLid, cleanPhone, name);
+  const s = store || activeWahaStore;
+  if (s && typeof s.saveLidMapping === "function") {
+    s.saveLidMapping(cleanLid, cleanPhone, name);
   }
 }
 
@@ -150,8 +159,9 @@ export function resolveLidToPhone(lid, store = null) {
       return p;
     }
 
-    if (store && typeof store.getLidMapping === "function") {
-      const row = store.getLidMapping(cleanLid);
+    const s = store || activeWahaStore;
+    if (s && typeof s.getLidMapping === "function") {
+      const row = s.getLidMapping(cleanLid);
       if (row?.phone) {
         lidMemoryCache.set(cleanLid, row.phone);
         return row.phone;
@@ -184,8 +194,9 @@ export function resolvePhoneToLid(phone, store = null) {
     if (cleanPhone === "6285236467838") return "228140156772422";
     if (cleanPhone === "6289514718700") return "51934979461357";
 
-    if (store && typeof store.getLidForPhone === "function") {
-      const l = store.getLidForPhone(cleanPhone);
+    const s = store || activeWahaStore;
+    if (s && typeof s.getLidForPhone === "function") {
+      const l = s.getLidForPhone(cleanPhone);
       if (l) return l;
     }
 
@@ -364,9 +375,10 @@ export function normalizeMentionsInText(text) {
   });
 }
 
-export function formatOutboundMentions(text, store = null) {
+export function formatOutboundMentions(text, store = null, chatId = null) {
   if (!text || typeof text !== "string") return { text: "", mentions: [] };
 
+  const activeStore = store || activeWahaStore;
   let formattedText = text;
 
   // 1. Convert known multi-word contact mention aliases
@@ -384,34 +396,57 @@ export function formatOutboundMentions(text, store = null) {
   // 2. Convert single-word named mentions (e.g. @simas, @rafid, @karimah)
   formattedText = formattedText.replace(/@([a-zA-Z][a-zA-Z0-9_-]*)\b/g, (match, name) => {
     if (/^(com|net|org|id|us|lid|c\.us|g\.us)$/i.test(name)) return match;
-    const res = resolveWhitelistRecipient(name, store);
+    const res = resolveWhitelistRecipient(name, activeStore);
     if (res && res.targetPhone) {
       return `@${res.targetPhone}`;
     }
     return match;
   });
 
-  // 3. Convert unmapped/raw LID mentions in text into phone number if resolvable
-  formattedText = formattedText.replace(/@(\d{8,20})\b/g, (match, digits) => {
-    const phone = resolveLidToPhone(digits);
-    return phone ? `@${phone}` : match;
-  });
-
+  const isGroup = Boolean(chatId && String(chatId).endsWith("@g.us"));
   const mentionsSet = new Set();
-  const matches = formattedText.match(/@(\d{8,20})\b/g);
-  if (matches) {
-    for (const m of matches) {
-      const num = m.slice(1);
-      mentionsSet.add(`${num}@c.us`);
 
-      const lid = resolvePhoneToLid(num);
+  if (isGroup) {
+    // In WhatsApp group chats with LID addressing mode:
+    // Mentions in body MUST use @<LID> matching <LID>@lid in the mentions array.
+    // Putting @phone with phone@c.us makes the WhatsApp client render "@Pengguna tidak dikenal" (Unknown user).
+    formattedText = formattedText.replace(/@(\d{8,20})\b/g, (match, digits) => {
+      const lid = resolvePhoneToLid(digits, activeStore);
       if (lid) {
         mentionsSet.add(`${lid}@lid`);
+        return `@${lid}`;
       }
-      const phone = resolveLidToPhone(num);
+      const phone = resolveLidToPhone(digits, activeStore);
       if (phone) {
-        mentionsSet.add(`${phone}@c.us`);
-        mentionsSet.add(`${num}@lid`);
+        // digits is already a LID
+        mentionsSet.add(`${digits}@lid`);
+        return `@${digits}`;
+      }
+      mentionsSet.add(`${digits}@c.us`);
+      return match;
+    });
+  } else {
+    // 3. Convert unmapped/raw LID mentions in text into phone number if resolvable (DM)
+    formattedText = formattedText.replace(/@(\d{8,20})\b/g, (match, digits) => {
+      const phone = resolveLidToPhone(digits, activeStore);
+      return phone ? `@${phone}` : match;
+    });
+
+    const matches = formattedText.match(/@(\d{8,20})\b/g);
+    if (matches) {
+      for (const m of matches) {
+        const num = m.slice(1);
+        mentionsSet.add(`${num}@c.us`);
+
+        const lid = resolvePhoneToLid(num, activeStore);
+        if (lid) {
+          mentionsSet.add(`${lid}@lid`);
+        }
+        const phone = resolveLidToPhone(num, activeStore);
+        if (phone) {
+          mentionsSet.add(`${phone}@c.us`);
+          mentionsSet.add(`${num}@lid`);
+        }
       }
     }
   }
@@ -454,7 +489,7 @@ export async function stopTyping(chatId) {
 
 export async function sendSingleText(chatId, text, replyTo = null) {
   const wahaUrl = process.env.WAHA_URL || "http://localhost:3000";
-  const { text: formattedText, mentions } = formatOutboundMentions(text);
+  const { text: formattedText, mentions } = formatOutboundMentions(text, activeWahaStore, chatId);
   const payload = {
     chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,
     text: formattedText,
@@ -514,7 +549,7 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
   const isImage = mimetype.startsWith("image/");
   const endpoint = (!asDocument && isImage) ? "/api/sendImage" : "/api/sendFile";
 
-  const { text: formattedCaption, mentions } = formatOutboundMentions(caption);
+  const { text: formattedCaption, mentions } = formatOutboundMentions(caption, activeWahaStore, chatId);
 
   const payload = {
     chatId: chatId.includes("@") ? chatId : `${chatId}@c.us`,

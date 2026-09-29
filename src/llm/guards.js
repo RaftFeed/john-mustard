@@ -358,7 +358,6 @@ export function isExplicitPrivateRequest(text = "") {
   if (/\b(?:lewat|via|melalui)\s+(?:pribadi|private|dm|pc|japri|wa)\b/i.test(t)) return true;
   if (/\bjangan\s+(?:di\s+|d)?grup\b/i.test(t)) return true;
   if (/\bdirect\s*message\b/i.test(t)) return true;
-  if (/\b(bangunin|telp|telepon|call|hubungi)\b/i.test(t)) return true;
   return false;
 }
 

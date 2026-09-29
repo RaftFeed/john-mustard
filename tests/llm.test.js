@@ -68,6 +68,13 @@ test("WAHA: formatOutboundMentions resolves contact names, pushnames, and aliase
   const res2 = formatOutboundMentions("Tolong tag @simas ya!");
   assert.ok(res2.text.includes("@6285236467838"));
   assert.ok(res2.mentions.includes("6285236467838@c.us"));
+
+  // Group chat with known LID: resolves to @<lid> and <lid>@lid to prevent "@Pengguna tidak dikenal"
+  const resGroup = formatOutboundMentions("Halo @6285236467838 dicariin nih", null, "120363029582992016@g.us");
+  assert.ok(resGroup.text.includes("@228140156772422"));
+  assert.ok(!resGroup.text.includes("@6285236467838"));
+  assert.ok(resGroup.mentions.includes("228140156772422@lid"));
+  assert.ok(!resGroup.mentions.includes("6285236467838@c.us"));
 });
 
 test("LLM Formatters: HTML table parser and LaTeX sanitizer", () => {
@@ -106,7 +113,9 @@ test("LLM Intents: isActionIntent and isGreetingIntent classification", () => {
   assert.strictEqual(isExplicitPrivateRequest("trus...!!! @John Mustard sampe @M3-083_... bangun...!!! di japriii...!!!"), true);
   assert.strictEqual(isExplicitPrivateRequest("@John Mustard WA @M3-083_Rafid..."), true);
   assert.strictEqual(isExplicitPrivateRequest("jangan dgrup @John Mustard tapi di saluran pribadi kasih tau @M3-083_Rafid Harsyah"), true);
-  assert.strictEqual(isExplicitPrivateRequest("TELP...!!! @John Mustard TELP...!!!"), true);
+  assert.strictEqual(isExplicitPrivateRequest("bangunin...!!! @bot"), false);
+  assert.strictEqual(isExplicitPrivateRequest("TELP...!!! @John Mustard TELP...!!!"), false);
+  assert.strictEqual(isExplicitPrivateRequest("bangunin rafid lewat pc"), true);
   assert.strictEqual(isExplicitPrivateRequest("tolong pc mami"), true);
   assert.strictEqual(isExplicitPrivateRequest("japri razita tugasnya"), true);
   assert.strictEqual(isExplicitPrivateRequest("dm papi sekarang"), true);

@@ -3,7 +3,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat } from "./llm.js";
-import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid, registerLidMapping, resolveWhitelistRecipient } from "./waha.js";
+import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid, registerLidMapping, resolveWhitelistRecipient, setWahaStore } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
 import { autoCrystallizeTurn } from "./crystallize.js";
@@ -19,6 +19,7 @@ if (keys.length === 0) {
 
 const dbPath = process.env.DB_PATH || "bot.db";
 const store = new Storage(dbPath);
+setWahaStore(store);
 const rotator = new KeyRotator(keys.length > 0 ? keys : ["dummy_key"], { store });
 
 // Jalankan runner pengingat (cek tiap 15 detik)
