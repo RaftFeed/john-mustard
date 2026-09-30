@@ -2118,26 +2118,187 @@ export function formatTodoDeadlineRelative(deadline) {
   return `H-${diffDays} (${dayName}, ${stamp})`;
 }
 
-export function formatTodoCard(todo) {
+export function formatTodoCard(todo, isGroup = false) {
   if (!todo) return "";
+  const now = new Date();
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  let badge = "⚪";
+  let deadlineStr = "Tanpa deadline";
+  const isDone = Boolean(todo.done);
+  const isOverdue = !isDone && todo.deadline && todo.deadline < now.getTime();
+
+  if (isDone) {
+    badge = "✅";
+  } else if (isOverdue) {
+    badge = "🔴";
+  } else if (todo.deadline) {
+    const dl = new Date(todo.deadline);
+    const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
+
+    if (diffDays <= 0) badge = "🔴";
+    else if (diffDays === 1) badge = "🟠";
+    else if (diffDays <= 3) badge = "🟡";
+    else badge = "🟢";
+
+    const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+    const dayName = daysId[dlWib.getUTCDay()];
+    const dateNum = dlWib.getUTCDate();
+    const monthName = monthsId[dlWib.getUTCMonth()];
+    const year = dlWib.getUTCFullYear();
+    const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+    const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+    const jamStr = `${hours}:${minutes}`;
+
+    if (diffDays === 1) {
+      deadlineStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else if (diffDays === 0) {
+      deadlineStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else if (diffDays < 0) {
+      deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else {
+      deadlineStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    }
+  }
+
+  if (isOverdue) {
+    const dl = new Date(todo.deadline);
+    const diffDays = Math.round((getWibMidnight(dl) - getWibMidnight(now)) / (24 * 3600 * 1000));
+    const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+    const dayName = daysId[dlWib.getUTCDay()];
+    const dateNum = dlWib.getUTCDate();
+    const monthName = monthsId[dlWib.getUTCMonth()];
+    const year = dlWib.getUTCFullYear();
+    const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+    const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+    const jamStr = `${hours}:${minutes}`;
+
+    if (diffDays === 0) {
+      deadlineStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else {
+      deadlineStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    }
+  }
+
   const tagBase = todo.tag && String(todo.tag).trim() ? String(todo.tag).trim() : "#tugas";
   const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
     const clean = t.replace(/^`+|`+$/g, "");
     return clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`;
   });
+
   if (todo.category === "routine" && !tagTokens.includes("[Rutin]")) {
     tagTokens.push("[Rutin]");
   }
-
-  const lines = [
-    `*${todo.task}*`,
-    `• Deadline: ${formatTodoDeadlineRelative(todo.deadline)}`,
-    `• Tag: ${tagTokens.join(" ")}`
-  ];
-  if (todo.assignee) {
-    lines.push(`• Penanggung Jawab: ${todo.assignee}`);
+  if (isDone && !tagTokens.includes("[Selesai]")) {
+    tagTokens.push("[Selesai]");
+  } else if (isOverdue && !tagTokens.includes("[Terlewat]")) {
+    tagTokens.push("[Terlewat]");
   }
-  return lines.join("\n");
+  if (isGroup && todo.assignee) {
+    tagTokens.push(`[👤 ${todo.assignee}]`);
+  } else if (todo.assignee && !tagTokens.some((t) => t.includes(todo.assignee))) {
+    tagTokens.push(`[👤 ${todo.assignee}]`);
+  }
+
+  const tagLine = tagTokens.length > 0 ? `\`${tagTokens.join(" ")}\`` : "`#tugas`";
+  return `${badge} *${todo.task}*\n├── ${deadlineStr}\n└── ${tagLine}`;
+}
+
+export function formatReminderCard(reminder) {
+  if (!reminder) return "";
+  const now = new Date();
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  let badge = "⚪";
+  let scheduleStr = "Tanpa jadwal";
+  const targetTimestamp = reminder.event_at || reminder.remind_at;
+  const isOverdue = targetTimestamp && targetTimestamp < now.getTime();
+
+  if (isOverdue) {
+    badge = "🔴";
+  } else if (targetTimestamp) {
+    const targetDate = new Date(targetTimestamp);
+    const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+
+    if (diffDays <= 0) badge = "🔴";
+    else if (diffDays === 1) badge = "🟠";
+    else if (diffDays <= 3) badge = "🟡";
+    else badge = "🟢";
+
+    const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+    const dayName = daysId[targetWib.getUTCDay()];
+    const dateNum = targetWib.getUTCDate();
+    const monthName = monthsId[targetWib.getUTCMonth()];
+    const year = targetWib.getUTCFullYear();
+    const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+    const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+    const jamStr = `${hours}:${minutes}`;
+
+    if (diffDays === 1) {
+      scheduleStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else if (diffDays === 0) {
+      scheduleStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else if (diffDays < 0) {
+      scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else {
+      scheduleStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    }
+  }
+
+  if (isOverdue) {
+    const targetDate = new Date(targetTimestamp);
+    const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+    const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+    const dayName = daysId[targetWib.getUTCDay()];
+    const dateNum = targetWib.getUTCDate();
+    const monthName = monthsId[targetWib.getUTCMonth()];
+    const year = targetWib.getUTCFullYear();
+    const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+    const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+    const jamStr = `${hours}:${minutes}`;
+
+    if (diffDays === 0) {
+      scheduleStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    } else {
+      scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+    }
+  }
+
+  const pillTokens = [];
+  if (reminder.recurrence === "daily") {
+    pillTokens.push("Harian");
+  } else if (reminder.recurrence === "weekly") {
+    pillTokens.push("Mingguan");
+  } else if (reminder.recurrence) {
+    pillTokens.push(reminder.recurrence);
+  } else {
+    pillTokens.push("Sekali");
+  }
+
+  if (isOverdue) {
+    pillTokens.push("[Terlewat]");
+  }
+
+  if (reminder.task_type && reminder.task_type !== "reminder") {
+    pillTokens.push(`#${reminder.task_type.replace(/^#/, "")}`);
+  } else {
+    pillTokens.push("#acara");
+  }
+
+  const tagLine = `\`${pillTokens.join(" ")}\``;
+  return `${badge} *${reminder.message}*\n├── ${scheduleStr}\n└── ${tagLine}`;
 }
 
 export function logInteraction(db, { prompt, tools = [], status = "success", error = null }) {

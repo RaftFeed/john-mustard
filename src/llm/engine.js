@@ -613,8 +613,8 @@ ${isBotQuoted
 
     if (turns === 1 && isPureMutation && allSucceeded && isPureAction && lastFormattedList) {
       const toolNames = new Set(fnCallParts.map((p) => p.functionCall.name));
-      const onlyAdd = toolNames.size === 1 && toolNames.has("addTodo");
-      const onlyUpdate = toolNames.size === 1 && toolNames.has("updateTodo");
+      const onlyAdd = toolNames.size === 1 && (toolNames.has("addTodo") || toolNames.has("addReminder"));
+      const onlyUpdate = toolNames.size === 1 && (toolNames.has("updateTodo") || toolNames.has("updateReminder"));
       let salute = isGroupChat ? "Beres!" : "Beres, Lord!";
       if (onlyAdd) {
         salute = isGroupChat ? "Udah dicatet ya!" : "Udah dicatet ya, Lord!";

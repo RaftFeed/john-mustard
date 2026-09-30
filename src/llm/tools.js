@@ -5,6 +5,7 @@ import {
   formatTodoList,
   formatTodoDetail,
   formatTodoCard,
+  formatReminderCard,
   formatBacklogList,
   formatFeatureRequestsList,
   formatSkillList,
@@ -999,13 +1000,17 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       event_at: eventAt
     }, { rotator });
 
+    formattedList = createdReminder ? formatReminderCard(createdReminder) : null;
+
     toolResult = {
       success: true,
       id,
       message: args.message,
       eventAt: eventAt ? new Date(eventAt).toISOString() : null,
       remindAt: new Date(finalRemindAt).toISOString(),
-      recurrence: args.recurrence || null
+      recurrence: args.recurrence || null,
+      formatted: formattedList,
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya sebagai konfirmasi agenda/pengingat tersimpan. DILARANG memformat ulang, DILARANG mengubah garis/bullet, dan DILARANG menambahkan pertanyaan penawaran bantuan di akhir."
     };
   } else if (name === "listReminders") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
@@ -1092,12 +1097,14 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       } else {
         const remaining = store.listReminders(queryChatId);
         if (store.rememberReminderList) store.rememberReminderList(queryChatId, remaining);
-        formattedList = formatRemindersList(remaining);
+        formattedList = updated ? formatReminderCard(updated) : null;
         toolResult = {
           success: true,
           updated,
           message: `Agenda berhasil diubah menjadi '${updated.message}'.`,
-          formattedList
+          formatted: formattedList,
+          formattedList,
+          instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya sebagai konfirmasi perubahan agenda. DILARANG memformat ulang, DILARANG mengubah garis/bullet, dan DILARANG menambahkan pertanyaan penawaran bantuan di akhir."
         };
       }
     }

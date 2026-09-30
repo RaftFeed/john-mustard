@@ -391,8 +391,9 @@ test("LLM Tools: addTodo/updateTodo return a formatted confirmation card", async
 
   assert.strictEqual(resAdd.toolResult.success, true);
   assert.ok(resAdd.formattedList.includes("*Cek broksum Stockbit*"));
-  assert.ok(resAdd.formattedList.includes("• Deadline: "));
-  assert.ok(resAdd.formattedList.includes("• Tag: #saham"));
+  assert.ok(resAdd.formattedList.includes("├── "));
+  assert.ok(resAdd.formattedList.includes("#saham"));
+  assert.ok(resAdd.formattedList.includes("└── `"));
   assert.ok(!/\bid:\s*\d+/i.test(resAdd.formattedList));
 
   const resUpd = await executeTool("updateTodo", {
@@ -402,7 +403,36 @@ test("LLM Tools: addTodo/updateTodo return a formatted confirmation card", async
 
   assert.strictEqual(resUpd.toolResult.success, true);
   assert.ok(resUpd.formattedList.includes("*Cek broksum Stockbit (revisi)*"));
-  assert.ok(resUpd.formattedList.includes("• Tag: #saham"));
+  assert.ok(resUpd.formattedList.includes("├── "));
+  assert.ok(resUpd.formattedList.includes("#saham"));
+  assert.ok(resUpd.formattedList.includes("└── `"));
+});
+
+test("LLM Tools: addReminder and updateReminder return a formatted single reminder card", async () => {
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+
+  const resAdd = await executeTool("addReminder", {
+    message: "TM Valorant Senin",
+    eventAtIso: "2026-10-05T19:00:00+07:00"
+  }, { store, chatId });
+
+  assert.strictEqual(resAdd.toolResult.success, true);
+  assert.ok(resAdd.formattedList.includes("*TM Valorant Senin*"));
+  assert.ok(resAdd.formattedList.includes("├── "));
+  assert.ok(resAdd.formattedList.includes("`Sekali #acara`"));
+
+  const resUpd = await executeTool("updateReminder", {
+    reminderId: resAdd.toolResult.id,
+    newMessage: "TM Valorant Senin (Final)"
+  }, { store, chatId });
+
+  assert.strictEqual(resUpd.toolResult.success, true);
+  assert.ok(resUpd.formattedList.includes("*TM Valorant Senin (Final)*"));
+  assert.ok(resUpd.formattedList.includes("├── "));
+  assert.ok(resUpd.formattedList.includes("`Sekali #acara`"));
+  assert.ok(!resUpd.formattedList.includes("[Daftar Acara & Pengingat]"), "Must be a single card, not full list");
 });
 
 test("LLM Engine: addTodo short-circuits to a card-style confirmation", async () => {
@@ -443,7 +473,55 @@ test("LLM Engine: addTodo short-circuits to a card-style confirmation", async ()
     assert.strictEqual(fetchCallCount, 1, "Should short-circuit after turn 1 addTodo");
     assert.ok(reply.includes("Udah dicatet ya"));
     assert.ok(reply.includes("*Cek broksum Stockbit*"));
-    assert.ok(reply.includes("• Tag: #saham"));
+    assert.ok(reply.includes("├── "));
+    assert.ok(reply.includes("#saham"));
+    assert.ok(reply.includes("└── `"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: addReminder short-circuits to a card-style confirmation", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let fetchCallCount = 0;
+
+  globalThis.fetch = async () => {
+    fetchCallCount++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                name: "addReminder",
+                args: { message: "Rapat Pleno", eventAtIso: "2026-10-02T10:00:00+07:00" }
+              }
+            }]
+          }
+        }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const reply = await processChat(mockRotator, "ingetin ada rapat pleno besok jam 10", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838"
+    });
+
+    assert.strictEqual(fetchCallCount, 1, "Should short-circuit after turn 1 addReminder");
+    assert.ok(reply.includes("Udah dicatet ya"), "Salute header should be present");
+    assert.ok(reply.includes("*Rapat Pleno*"), "Card title should be present");
+    assert.ok(reply.includes("├── "), "Branch line should be present");
+    assert.ok(reply.includes("`Sekali #acara`"), "Tag line should be present");
+    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Must not dump full event list");
   } finally {
     globalThis.fetch = originalFetch;
   }
