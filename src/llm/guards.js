@@ -331,6 +331,23 @@ export function isAmbiguousScheduleStatement(text = "") {
   return !hasExplicitTarget;
 }
 
+const LIST_TOPIC_REGEX = /\b(tugas|todo|to-?dos?|to\s*do\s*list|todolist|pengingat|reminder|reminders|acara|agenda|jadwal|events?|deadline|backlog)\b/i;
+const LIST_VIEW_REGEX = /\b(list|daftar|daftarin|daftarkan|tampil(?:kan|in)?|liat|lihat|show|rekap|cek|check|semua|apa(?:n|k)?(?:\s*aja)?|isinya|isi|sisa|berapa|ada\s+apa)\b/i;
+const LIST_DATE_CUE_REGEX = /\b(hari\s+ini|hr\s+ini|besok|esok|lusa|minggu\s+ini|minggu\s+depan|senin|selasa|rabu|kamis|jumat|jum'?at|sabtu|minggu|tanggal\s*\d|tgl\s*\d)\b/i;
+const LIST_MUTATION_REGEX = /\b(hapus|apus|del|delete|selesai|selesaikan|kelar|beres|done|tambah|tambahin|tambahkan|catat|simpan|buat|bikin|jadwalin|ubah|ganti|koreksi|update|undur|mundur(?:in)?|maju(?:in)?|geser|tunda|pindah(?:in)?|inget(?:in|kan)?|remind(?:er)?)\b/i;
+
+export function isListRequest(text = "") {
+  if (!text) return false;
+  const clean = text.trim().replace(/^@\S+\s*/, "").toLowerCase();
+  if (!clean) return false;
+  if (/\b(rekap|digest|summary)\b/.test(clean)) return true;
+  if (!LIST_TOPIC_REGEX.test(clean)) return false;
+  const hasView = LIST_VIEW_REGEX.test(clean);
+  const hasMutableVerb = LIST_MUTATION_REGEX.test(clean);
+  if (hasMutableVerb) return hasView;
+  return hasView || LIST_DATE_CUE_REGEX.test(clean);
+}
+
 export function isNoFluffRequest(text = "") {
   if (!text) return false;
   const clean = text.toLowerCase();

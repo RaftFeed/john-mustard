@@ -25,6 +25,7 @@ export {
   detectUnexecutedMutationClaim,
   isAmbiguousScheduleStatement,
   isNoFluffRequest,
+  isListRequest,
   isActionIntent,
   isGreetingIntent,
   isExplicitPrivateRequest,

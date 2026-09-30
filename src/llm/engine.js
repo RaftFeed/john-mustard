@@ -7,6 +7,9 @@ const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\b
 // A real reply appended after a reasoning preamble (used to salvage mixed outputs).
 const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
 
+// Header penanda output "daftar penuh" (to-do list / daftar acara). Kartu satuan (add/update) tidak termasuk.
+const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
+
 export function isInternalThoughtText(text) {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().replace(/^[\s#*_~`>]+/, "");
@@ -86,6 +89,7 @@ import {
   isAmbiguousScheduleStatement,
   isActionIntent,
   isNoFluffRequest,
+  isListRequest,
   isGreetingIntent,
   hasExplicitRescheduleIntent,
   isFollowUpReminderIntent,
@@ -414,6 +418,12 @@ ${isBotQuoted
   const executedTrajectory = [];
   let currentCandidate = null;
   let lastFormattedList = null;
+  const userWantsList = isListRequest(userText);
+  // Daftar penuh (to-do/acara) hanya ditempel kalau user minta; kartu satuan (add/update) selalu tampil.
+  const appendableList = () =>
+    (lastFormattedList && (userWantsList || !FULL_LIST_HEADER_REGEX.test(lastFormattedList)))
+      ? lastFormattedList
+      : null;
   const MAX_STEPS = 5;
   let turns = 0;
 
@@ -540,7 +550,8 @@ ${isBotQuoted
       } else {
         salute = `${salute} Data berhasil diperbarui di sistem.`;
       }
-      return `${salute}\n\n${lastFormattedList}`;
+      const appended = appendableList();
+      return appended ? `${salute}\n\n${appended}` : salute;
     }
 
     // Revert toolConfig for subsequent steps
@@ -556,24 +567,25 @@ ${isBotQuoted
 
   const directText = extractCandidateText(currentCandidate?.content);
   const text = directText?.trim();
+  const effectiveList = appendableList();
   let finalReply = "";
 
   if (text) {
-    if (lastFormattedList && !text.includes(lastFormattedList)) {
+    if (effectiveList && !text.includes(effectiveList)) {
       const isCorruptedList = text.includes("Pengingat Tugas") || text.includes("⏰") || /\[\d+\]/.test(text);
       if (isCorruptedList) {
         // Model tried to re-format list itself (often mimicking old chat history)
         const headerIdx = text.search(/🌄|🌅|\[Pengingat Tugas\]|\[1\]/);
         const preamble = headerIdx > 0 ? text.slice(0, headerIdx).trim() : "";
-        finalReply = preamble ? `${preamble}\n\n${lastFormattedList}` : lastFormattedList;
+        finalReply = preamble ? `${preamble}\n\n${effectiveList}` : effectiveList;
       } else {
-        finalReply = `${text}\n\n${lastFormattedList}`;
+        finalReply = `${text}\n\n${effectiveList}`;
       }
     } else {
       finalReply = text;
     }
   } else {
-    finalReply = lastFormattedList || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Gagal memproses aksi nih. Coba sebutkan lagi perintahnya." : "Gagal memproses aksi nih, Lord. Coba sebutkan lagi perintahnya."));
+    finalReply = effectiveList || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Gagal memproses aksi nih. Coba sebutkan lagi perintahnya." : "Gagal memproses aksi nih, Lord. Coba sebutkan lagi perintahnya."));
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);

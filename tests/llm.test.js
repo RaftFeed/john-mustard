@@ -13,6 +13,7 @@ import {
   isFollowUpReminderIntent,
   isQuotedEventReminder,
   isAmbiguousEventReply,
+  isListRequest,
   processChat,
   extractCandidateText,
   selectModelCascade,
@@ -122,6 +123,24 @@ test("LLM Intents: isActionIntent and isGreetingIntent classification", () => {
   assert.strictEqual(isExplicitPrivateRequest("dm papi sekarang"), true);
   assert.strictEqual(isExplicitPrivateRequest("bilangin mami itu cuma typo doang wlek"), false);
   assert.strictEqual(isExplicitPrivateRequest("kasih tau razita jangan lupa makan"), false);
+});
+
+test("LLM Guards: isListRequest only fires on explicit to-do/event list requests", () => {
+  assert.strictEqual(isListRequest("list tugas gw dong"), true);
+  assert.strictEqual(isListRequest("tugas gw apa aja"), true);
+  assert.strictEqual(isListRequest("acara besok apa"), true);
+  assert.strictEqual(isListRequest("agenda hari ini"), true);
+  assert.strictEqual(isListRequest("jadwal hari senin aku apa aja"), true);
+  assert.strictEqual(isListRequest("deadline besok"), true);
+  assert.strictEqual(isListRequest("cek pengingat minggu ini"), true);
+  assert.strictEqual(isListRequest("rekap harian"), true);
+
+  assert.strictEqual(isListRequest("coba cek lognya kapan gw nyuruh itu"), false);
+  assert.strictEqual(isListRequest("hapus acara 1 dong"), false);
+  assert.strictEqual(isListRequest("hapus tugas 2"), false);
+  assert.strictEqual(isListRequest("selesaikan tugas 1"), false);
+  assert.strictEqual(isListRequest("ingetin aku tugas X jam 5"), false);
+  assert.strictEqual(isListRequest("halo bro apa kabar"), false);
 });
 
 test("LLM Engine: group chat message prefixes active speaker identity", async () => {
@@ -469,6 +488,134 @@ test("LLM Engine: single-turn mutation short-circuits to avoid turn 2 delay", as
 
     assert.strictEqual(fetchCallCount, 1, "Should short-circuit after turn 1 mutation");
     assert.ok(reply.includes("Beres"), "Reply should confirm mutation immediately");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: mutation reply omits the full remaining list when not requested", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      candidates: [{
+        content: {
+          parts: [{ functionCall: { name: "deleteReminder", args: { reminderId: 1 } } }]
+        }
+      }]
+    })
+  });
+
+  try {
+    const store = new Storage(":memory:");
+    store.addReminder("user1", "Acara webinar", Date.now() + 3600_000);
+    store.addReminder("user1", "Acara lain", Date.now() + 7200_000);
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    const reply = await processChat(mockRotator, "hapus acara 1 dong", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1"
+    });
+
+    assert.ok(reply.includes("Beres"), "Reply should confirm mutation");
+    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Full event list must not be dumped after a mutation");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: does not append the full event list when the user did not ask for it", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let call = 0;
+
+  globalThis.fetch = async () => {
+    call++;
+    if (call === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: { parts: [{ functionCall: { name: "listReminders", args: {} } }] }
+          }]
+        })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Itu dari rekap harian jam 07.00 WIB, Lord." }] } }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    store.addReminder("user1", "Acara webinar", Date.now() + 3600_000);
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    const reply = await processChat(mockRotator, "coba cek lognya kapan gw nyuruh itu", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1"
+    });
+
+    assert.ok(reply.includes("rekap harian"), "Model answer must be preserved");
+    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Full event list must NOT be appended unrequested");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: appends the full to-do list when the user explicitly asks for it", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let call = 0;
+
+  globalThis.fetch = async () => {
+    call++;
+    if (call === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: { parts: [{ functionCall: { name: "listTodos", args: {} } }] }
+          }]
+        })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Nih, Lord." }] } }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    store.addTodo("user1", "Cek broksum Stockbit", Date.now() + 3600_000, "saham");
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    const reply = await processChat(mockRotator, "list tugas gw dong", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1"
+    });
+
+    assert.ok(reply.includes("[To-Do List]"), "Full to-do list must be appended when requested");
+    assert.ok(reply.includes("Cek broksum Stockbit"));
   } finally {
     globalThis.fetch = originalFetch;
   }
