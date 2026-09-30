@@ -787,6 +787,46 @@ test("LLM Engine: injects quoted message context anchor when user replies to bot
   }
 });
 
+test("LLM Engine: reply to a task deadline reminder binds the action to that todo", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) capturedPayload = JSON.parse(opts.body);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: "Oke Lord." }] } }] })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    for (let i = 0; i < 66; i++) store.addTodo("user1", `T${i + 1}`);
+    store.db.prepare("UPDATE todos SET task = 'Lapor dosen Asah' WHERE id = 66").run();
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "apus", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1",
+      quoted: {
+        fromMe: true,
+        content: "⏰ [Pengingat Deadline Tugas]\n🔴 [TERLEWAT] Lapor dosen Asah\n— Terlewat (Rab, 30 Sep 2026 23:59)\n#tugas [Terlewat]\n\n_Tandai selesai: ketik #done 66_"
+      }
+    });
+
+    assert.ok(capturedPayload, "Payload should be captured");
+    const sys = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sys.includes("todo id 66"), "System prompt must bind the reply to todo id 66");
+    assert.ok(sys.includes("Lapor dosen Asah"), "System prompt must include the replied task title");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("WAHA & LLM: parseIncoming and processChat resolve WhatsApp LID & pushName to Mami", async () => {
   const { parseIncoming, extractQuotedInfo, formatSenderDisplay } = await import("../src/waha.js");
   const { processChat } = await import("../src/llm.js");

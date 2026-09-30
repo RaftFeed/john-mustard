@@ -320,12 +320,28 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
      • WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau dibuatkan pengingat jam [waktu] atau jam acaranya mau diundur?".`;
     }
 
+    // Bind balasan user ke tugas spesifik yang dirujuk pesan bot (mis. pengingat deadline
+    // yang memuat "#done <id>"), supaya perintah singkat seperti "apus" tidak salah target.
+    const quotedRawText = typeof quoted.content === "string"
+      ? quoted.content
+      : (quoted.content?.text || quoted.text || "");
+    let taskQuotedRule = "";
+    if (isBotQuoted && quotedRawText) {
+      const doneIdMatch = quotedRawText.match(/#done\s+(\d+)/i);
+      const quotedTodo = doneIdMatch && store?.getTodoRaw ? store.getTodoRaw(parseInt(doneIdMatch[1], 10)) : null;
+      if (quotedTodo) {
+        taskQuotedRule = `\n- TUGAS YANG DI-REPLY (SANGAT PENTING): Pesan yang di-reply adalah pengingat untuk tugas todo id ${quotedTodo.id} ("${quotedTodo.task}"). Jika pengguna membalas dengan perintah singkat tanpa target jelas (contoh: "apus", "hapus", "udah beres", "done", "selesai", "batalin"), WAJIB tujukan HANYA ke tugas id ${quotedTodo.id} ini (pakai todoId: ${quotedTodo.id}). DILARANG KERAS menghapus, menandai selesai, atau mengubah tugas lain!`;
+      } else if (/\[(?:Pengingat Tugas|To-Do List)/i.test(quotedRawText)) {
+        taskQuotedRule = `\n- BALASAN KE DAFTAR/PENGINGAT TUGAS: Jika pengguna memberi perintah tanpa nomor atau nama target (contoh: "apus", "hapus", "done"), DILARANG menebak salah satu tugas. WAJIB tanyakan tugas yang mana (contoh: "Mau hapus nomor berapa?").`;
+      }
+    }
+
     quotedContext = `\n\n[KONTEKS PESAN YANG DI-REPLY]:
 - Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.
 ${isBotQuoted
   ? "- PENGGUNA ME-REPLY PESAN BOT: Sambungkan jawabanmu langsung dengan apa yang kamu sampaikan sebelumnya (pertanyaan, konfirmasi, atau daftar to-do/acara). Jika user menyebut nomor urut (contoh: 'nomor 2', 'yang ketiga') atau memberi jawaban singkat (contoh: 'jam 8 aja', 'udah beres'), rujuk ke konteks pesan bot tersebut!"
   : `- Pengguna me-reply pesan dari ${qSender}. Jadikan isi pesan yang di-reply sebagai dasar/rujukan tindakanmu.`}
-- DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!${eventQuotedRule}`;
+- DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!${eventQuotedRule}${taskQuotedRule}`;
   }
 
   const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
