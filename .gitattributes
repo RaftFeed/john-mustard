@@ -1,0 +1,2 @@
+# Shell scripts must always keep LF endings, otherwise bash on the VPS breaks.
+*.sh text eol=lf
