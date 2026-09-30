@@ -516,8 +516,18 @@ ${isBotQuoted
     const isPureAction = isActionIntent(userText) && !userText.includes("?") && !/\b(kenapa|gimana|bagaimana|apakah|menurut|saran|rekomendasi)\b/i.test(userText);
 
     if (turns === 1 && isPureMutation && allSucceeded && isPureAction && lastFormattedList) {
-      const salute = isGroupChat ? "Beres!" : "Beres, Lord!";
-      return `${salute} Data berhasil diperbarui di sistem.\n\n${lastFormattedList}`;
+      const toolNames = new Set(fnCallParts.map((p) => p.functionCall.name));
+      const onlyAdd = toolNames.size === 1 && toolNames.has("addTodo");
+      const onlyUpdate = toolNames.size === 1 && toolNames.has("updateTodo");
+      let salute = isGroupChat ? "Beres!" : "Beres, Lord!";
+      if (onlyAdd) {
+        salute = isGroupChat ? "Udah dicatet ya!" : "Udah dicatet ya, Lord!";
+      } else if (onlyUpdate) {
+        salute = isGroupChat ? "Udah diupdate ya!" : "Udah diupdate ya, Lord!";
+      } else {
+        salute = `${salute} Data berhasil diperbarui di sistem.`;
+      }
+      return `${salute}\n\n${lastFormattedList}`;
     }
 
     // Revert toolConfig for subsequent steps

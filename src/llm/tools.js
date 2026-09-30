@@ -4,6 +4,7 @@ import os from "node:os";
 import {
   formatTodoList,
   formatTodoDetail,
+  formatTodoCard,
   formatBacklogList,
   formatFeatureRequestsList,
   formatSkillList,
@@ -731,13 +732,17 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : null;
     const desc = (args.description && String(args.description).trim()) || userText || "";
     const id = store.addTodo(chatId, args.task, deadline, args.tag, args.category, args.assignee, desc);
+    const created = store.getTodoRaw ? store.getTodoRaw(id) : null;
+    formattedList = created ? formatTodoCard(created) : null;
     toolResult = {
       success: true,
       id,
       task: args.task,
       category: args.category || "auto",
       assignee: args.assignee || null,
-      description: desc
+      description: desc,
+      formatted: formattedList,
+      instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya sebagai konfirmasi tugas tersimpan. DILARANG memformat ulang, DILARANG mengubah/menambah/mengurangi bullet, dan DILARANG menambahkan pertanyaan penawaran bantuan di akhir."
     };
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
@@ -848,9 +853,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         assignee: args.assignee,
         description: args.description
       });
+      const updated = changes > 0 ? store.getTodoById(targetId, chatId) : null;
+      formattedList = updated ? formatTodoCard(updated) : null;
       toolResult = {
         success: changes > 0,
-        todoId: targetId
+        todoId: targetId,
+        formatted: formattedList,
+        instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya sebagai konfirmasi perubahan tugas. DILARANG memformat ulang, DILARANG mengubah bullet, dan DILARANG menambahkan pertanyaan penawaran bantuan di akhir."
       };
     }
   } else if (name === "deleteTodo") {

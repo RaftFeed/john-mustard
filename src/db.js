@@ -793,6 +793,12 @@ export class Storage {
     return this.db.prepare(`SELECT * FROM todos WHERE id = ? AND (${cond}) AND deleted_at IS NULL`).get(realId, ...scope.chatIds, ...scope.names);
   }
 
+  getTodoRaw(id) {
+    const num = parseInt(id, 10);
+    if (isNaN(num)) return null;
+    return this.db.prepare("SELECT * FROM todos WHERE id = ? AND deleted_at IS NULL").get(num);
+  }
+
   getTodosDue(chatId, daysAhead = 0, assignee = null) {
     const scope = getUserTodoScope(chatId, this);
     const now = new Date();
@@ -1953,6 +1959,57 @@ export function formatTodoDetail(todo) {
   }
   if (todo.description && todo.description.trim()) {
     lines.push(`\n📝 *Prompt / Deskripsi Asli:*\n"${todo.description.trim()}"`);
+  }
+  return lines.join("\n");
+}
+
+export function formatTodoDeadlineRelative(deadline) {
+  if (!deadline) return "Tanpa deadline";
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  const dl = new Date(deadline);
+  if (isNaN(dl.getTime())) return "Tanpa deadline";
+
+  const wibMidnight = (date) => {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  };
+
+  const diffDays = Math.round((wibMidnight(dl) - wibMidnight(new Date())) / (24 * 3600 * 1000));
+  const dlWib = new Date(dl.getTime() + WIB_OFFSET_MS);
+  const dayName = daysId[dlWib.getUTCDay()];
+  const dateNum = dlWib.getUTCDate();
+  const monthName = monthsId[dlWib.getUTCMonth()];
+  const year = dlWib.getUTCFullYear();
+  const hours = String(dlWib.getUTCHours()).padStart(2, "0");
+  const minutes = String(dlWib.getUTCMinutes()).padStart(2, "0");
+  const stamp = `${dateNum} ${monthName} ${year}, ${hours}.${minutes} WIB`;
+
+  if (diffDays < 0) return `Terlewat (${dayName}, ${stamp})`;
+  if (diffDays === 0) return `Hari ini (${stamp})`;
+  if (diffDays === 1) return `Besok (${stamp})`;
+  return `H-${diffDays} (${dayName}, ${stamp})`;
+}
+
+export function formatTodoCard(todo) {
+  if (!todo) return "";
+  const tagBase = todo.tag && String(todo.tag).trim() ? String(todo.tag).trim() : "#tugas";
+  const tagTokens = tagBase.split(/\s+/).filter(Boolean).map((t) => {
+    const clean = t.replace(/^`+|`+$/g, "");
+    return clean.startsWith("#") || clean.startsWith("[") ? clean : `#${clean}`;
+  });
+  if (todo.category === "routine" && !tagTokens.includes("[Rutin]")) {
+    tagTokens.push("[Rutin]");
+  }
+
+  const lines = [
+    `*${todo.task}*`,
+    `• Deadline: ${formatTodoDeadlineRelative(todo.deadline)}`,
+    `• Tag: ${tagTokens.join(" ")}`
+  ];
+  if (todo.assignee) {
+    lines.push(`• Penanggung Jawab: ${todo.assignee}`);
   }
   return lines.join("\n");
 }

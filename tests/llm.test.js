@@ -360,6 +360,76 @@ test("LLM Tools: addReminder calculates 1h default for events and supports custo
   assert.strictEqual(resSaluran.toolResult.error?.includes("Di obrolan grup dilarang"), false);
 });
 
+test("LLM Tools: addTodo/updateTodo return a formatted confirmation card", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+
+  const resAdd = await executeTool("addTodo", {
+    task: "Cek broksum Stockbit",
+    deadlineIso: "2026-09-30T16:30:00+07:00",
+    tag: "saham"
+  }, { store, chatId });
+
+  assert.strictEqual(resAdd.toolResult.success, true);
+  assert.ok(resAdd.formattedList.includes("*Cek broksum Stockbit*"));
+  assert.ok(resAdd.formattedList.includes("• Deadline: "));
+  assert.ok(resAdd.formattedList.includes("• Tag: #saham"));
+  assert.ok(!/\bid:\s*\d+/i.test(resAdd.formattedList));
+
+  const resUpd = await executeTool("updateTodo", {
+    todoId: resAdd.toolResult.id,
+    newTask: "Cek broksum Stockbit (revisi)"
+  }, { store, chatId });
+
+  assert.strictEqual(resUpd.toolResult.success, true);
+  assert.ok(resUpd.formattedList.includes("*Cek broksum Stockbit (revisi)*"));
+  assert.ok(resUpd.formattedList.includes("• Tag: #saham"));
+});
+
+test("LLM Engine: addTodo short-circuits to a card-style confirmation", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let fetchCallCount = 0;
+
+  globalThis.fetch = async () => {
+    fetchCallCount++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                name: "addTodo",
+                args: { task: "Cek broksum Stockbit", deadlineIso: "2026-09-30T16:30:00+07:00", tag: "saham" }
+              }
+            }]
+          }
+        }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const reply = await processChat(mockRotator, "tambahin cek broksum stockbit deadline 16.30", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838"
+    });
+
+    assert.strictEqual(fetchCallCount, 1, "Should short-circuit after turn 1 addTodo");
+    assert.ok(reply.includes("Udah dicatet ya"));
+    assert.ok(reply.includes("*Cek broksum Stockbit*"));
+    assert.ok(reply.includes("• Tag: #saham"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LLM Engine: single-turn mutation short-circuits to avoid turn 2 delay", async () => {
   const { processChat } = await import("../src/llm.js");
   const { Storage } = await import("../src/db.js");
