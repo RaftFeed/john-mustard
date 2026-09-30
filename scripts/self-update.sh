@@ -161,10 +161,20 @@ cmd_deploy() {
     return 0
   fi
 
-  # 7) Schedule detached restart + health check + auto-rollback.
-  #    Push happens in the watcher, only after the health check passes, so
-  #    origin/main never contains a commit that failed to come up.
+  # 7) Restart with health check + auto-rollback.
+  #    Detached by default, because the bot must flush its WhatsApp reply before it dies.
+  #    Synchronous when SELF_UPDATE_SYNC_RESTART=1 (CI caller wants a truthful exit code).
   set_status "pending-restart $(ts) commit=${new} prev=${prev:0:7}"
+  if [ "${SELF_UPDATE_SYNC_RESTART:-0}" = "1" ]; then
+    local rc=0
+    bash "$REPO_DIR/scripts/self-update-watch.sh" "$prev" "$new" 0 "$HEALTH_TIMEOUT" || rc=$?
+    if [ "$rc" = "0" ]; then
+      echo "Deploy OK (commit ${new})."
+    else
+      echo "Deploy GAGAL, sudah di-rollback ke ${prev:0:7}."
+    fi
+    return "$rc"
+  fi
   echo "TEST LULUS. Bot restart dalam ${RESTART_DELAY}s (commit ${new})."
   echo "Cek hasil dengan: #deploy status"
   setsid bash "$REPO_DIR/scripts/self-update-watch.sh" "$prev" "$new" "$RESTART_DELAY" "$HEALTH_TIMEOUT" \

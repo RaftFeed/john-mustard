@@ -14,7 +14,12 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          # Fail the job on the first error. Without this, a failing `git pull`
+          # used to be swallowed and the job still reported success.
+          script_stop: true
           script: |
+            set -e
             cd ${{ secrets.WORK_DIR }}
-            git pull origin main
-            docker compose up -d --build bot
+            git fetch --quiet origin
+            git merge --ff-only origin/main
+            SELF_UPDATE_SYNC_RESTART=1 bash scripts/self-update.sh deploy

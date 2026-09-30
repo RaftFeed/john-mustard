@@ -65,6 +65,17 @@ Push pakai SSH deploy key; fetch tetap HTTPS biar gak butuh kredensial.
 Sebelum langkah 2 selesai, tiap deploy bakal nulis `warn: push gagal (credential belum diset)` ke
 `data/self-update.log` — itu normal dan gak ngeblok apa-apa.
 
+### Dua pemicu, satu mesin deploy
+
+- **CI (GitHub Actions)** — `.github/workflows/deploy.yml`. Tiap push ke `main`, GitHub SSH ke VPS,
+  fast-forward ke `origin/main`, lalu jalanin `SELF_UPDATE_SYNC_RESTART=1 bash scripts/self-update.sh deploy`.
+  Jadi push = auto-deploy, tapi tetap lewat test gate + health check + rollback.
+- **Manual / dari bot (`#deploy`)** — jalur yang sama; bedanya restart-nya *detached* biar balasan
+  WhatsApp keburu kekirim sebelum bot mati.
+
+Workflow pakai `script_stop: true`. Sebelumnya `git pull` yang gagal ditelan diam-diam dan job tetap
+lapor **sukses** — itu sebabnya VPS bisa nyangkut di kode lama padahal Actions ijo.
+
 ## Struktur file
 
 - `scripts/self-update.sh` — pipeline (status / deploy / notify).
