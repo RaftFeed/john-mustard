@@ -851,13 +851,14 @@ export class Storage {
   }
 
   setDailyDigest(chatId, enable = true) {
+    const digestTag = "(message LIKE 'Rekap to-do harian%' OR message LIKE 'Rekap harian%')";
     if (!enable) {
       return this.db.prepare(
-        "UPDATE reminders SET deleted_at = ? WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND deleted_at IS NULL"
+        `UPDATE reminders SET deleted_at = ? WHERE chat_id = ? AND ${digestTag} AND deleted_at IS NULL`
       ).run(Date.now(), chatId).changes;
     }
     const exist = this.db.prepare(
-      "SELECT id FROM reminders WHERE chat_id = ? AND message LIKE 'Rekap to-do harian%' AND status = 'pending' AND deleted_at IS NULL"
+      `SELECT id FROM reminders WHERE chat_id = ? AND ${digestTag} AND status = 'pending' AND deleted_at IS NULL`
     ).get(chatId);
     if (exist) return exist.id;
 
@@ -869,7 +870,7 @@ export class Storage {
     }
     return this.addReminder(
       chatId,
-      "Rekap to-do harian: kirimkan daftar tugas hari ini.",
+      "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.",
       next7am.getTime(),
       "daily",
       "scheduled_action"

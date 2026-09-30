@@ -358,4 +358,37 @@ test("Storage: soft delete and restoreLastDeleted for todos and reminders", () =
   assert.strictEqual(store.getPendingDeletion(chatId), null);
 });
 
+test("Storage: setDailyDigest covers to-do list and acara list with legacy compatibility", () => {
+  const store = new Storage(":memory:");
+
+  const chatId = "user_digest";
+  const remId = store.setDailyDigest(chatId, true);
+  assert.ok(remId > 0);
+
+  const digest = store.getReminderById(remId);
+  assert.strictEqual(digest.task_type, "scheduled_action");
+  assert.strictEqual(digest.recurrence, "daily");
+  assert.ok(digest.message.includes("To-Do List"));
+  assert.ok(/acara/i.test(digest.message));
+
+  // Enabling again is idempotent (no duplicate digest row)
+  assert.strictEqual(store.setDailyDigest(chatId, true), remId);
+  assert.strictEqual(store.listReminders(chatId).length, 1);
+
+  // Legacy digest rows ("Rekap to-do harian...") are still found and disabled
+  const legacyChat = "user_digest_legacy";
+  store.addReminder(
+    legacyChat,
+    "Rekap to-do harian: kirimkan daftar tugas hari ini.",
+    Date.now() + 3600_000,
+    "daily",
+    "scheduled_action"
+  );
+  assert.ok(store.setDailyDigest(legacyChat, false) >= 1);
+  assert.strictEqual(store.listReminders(legacyChat).length, 0);
+
+  assert.ok(store.setDailyDigest(chatId, false) >= 1);
+  assert.strictEqual(store.listReminders(chatId).length, 0);
+});
+
 

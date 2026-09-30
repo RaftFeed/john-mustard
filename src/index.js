@@ -60,7 +60,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #del <id> — Hapus tugas (misal: #del 1)
 
 *Perintah Otomasi & Pengaturan:*
-- #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
+- #daily <1/0> — Aktifkan/matikan rekap harian jam 07:00 WIB (to-do list + daftar acara)
 - #skills — Lihat daftar skill & macro otomatis
 
 *Perintah Owner / Admin:*

@@ -644,12 +644,12 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "daily": {
       if (cmd.value === "1" || cmd.value === "on") {
         store.setDailyDigest(chatId, true);
-        return "[OK] Daily reminder jam 07:00 WIB diaktifkan.";
+        return "[OK] Rekap harian jam 07:00 WIB diaktifkan (to-do list + daftar acara & pengingat).";
       } else if (cmd.value === "0" || cmd.value === "off") {
         store.setDailyDigest(chatId, false);
-        return "[OK] Daily reminder dimatikan.";
+        return "[OK] Rekap harian dimatikan.";
       }
-      return "*[Daily Reminder]*\nFormat: `#daily 1` (aktifkan jam 07:00 WIB) atau `#daily 0` (matikan).";
+      return "*[Rekap Harian]*\nFormat: `#daily 1` (aktifkan jam 07:00 WIB) atau `#daily 0` (matikan).";
     }
 
     case "skills": {
@@ -833,7 +833,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 
 *Perintah Otomasi & Pengaturan:*
 - #request <ide> — Kirim ide/request fitur ke master bot
-- #daily <1/0> — Aktifkan/matikan rekap to-do jam 07:00 WIB
+- #daily <1/0> — Aktifkan/matikan rekap harian jam 07:00 WIB (to-do list + daftar acara)
 - #skills — Lihat daftar skill & macro otomatis
 - #proposals — Cek antrean proposal skill
 - #rollback <skill> [v] — Kembalikan versi skill

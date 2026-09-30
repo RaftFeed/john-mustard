@@ -191,7 +191,7 @@ export const TOOLS = [
       },
       {
         name: "setDailyDigest",
-        description: "Aktifkan atau nonaktifkan pengiriman rekap to-do harian otomatis setiap pukul 07:00 WIB",
+        description: "Aktifkan atau nonaktifkan pengiriman rekap harian otomatis setiap pukul 07:00 WIB (berisi To-Do List hari ini dan Daftar Acara & Pengingat hari ini)",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1058,8 +1058,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       success: true,
       enabled: enable,
       message: enable
-        ? "Rekap harian to-do list jam 07:00 WIB berhasil diaktifkan."
-        : "Rekap harian to-do list jam 07:00 WIB berhasil dinonaktifkan."
+        ? "Rekap harian (to-do list + daftar acara & pengingat) jam 07:00 WIB berhasil diaktifkan."
+        : "Rekap harian jam 07:00 WIB berhasil dinonaktifkan."
     };
   } else if (name === "searchVault") {
     let queryEmbedding = null;
