@@ -40,6 +40,31 @@ sendiri (prosesnya mati saat restart), jadi restart dijadwalkan *detached* oleh 
 - Test gate sengaja cuma unit test (`node --test tests/*.test.js`); `python scripts/test_runner.py`
   butuh service hidup jadi gak dipakai sebagai gate.
 
+## Auto-sync dengan GitHub
+
+`#deploy` juga jadi jalur sinkronisasi:
+
+- **Pull (GitHub → VPS)** — sebelum deploy: `git fetch` + `git merge --ff-only origin/main`.
+  - Dilewati kalau ada self-update yang belum di-commit (kerjaan gak pernah dibuang).
+  - Kalau divergen (bukan fast-forward) → **abort**, minta merge manual. Gak pernah clobber.
+  - Kalau yang ketarik mengubah `src/`, bot di-restart lewat watcher yang sama.
+- **Push (VPS → GitHub)** — setelah health check lolos (atau di jalur tanpa restart),
+  commit di-push ke `origin/main`. Best-effort: kalau credential belum ada, cuma di-log warning
+  dan commit tetap lokal. Push sengaja **setelah** health check biar `origin/main` gak pernah
+  nyimpen commit yang gagal boot.
+
+### Setup deploy key (sekali, manual di GitHub)
+
+Push pakai SSH deploy key; fetch tetap HTTPS biar gak butuh kredensial.
+
+1. Key udah digenerate di VPS: `~/.ssh/github_deploy`.
+2. Buka repo di GitHub → **Settings → Deploy keys → Add deploy key**, tempel public key-nya
+   (`cat ~/.ssh/github_deploy.pub` di VPS), centang **Allow write access**.
+3. Remote push VPS udah diset otomatis ke `git@github.com:RaftFeed/john-mustard.git`.
+
+Sebelum langkah 2 selesai, tiap deploy bakal nulis `warn: push gagal (credential belum diset)` ke
+`data/self-update.log` — itu normal dan gak ngeblok apa-apa.
+
 ## Struktur file
 
 - `scripts/self-update.sh` — pipeline (status / deploy / notify).
