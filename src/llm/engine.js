@@ -10,6 +10,10 @@ const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Ha
 // Header penanda output "daftar penuh" (to-do list / daftar acara). Kartu satuan (add/update) tidak termasuk.
 const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
 
+// Tool yang menerima nomor urut visual; dipakai untuk pra-resolve per batch.
+const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId" };
+const REMINDER_INDEX_ARG_BY_TOOL = { deleteReminder: "reminderId", updateReminder: "reminderId" };
+
 export function isInternalThoughtText(text) {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().replace(/^[\s#*_~`>]+/, "");
@@ -474,8 +478,46 @@ ${isBotQuoted
 
     turns++;
     const userResponseParts = [];
-    for (const part of fnCallParts) {
-      const { name, args } = part.functionCall;
+
+    // Nomor urut visual dipetakan ke id asli SEKALI per batch memakai snapshot awal,
+    // supaya beberapa item yang diubah dalam satu turn tidak saling menggeser urutan
+    // (contoh: "1-4 done" tidak boleh jadi menandai item 1,3,5,7).
+    const isNumeric = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+    const execArgsList = fnCallParts.map((p) => ({ ...(p.functionCall.args || {}) }));
+    let preResolvedIndexes = false;
+    if (store && typeof store.resolveTodoIndexes === "function") {
+      const queryChatId = isGroupChat ? chatId : (senderNumber || chatId);
+      const todoNums = [];
+      const remNums = [];
+      execArgsList.forEach((args, idx) => {
+        const tArg = TODO_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+        if (tArg && isNumeric(args[tArg])) todoNums.push(Number(args[tArg]));
+        const rArg = REMINDER_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+        if (rArg && isNumeric(args[rArg])) remNums.push(Number(args[rArg]));
+      });
+      if (todoNums.length > 0) {
+        const resolved = store.resolveTodoIndexes(todoNums, queryChatId);
+        let i = 0;
+        execArgsList.forEach((args, idx) => {
+          const tArg = TODO_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+          if (tArg && isNumeric(args[tArg])) args[tArg] = resolved[i++];
+        });
+        preResolvedIndexes = true;
+      }
+      if (remNums.length > 0 && typeof store.resolveReminderIndexes === "function") {
+        const resolved = store.resolveReminderIndexes(remNums, queryChatId);
+        let i = 0;
+        execArgsList.forEach((args, idx) => {
+          const rArg = REMINDER_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+          if (rArg && isNumeric(args[rArg])) args[rArg] = resolved[i++];
+        });
+        preResolvedIndexes = true;
+      }
+    }
+
+    for (let idx = 0; idx < fnCallParts.length; idx++) {
+      const name = fnCallParts[idx].functionCall.name;
+      const args = execArgsList[idx];
       toolsCalled.push(name);
       if (onToolCall) onToolCall(name);
 
@@ -500,7 +542,7 @@ ${isBotQuoted
         };
       } else {
         try {
-          resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText });
+          resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText, preResolvedIndexes });
         } catch (toolErr) {
           resultObj = { toolResult: { error: toolErr.message } };
         }

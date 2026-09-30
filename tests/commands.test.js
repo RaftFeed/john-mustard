@@ -178,4 +178,18 @@ test("Commands: executeFastCommand resolves context between To-Do and Reminder",
   assert.strictEqual(store.getTodos(chatId, true).length, initialTodosCount);
 });
 
+test("Commands: deleteMultiple removes exactly the requested visual numbers (one snapshot)", async () => {
+  const store = new Storage(":memory:");
+  const ctx = { store, chatId: "user1", isOwner: true, senderNumber: "user1", senderName: "Tester" };
+
+  for (const name of ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]) store.addTodo("user1", name);
+  const before = store.getTodos("user1");
+
+  const res = await executeFastCommand({ type: "deleteMultiple", ids: [1, 2, 3, 4], target: "todo" }, ctx);
+  assert.ok(res.includes("Berhasil menghapus 4 item"));
+
+  const remaining = store.getTodos("user1");
+  assert.deepStrictEqual(remaining.map((t) => t.id), before.slice(4).map((t) => t.id));
+});
+
 

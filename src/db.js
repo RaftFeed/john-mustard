@@ -587,25 +587,32 @@ export class Storage {
     const num = parseInt(idOrIndex, 10);
     if (isNaN(num)) return null;
     if (!chatId) return num;
+    return this.resolveReminderIdFromSnapshot(num, this.listReminders(chatId));
+  }
 
-    const list = this.listReminders(chatId);
+  resolveReminderIdFromSnapshot(num, list) {
+    if (isNaN(num)) return null;
     if (!list || list.length === 0) return num;
-
     // 1. Jika angka 1-based visual index dalam rentang active list (1..list.length)
     if (num >= 1 && num <= list.length) {
       return list[num - 1].id;
     }
-
     // 2. Jika angka cocok langsung dengan id DB asli dari salah satu active reminder
     const byId = list.find((r) => r.id === num);
-    if (byId) {
-      return byId.id;
-    }
-
+    if (byId) return byId.id;
     return num;
   }
 
-  deleteReminder(chatId, idOrQuery) {
+  // Resolve banyak nomor urut visual sekaligus terhadap SATU snapshot, supaya
+  // urutan tidak bergeser saat beberapa item diubah dalam satu perintah.
+  resolveReminderIndexes(indexes, chatId) {
+    const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
+    if (!chatId) return nums;
+    const snapshot = this.listReminders(chatId);
+    return nums.map((num) => this.resolveReminderIdFromSnapshot(num, snapshot));
+  }
+
+  deleteReminder(chatId, idOrQuery, { rawId = false } = {}) {
     const scope = getUserTodoScope(chatId, this);
     const cidCond = scope.isGroup
       ? "chat_id = ?"
@@ -613,7 +620,9 @@ export class Storage {
     const params = scope.isGroup ? [chatId] : [...scope.chatIds];
 
     let row = null;
-    if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
+    if (rawId) {
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, parseInt(idOrQuery, 10));
+    } else if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
       const targetId = this.resolveReminderId(idOrQuery, chatId);
       row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, targetId);
     } else {
@@ -630,7 +639,7 @@ export class Storage {
     return res.changes;
   }
 
-  updateReminder(chatId, idOrQuery, { message, remindAt, recurrence, taskType, eventAt } = {}) {
+  updateReminder(chatId, idOrQuery, { message, remindAt, recurrence, taskType, eventAt } = {}, { rawId = false } = {}) {
     const scope = getUserTodoScope(chatId, this);
     const cidCond = scope.isGroup
       ? "chat_id = ?"
@@ -638,7 +647,9 @@ export class Storage {
     const params = scope.isGroup ? [chatId] : [...scope.chatIds];
 
     let row = null;
-    if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
+    if (rawId) {
+      row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, parseInt(idOrQuery, 10));
+    } else if (typeof idOrQuery === "number" || /^\d+$/.test(String(idOrQuery).trim())) {
       const targetId = this.resolveReminderId(idOrQuery, chatId);
       row = this.db.prepare(`SELECT * FROM reminders WHERE (${cidCond}) AND id = ? AND deleted_at IS NULL`).get(...params, targetId);
     } else {
@@ -758,27 +769,40 @@ export class Storage {
       return num;
     }
 
-    const active = this.getTodos(chatId, true);
-    if (!active || active.length === 0) {
-      return num;
-    }
+    return this.resolveTodoIdFromSnapshot(num, this.getTodos(chatId, true));
+  }
+
+  resolveTodoIdFromSnapshot(num, snapshot) {
+    if (isNaN(num)) return null;
+    if (!snapshot || snapshot.length === 0) return num;
 
     // 1. Jika angka 1-based index dalam rentang active list (1..active.length)
-    if (num >= 1 && num <= active.length) {
-      return active[num - 1].id;
+    if (num >= 1 && num <= snapshot.length) {
+      return snapshot[num - 1].id;
     }
 
     // 2. Jika angka cocok langsung dengan id DB asli dari salah satu active todo
-    const byId = active.find((t) => t.id === num);
-    if (byId) {
-      return byId.id;
-    }
+    const byId = snapshot.find((t) => t.id === num);
+    if (byId) return byId.id;
 
     return num;
   }
 
+  // Resolve banyak nomor urut visual sekaligus terhadap SATU snapshot, supaya
+  // urutan tidak bergeser saat beberapa item diubah dalam satu perintah.
+  resolveTodoIndexes(indexes, chatId) {
+    const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
+    if (!chatId) return nums;
+    const snapshot = this.getTodos(chatId, true);
+    return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
+  }
+
   getTodoById(id, chatId) {
-    const realId = this.resolveTodoId(id, chatId);
+    return this.getTodoByRealId(this.resolveTodoId(id, chatId), chatId);
+  }
+
+  getTodoByRealId(realId, chatId) {
+    if (!realId) return null;
     if (!chatId || isOwner(chatId)) {
       return this.db.prepare("SELECT * FROM todos WHERE id = ? AND deleted_at IS NULL").get(realId);
     }
@@ -1009,8 +1033,8 @@ export class Storage {
     return this.getVaultFileByName(str, ownerId);
   }
 
-  completeTodo(id, chatId) {
-    const realId = this.resolveTodoId(id, chatId);
+  completeTodo(id, chatId, { rawId = false } = {}) {
+    const realId = rawId ? parseInt(id, 10) : this.resolveTodoId(id, chatId);
     if (!realId) return 0;
     const scope = getUserTodoScope(chatId, this);
     let changes = 0;
@@ -1078,8 +1102,8 @@ export class Storage {
       .get(...scope.chatIds, ...scope.names, `%${query}%`);
   }
 
-  updateTodo(id, chatId, { task, deadline, tag, category, assignee, description }) {
-    const existing = this.getTodoById(id, chatId);
+  updateTodo(id, chatId, { task, deadline, tag, category, assignee, description }, { rawId = false } = {}) {
+    const existing = rawId ? this.getTodoByRealId(parseInt(id, 10), chatId) : this.getTodoById(id, chatId);
     if (!existing) return 0;
     const newTask = task !== undefined && task !== null ? task : existing.task;
     const newDeadline = deadline !== undefined ? deadline : existing.deadline;
@@ -1121,8 +1145,8 @@ export class Storage {
     return this.db.prepare("UPDATE todos SET reminded = 2 WHERE id = ?").run(id).changes;
   }
 
-  deleteTodo(id, chatId) {
-    const existing = this.getTodoById(id, chatId);
+  deleteTodo(id, chatId, { rawId = false } = {}) {
+    const existing = rawId ? this.getTodoByRealId(parseInt(id, 10), chatId) : this.getTodoById(id, chatId);
     if (!existing) return 0;
     const now = Date.now();
     const changes = this.db

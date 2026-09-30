@@ -621,6 +621,54 @@ test("LLM Engine: appends the full to-do list when the user explicitly asks for 
   }
 });
 
+test("Storage: resolveTodoIndexes pins batch numbers to a single snapshot", () => {
+  const store = new Storage(":memory:");
+  for (const name of ["A", "B", "C", "D", "E"]) store.addTodo("u1", name);
+  const snapshot = store.getTodos("u1");
+  assert.deepStrictEqual(
+    store.resolveTodoIndexes([1, 2, 3, 4], "u1"),
+    snapshot.slice(0, 4).map((t) => t.id)
+  );
+});
+
+test("LLM Engine: batch '1-4 done' marks the first four tasks, not alternate ones", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      candidates: [{
+        content: {
+          parts: [1, 2, 3, 4].map((n) => ({ functionCall: { name: "completeTodo", args: { todoId: n } } }))
+        }
+      }]
+    })
+  });
+
+  try {
+    const store = new Storage(":memory:");
+    for (const name of ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]) store.addTodo("user1", name);
+    const before = store.getTodos("user1");
+    assert.strictEqual(before.length, 7);
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "1-4 done", { store, chatId: "user1", senderNumber: "user1" });
+
+    const doneById = new Map(store.getTodos("user1", false, null, true).map((t) => [t.id, Number(t.done)]));
+    before.slice(0, 4).forEach((t, i) => {
+      assert.strictEqual(doneById.get(t.id), 1, `Task #${i + 1} (${t.task}) must be done`);
+    });
+    before.slice(4).forEach((t, i) => {
+      assert.strictEqual(doneById.get(t.id), 0, `Task #${i + 5} (${t.task}) must stay pending`);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LLM Engine: injects quoted message context anchor when user replies to bot or contact", async () => {
   const { processChat } = await import("../src/llm.js");
   const { Storage } = await import("../src/db.js");

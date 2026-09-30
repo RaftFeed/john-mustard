@@ -715,7 +715,7 @@ export const TOOLS = [
   }
 ];
 
-export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null, userText = "" }) {
+export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null, userText = "", preResolvedIndexes = false }) {
   let toolResult = {};
   let formattedList = null;
   const callerId = senderNumber || chatId;
@@ -795,7 +795,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const changes = store.completeTodo(args.todoId, queryChatId);
+    const changes = store.completeTodo(args.todoId, queryChatId, { rawId: preResolvedIndexes });
     const remaining = store.getTodos(queryChatId, false);
     formattedList = formatTodoList(remaining, isGroup);
     toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
@@ -846,14 +846,15 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { error: "Tugas tidak ditemukan untuk diubah." };
     } else {
       const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : undefined;
+      const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
       const changes = store.updateTodo(targetId, chatId, {
         task: args.newTask,
         deadline,
         tag: args.tag,
         assignee: args.assignee,
         description: args.description
-      });
-      const updated = changes > 0 ? store.getTodoById(targetId, chatId) : null;
+      }, { rawId: useRaw });
+      const updated = changes > 0 ? (useRaw ? store.getTodoByRealId(targetId, chatId) : store.getTodoById(targetId, chatId)) : null;
       formattedList = updated ? formatTodoCard(updated) : null;
       toolResult = {
         success: changes > 0,
@@ -869,7 +870,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const found = store.findTodo(queryChatId, args.taskQuery);
       if (found) targetId = found.id;
     }
-    const targetTodo = targetId ? store.getTodoById(targetId, queryChatId) : null;
+    const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
+    const targetTodo = !targetId ? null : (useRaw ? store.getTodoByRealId(targetId, queryChatId) : store.getTodoById(targetId, queryChatId));
     if (!targetTodo) {
       toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
     } else {
@@ -895,7 +897,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         };
       } else {
         if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
-        const changes = store.deleteTodo(targetTodo.id, queryChatId);
+        const changes = store.deleteTodo(targetTodo.id, queryChatId, { rawId: true });
         const remaining = store.getTodos(queryChatId, false);
         formattedList = formatTodoList(remaining, isGroup);
         toolResult = {
@@ -980,8 +982,9 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { error: "ID reminder atau teks query wajib diisi untuk menghapus pengingat." };
     } else {
       let targetReminder = null;
-      if (typeof target === "number" || /^\d+$/.test(String(target).trim())) {
-        const realId = store.resolveReminderId ? store.resolveReminderId(target, queryChatId) : parseInt(target, 10);
+      const targetIsNumeric = typeof target === "number" || /^\d+$/.test(String(target).trim());
+      if (targetIsNumeric) {
+        const realId = preResolvedIndexes ? parseInt(target, 10) : (store.resolveReminderId ? store.resolveReminderId(target, queryChatId) : parseInt(target, 10));
         targetReminder = store.getReminderById ? store.getReminderById(realId) : null;
       } else {
         const list = store.listReminders ? store.listReminders(queryChatId) : [];
@@ -1011,7 +1014,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         };
       } else {
         if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
-        const changes = store.deleteReminder(queryChatId, target);
+        const changes = store.deleteReminder(queryChatId, target, { rawId: preResolvedIndexes && targetIsNumeric });
         const remaining = store.listReminders(queryChatId);
         formattedList = formatRemindersList(remaining);
         toolResult = {
@@ -1032,12 +1035,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     } else {
       const remindAt = args.newRemindAtIso ? new Date(args.newRemindAtIso).getTime() : undefined;
       const eventAt = args.newEventAtIso ? new Date(args.newEventAtIso).getTime() : undefined;
+      const targetIsNumeric = typeof target === "number" || /^\d+$/.test(String(target).trim());
       const updated = store.updateReminder(queryChatId, target, {
         message: args.newMessage,
         remindAt: isNaN(remindAt) ? undefined : remindAt,
         eventAt: isNaN(eventAt) ? undefined : eventAt,
         recurrence: args.recurrence
-      });
+      }, { rawId: preResolvedIndexes && targetIsNumeric });
       if (!updated) {
         toolResult = { error: `Agenda/pengingat '${target}' tidak ditemukan.` };
       } else {

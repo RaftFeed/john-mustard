@@ -500,14 +500,20 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       }
       const deletedTodos = [];
       const deletedRems = [];
-      for (const id of cmd.ids) {
-        if (scope === "reminder") {
-          if (store.deleteReminder && store.deleteReminder(chatId, id) > 0) {
-            deletedRems.push(id);
+      if (scope === "reminder") {
+        // Resolve semua nomor urut dari SATU snapshot dulu, biar tidak bergeser
+        // saat beberapa item dihapus berturut-turut dalam satu perintah.
+        const realIds = store.resolveReminderIndexes ? store.resolveReminderIndexes(cmd.ids, chatId) : cmd.ids;
+        for (const realId of realIds) {
+          if (store.deleteReminder && store.deleteReminder(chatId, realId, { rawId: true }) > 0) {
+            deletedRems.push(realId);
           }
-        } else if (scope === "todo") {
-          if (store.deleteTodo(id, chatId) > 0) {
-            deletedTodos.push(id);
+        }
+      } else if (scope === "todo") {
+        const realIds = store.resolveTodoIndexes ? store.resolveTodoIndexes(cmd.ids, chatId) : cmd.ids;
+        for (const realId of realIds) {
+          if (store.deleteTodo(realId, chatId, { rawId: true }) > 0) {
+            deletedTodos.push(realId);
           }
         }
       }
