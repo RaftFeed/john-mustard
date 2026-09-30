@@ -1,3 +1,7 @@
 - Expects task/reminder and list-type responses rendered in the project's structured card format (e.g. a `[To-Do List]` header with `• Deadline:` / `• Tag:` bullets) rather than free-form prose; wants this used consistently ("tetap"). Confidence: 0.85
 - Communicates in Indonesian (Bahasa Indonesia), in a casual/informal "gw/lu" register, and expects replies in the same style. Confidence: 0.8
 - When reporting a bug, wants both the root cause explained ("kenapa") and the fix applied, not just a patch. Confidence: 0.6
+- Prefers security-conscious infrastructure over convenience: keeps internal service ports closed to the public internet and reaches them via SSH tunnel rather than opening cloud firewall/security-list ingress rules. Confidence: 0.6
+- Gives very terse approvals to multiple-choice checkpoints (e.g. just the option letter plus "gas lanjut"), expecting the agent to then execute the whole multi-step plan — including production changes and brief service restarts — without further confirmation. Confidence: 0.5
+- Keeps the local/Windows dev setup capable of mirroring production (chose to keep the extra local tunnel service rather than reverting to a minimal, "clean" repo). Confidence: 0.5
+- Prefers a staged release flow over one-shot automation: let the agent make and test a change first, review the diff/summary, then deploy on a separate explicit step (rather than auto-deploying immediately). Confidence: 0.5

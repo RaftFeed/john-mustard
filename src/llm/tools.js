@@ -1738,12 +1738,9 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     try {
       await sendText(`${res.targetPhone}@c.us`, outboundText);
     } catch (err) {
-      if (err.cause?.code === "ECONNREFUSED" || err.message?.includes("ECONNREFUSED")) {
-        console.warn(`[WAHA] Offline dev/test mode - message not dispatched: ${err.message}`);
-      } else {
-        toolResult = { error: `Gagal mengirimkan pesan ke WhatsApp: ${err.message}` };
-        return { toolResult, formattedList };
-      }
+      console.error(`[WAHA] Gagal mengirimkan pesan ke ${res.recipientDisplayName}: ${err.message}`);
+      toolResult = { error: `Gagal mengirimkan pesan ke WhatsApp: ${err.message}` };
+      return { toolResult, formattedList };
     }
 
     toolResult = {

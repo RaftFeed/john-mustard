@@ -6,6 +6,25 @@ import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { queryHermesAgent, formatHermesResponse } from "./hermes.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
+const SELF_UPDATE_REPO = "/home/ubuntu/john-mustard";
+
+function buildSelfUpdatePrompt(instruction) {
+  return [
+    "Kamu mengerjakan repo John Mustard di VPS ini, path " + SELF_UPDATE_REPO + ".",
+    "",
+    "TUGAS: " + instruction,
+    "",
+    "ATURAN KERAS:",
+    "1. Baca dulu kode terkait sebelum mengubah apa pun.",
+    "2. Edit HANYA file di dalam: src/, tests/, scripts/, skills/, config/, atau system-prompt.md.",
+    "3. DILARANG menyentuh: .env, docker-compose.yml, key-oracle/, 9router-data/, oauth_session_vps.json, dan semua file *.bak-*.",
+    "4. Setelah selesai, WAJIB jalankan test gate ini dan tempel hasilnya:",
+    "   cd " + SELF_UPDATE_REPO + " && docker run --rm -v $PWD:/app -w /app node:24-slim sh -c 'node --test tests/*.test.js'",
+    "5. JANGAN restart container apa pun. Deploy dilakukan terpisah lewat script deploy.",
+    "6. Laporan akhir (ringkas, bahasa Indonesia): daftar file yang diubah, ringkasan diff, dan hasil test (lulus/gagal + jumlah test)."
+  ].join("\n");
+}
+
 function formatUptime(seconds) {
   const d = Math.floor(seconds / (3600 * 24));
   const h = Math.floor((seconds % (3600 * 24)) / 3600);
@@ -172,6 +191,16 @@ export function parseFastCommand(text = "") {
   if (dailyMatch) {
     const val = dailyMatch[2] ? dailyMatch[2].toLowerCase() : "check";
     return { type: "daily", value: val };
+  }
+
+  const selfUpdateMatch = trimmed.match(/^#selfupdate\s+([\s\S]+)$/i);
+  if (selfUpdateMatch) {
+    return { type: "selfupdate", instruction: selfUpdateMatch[1].trim() };
+  }
+
+  const deployMatch = trimmed.match(/^#deploy(\s+status)?$/i);
+  if (deployMatch) {
+    return { type: "deploy", status: Boolean(deployMatch[1]) };
   }
 
   if (/^#(dew|mustard)\b/i.test(trimmed)) {
@@ -652,6 +681,23 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return "*[Rekap Harian]*\nFormat: `#daily 1` (aktifkan jam 07:00 WIB) atau `#daily 0` (matikan).";
     }
 
+    case "selfupdate": {
+      if (!isOwner) return `[!] Fitur #selfupdate khusus owner (+${OWNER_PHONE}).`;
+      if (!cmd.instruction) {
+        return "*[Self-Update]*\nFormat: `#selfupdate <instruksi>` (mis. `#selfupdate tambahin perintah #joke`).\nSetelah review, jalankan `#deploy`.";
+      }
+      const res = await queryHermesAgent(buildSelfUpdatePrompt(cmd.instruction));
+      return formatHermesResponse(res);
+    }
+
+    case "deploy": {
+      if (!isOwner) return `[!] Fitur #deploy khusus owner (+${OWNER_PHONE}).`;
+      const scriptPath = `${SELF_UPDATE_REPO}/scripts/self-update.sh`;
+      const action = cmd.status ? "status" : "deploy";
+      const res = await queryHermesAgent(`Jalankan perintah ini di VPS dan laporkan output-nya apa adanya (tanpa menambah komentar): bash ${scriptPath} ${action}`);
+      return formatHermesResponse(res);
+    }
+
     case "skills": {
       const list = store.getSkills();
       return formatSkillList(list);
@@ -834,6 +880,8 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 *Perintah Otomasi & Pengaturan:*
 - #request <ide> — Kirim ide/request fitur ke master bot
 - #daily <1/0> — Aktifkan/matikan rekap harian jam 07:00 WIB (to-do list + daftar acara)
+- #selfupdate <instruksi> — Minta Hermes ngedit kode bot (owner). Review dulu, baru #deploy
+- #deploy — Deploy perubahan (test gate + restart + auto-rollback); #deploy status buat cek hasil
 - #skills — Lihat daftar skill & macro otomatis
 - #proposals — Cek antrean proposal skill
 - #rollback <skill> [v] — Kembalikan versi skill
@@ -893,6 +941,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/commands.js")) {
       assert.strictEqual(parseFastCommand("#42").id, 42);
       assert.strictEqual(parseFastCommand("#add Kerjakan PR #kuliah").raw, "Kerjakan PR #kuliah");
       assert.strictEqual(parseFastCommand("#daily 1").value, "1");
+      assert.strictEqual(parseFastCommand("#deploy").type, "deploy");
+      assert.strictEqual(parseFastCommand("#deploy").status, false);
+      assert.strictEqual(parseFastCommand("#deploy status").status, true);
+      assert.strictEqual(parseFastCommand("#selfupdate tambahin perintah #joke").type, "selfupdate");
+      assert.strictEqual(parseFastCommand("#selfupdate tambahin perintah #joke").instruction, "tambahin perintah #joke");
       assert.strictEqual(parseFastCommand("#dew").type, "dew");
       assert.strictEqual(parseFastCommand("#skills").type, "skills");
       assert.strictEqual(parseFastCommand("#reminders").type, "reminders");

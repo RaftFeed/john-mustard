@@ -18,6 +18,11 @@ test("Commands: parseFastCommand parses keywords and prefix commands", () => {
   assert.strictEqual(parseFastCommand("#vps cek docker").type, "hermes");
   assert.strictEqual(parseFastCommand("#vps cek docker").instruction, "cek docker");
   assert.strictEqual(parseFastCommand("#hermes status").type, "hermes");
+  assert.strictEqual(parseFastCommand("#deploy").type, "deploy");
+  assert.strictEqual(parseFastCommand("#deploy").status, false);
+  assert.strictEqual(parseFastCommand("#deploy status").status, true);
+  assert.strictEqual(parseFastCommand("#selfupdate tambahin perintah #joke").type, "selfupdate");
+  assert.strictEqual(parseFastCommand("#selfupdate tambahin perintah #joke").instruction, "tambahin perintah #joke");
   assert.strictEqual(parseFastCommand("halo john"), null);
 });
 
@@ -33,6 +38,12 @@ test("Commands: executeFastCommand executes ping, dew, and task commands", async
 
   const vpsNonOwner = await executeFastCommand({ type: "hermes", instruction: "cek docker" }, { ...ctx, isOwner: false });
   assert.ok(vpsNonOwner.includes("khusus owner"));
+
+  const deployNonOwner = await executeFastCommand(parseFastCommand("#deploy"), { ...ctx, isOwner: false });
+  assert.ok(deployNonOwner.includes("khusus owner"));
+
+  const selfUpdateNonOwner = await executeFastCommand(parseFastCommand("#selfupdate tambah fitur"), { ...ctx, isOwner: false });
+  assert.ok(selfUpdateNonOwner.includes("khusus owner"));
 
   const vpsEmpty = await executeFastCommand({ type: "hermes", instruction: "" }, ctx);
   assert.ok(vpsEmpty.includes("Format Perintah Hermes VPS"));

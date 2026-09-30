@@ -35,6 +35,24 @@ services:
     networks:
       - bot-net
 
+  hermes-tunnel:
+    build: ./tunnel
+    container_name: john-mustard-hermes-tunnel
+    restart: unless-stopped
+    environment:
+      - SSH_HOST=${HERMES_SSH_HOST:-168.110.213.231}
+      - SSH_USER=${HERMES_SSH_USER:-ubuntu}
+      - SSH_KEY_PATH=/key/ssh-key-2026-08-26.key
+      - LOCAL_PORT=8642
+      - REMOTE_HOST=127.0.0.1
+      - REMOTE_PORT=8642
+    volumes:
+      - ./key-oracle:/key:ro
+    ports:
+      - "127.0.0.1:8642:8642"
+    networks:
+      - bot-net
+
   bot:
     build: .
     container_name: john-mustard-bot
@@ -43,6 +61,9 @@ services:
       - waha
       - runner
       - 9router
+      - hermes-tunnel
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "4500:4500"
     environment:
@@ -52,7 +73,7 @@ services:
       - DB_PATH=/app/data/bot.db
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - PYTHON_RUNNER_URL=http://runner:8000/run
-      - HERMES_API_URL=${HERMES_API_URL}
+      - HERMES_API_URL=${HERMES_API_URL:-http://hermes-tunnel:8642/v1}
       - HERMES_API_KEY=${HERMES_API_KEY}
       - HERMES_TIMEOUT_MS=${HERMES_TIMEOUT_MS:-120000}
       - NINEROUTER_URL=${NINEROUTER_URL:-http://john-mustard-9router:20128}
