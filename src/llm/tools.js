@@ -106,6 +106,17 @@ export const TOOLS = [
         }
       },
       {
+        name: "uncompleteTodo",
+        description: "Batalkan status selesai pada tugas SPESIFIK di To-Do List (ubah kembali jadi belum selesai/belum beres). Pakai ini kalau pengguna menyebut nomor atau nama tugas yang sudah selesai.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            todoId: { type: "NUMBER", description: "Nomor urut visual atau ID tugas yang sudah selesai dan mau dibatalkan selesai" },
+            taskQuery: { type: "STRING", description: "Kata kunci nama tugas yang sudah selesai, jika nomor tidak disebutkan" }
+          }
+        }
+      },
+      {
         name: "updateTodo",
         description: "Ubah atau koreksi judul tugas, deadline, tag, atau deskripsi di To-Do List",
         parameters: {
@@ -799,6 +810,29 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const remaining = store.getTodos(queryChatId, false);
     formattedList = formatTodoList(remaining, isGroup);
     toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
+  } else if (name === "uncompleteTodo") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    let targetId = args.todoId;
+    if (!targetId && args.taskQuery) {
+      const found = store.findCompletedTodo ? store.findCompletedTodo(queryChatId, args.taskQuery) : null;
+      if (found) targetId = found.id;
+    }
+    if (!targetId) {
+      toolResult = { error: "Tugas yang sudah selesai tidak ditemukan untuk dibatalkan." };
+    } else {
+      const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
+      const changes = store.uncompleteTodo(targetId, queryChatId, { rawId: useRaw });
+      const remaining = store.getTodos(queryChatId, false);
+      formattedList = formatTodoList(remaining, isGroup);
+      toolResult = changes > 0
+        ? {
+            success: true,
+            todoId: targetId,
+            formattedList,
+            instruction: "WAJIB gunakan persis teks di field 'formattedList' bila menampilkan daftar. Konfirmasikan singkat bahwa tugas kembali berstatus belum selesai."
+          }
+        : { error: "Tugas tidak ditemukan atau statusnya belum ditandai selesai." };
+    }
   } else if (name === "undoLastTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const restoredDel = store.restoreLastDeleted ? store.restoreLastDeleted(queryChatId) : null;

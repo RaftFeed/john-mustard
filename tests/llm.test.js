@@ -669,6 +669,57 @@ test("LLM Engine: batch '1-4 done' marks the first four tasks, not alternate one
   }
 });
 
+test("LLM Tools: uncompleteTodo reverts a finished task by number and by name", async () => {
+  const store = new Storage(":memory:");
+  const t1 = store.addTodo("user1", "T1");
+  const t2 = store.addTodo("user1", "T2");
+  store.addTodo("user1", "T3");
+  store.completeTodo(t1, "user1", { rawId: true });
+  store.completeTodo(t2, "user1", { rawId: true });
+
+  // Daftar yang menyertakan tugas selesai: [T3, T1, T2] -> nomor 2 = T1
+  const byIndex = await executeTool("uncompleteTodo", { todoId: 2 }, { store, chatId: "user1" });
+  assert.strictEqual(byIndex.toolResult.success, true);
+  assert.ok(store.getTodos("user1").some((t) => t.id === t1));
+
+  const byQuery = await executeTool("uncompleteTodo", { taskQuery: "T2" }, { store, chatId: "user1" });
+  assert.strictEqual(byQuery.toolResult.success, true);
+  assert.ok(store.getTodos("user1").some((t) => t.id === t2));
+
+  const notDone = await executeTool("uncompleteTodo", { taskQuery: "T3" }, { store, chatId: "user1" });
+  assert.ok(notDone.toolResult.error);
+});
+
+test("LLM Engine: uncompleteTodo resolves against the completed list", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      candidates: [{ content: { parts: [{ functionCall: { name: "uncompleteTodo", args: { todoId: 2 } } }] } }]
+    })
+  });
+
+  try {
+    const store = new Storage(":memory:");
+    const t1 = store.addTodo("user1", "T1");
+    const t2 = store.addTodo("user1", "T2");
+    store.addTodo("user1", "T3");
+    store.completeTodo(t1, "user1", { rawId: true });
+    store.completeTodo(t2, "user1", { rawId: true });
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "batalin tugas 2", { store, chatId: "user1", senderNumber: "user1" });
+
+    assert.ok(store.getTodos("user1").some((t) => t.id === t1), "T1 must be pending again");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LLM Engine: injects quoted message context anchor when user replies to bot or contact", async () => {
   const { processChat } = await import("../src/llm.js");
   const { Storage } = await import("../src/db.js");

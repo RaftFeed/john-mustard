@@ -13,6 +13,8 @@ const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Pengingat\]|\[Jadw
 // Tool yang menerima nomor urut visual; dipakai untuk pra-resolve per batch.
 const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId" };
 const REMINDER_INDEX_ARG_BY_TOOL = { deleteReminder: "reminderId", updateReminder: "reminderId" };
+// Nomor urut untuk batal-selesai diresolusi terhadap daftar yang menyertakan tugas selesai.
+const UNCOMPLETE_INDEX_ARG_BY_TOOL = { uncompleteTodo: "todoId" };
 
 export function isInternalThoughtText(text) {
   if (!text || typeof text !== "string") return false;
@@ -489,11 +491,15 @@ ${isBotQuoted
       const queryChatId = isGroupChat ? chatId : (senderNumber || chatId);
       const todoNums = [];
       const remNums = [];
+      const uncompleteNums = [];
       execArgsList.forEach((args, idx) => {
-        const tArg = TODO_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+        const name = fnCallParts[idx].functionCall.name;
+        const tArg = TODO_INDEX_ARG_BY_TOOL[name];
         if (tArg && isNumeric(args[tArg])) todoNums.push(Number(args[tArg]));
-        const rArg = REMINDER_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+        const rArg = REMINDER_INDEX_ARG_BY_TOOL[name];
         if (rArg && isNumeric(args[rArg])) remNums.push(Number(args[rArg]));
+        const uArg = UNCOMPLETE_INDEX_ARG_BY_TOOL[name];
+        if (uArg && isNumeric(args[uArg])) uncompleteNums.push(Number(args[uArg]));
       });
       if (todoNums.length > 0) {
         const resolved = store.resolveTodoIndexes(todoNums, queryChatId);
@@ -501,6 +507,15 @@ ${isBotQuoted
         execArgsList.forEach((args, idx) => {
           const tArg = TODO_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
           if (tArg && isNumeric(args[tArg])) args[tArg] = resolved[i++];
+        });
+        preResolvedIndexes = true;
+      }
+      if (uncompleteNums.length > 0 && typeof store.resolveCompletedTodoIndexes === "function") {
+        const resolved = store.resolveCompletedTodoIndexes(uncompleteNums, queryChatId);
+        let i = 0;
+        execArgsList.forEach((args, idx) => {
+          const uArg = UNCOMPLETE_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
+          if (uArg && isNumeric(args[uArg])) args[uArg] = resolved[i++];
         });
         preResolvedIndexes = true;
       }
@@ -575,7 +590,7 @@ ${isBotQuoted
 
     // Single-turn tool mutation short-circuit: potong latensi 50% untuk mutasi data murni
     const isPureMutation = fnCallParts.every((p) =>
-      ["completeTodo", "deleteTodo", "deleteReminder", "updateReminder", "updateTodo", "addTodo", "addReminder"].includes(p.functionCall.name)
+      ["completeTodo", "uncompleteTodo", "deleteTodo", "deleteReminder", "updateReminder", "updateTodo", "addTodo", "addReminder"].includes(p.functionCall.name)
     );
     const allSucceeded = successfulMutations.length >= fnCallParts.length;
     const isPureAction = isActionIntent(userText) && !userText.includes("?") && !/\b(kenapa|gimana|bagaimana|apakah|menurut|saran|rekomendasi)\b/i.test(userText);

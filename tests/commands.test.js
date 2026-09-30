@@ -192,4 +192,26 @@ test("Commands: deleteMultiple removes exactly the requested visual numbers (one
   assert.deepStrictEqual(remaining.map((t) => t.id), before.slice(4).map((t) => t.id));
 });
 
+test("Commands: parseFastCommand parses uncomplete variants", () => {
+  assert.strictEqual(parseFastCommand("#unfinish 2").type, "uncomplete");
+  assert.strictEqual(parseFastCommand("#unfinish 2").id, 2);
+  assert.strictEqual(parseFastCommand("#undone 5").id, 5);
+  assert.strictEqual(parseFastCommand("batalin tugas 3").type, "uncomplete");
+  assert.strictEqual(parseFastCommand("batalin tugas 3").id, 3);
+  assert.strictEqual(parseFastCommand("3 belum selesai").type, "uncomplete");
+  assert.strictEqual(parseFastCommand("unfinish 4").id, 4);
+});
+
+test("Commands: executeFastCommand uncomplete reverts a finished task", async () => {
+  const store = new Storage(":memory:");
+  const ctx = { store, chatId: "user1", isOwner: true, senderNumber: "user1", senderName: "Tester" };
+  const id = store.addTodo("user1", "Ngerjain laporan");
+  store.completeTodo(id, "user1", { rawId: true });
+  assert.strictEqual(store.getTodos("user1").length, 0);
+
+  const res = await executeFastCommand({ type: "uncomplete", id: 1 }, ctx);
+  assert.ok(res.includes("belum selesai"));
+  assert.strictEqual(store.getTodos("user1").length, 1);
+});
+
 

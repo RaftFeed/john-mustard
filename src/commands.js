@@ -105,6 +105,15 @@ export function parseFastCommand(text = "") {
     return { type: "done", id: parseInt(naturalDone[1], 10), target: "auto" };
   }
 
+  // Natural Uncomplete (batalin tugas 3, unfinish 3, 3 belum selesai, etc.)
+  const naturalUncomplete =
+    trimmed.match(/^(?:batal(?:in|kan)?|cancel|unfinish|undo)\s+(?:selesai(?:nya)?\s+)?(?:tugas|todo|to-?do|no(?:mor)?)?\s*(\d+)$/i) ||
+    trimmed.match(/^(?:belum\s+selesai|unfinish|batal(?:in|kan)?|cancel)\s+(?:tugas|todo|to-?do)\s+(?:no(?:mor)?\s*)?(\d+)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?(\d+)\s+(?:belum\s+selesai|batal(?:in|kan)?|unfinish|jadi\s+pending|balikin(?:\s+jadi\s+pending)?)$/i);
+  if (naturalUncomplete) {
+    return { type: "uncomplete", id: parseInt(naturalUncomplete[1], 10) };
+  }
+
   const naturalDel =
     trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
     trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i);
@@ -161,6 +170,11 @@ export function parseFastCommand(text = "") {
   const doneMatch = trimmed.match(/^#done\s+(\d+)$/i);
   if (doneMatch) {
     return { type: "done", id: parseInt(doneMatch[1], 10), target: "auto" };
+  }
+
+  const unDoneMatch = trimmed.match(/^#(?:undone|unfinish|uncomplete)\s+(\d+)$/i);
+  if (unDoneMatch) {
+    return { type: "uncomplete", id: parseInt(unDoneMatch[1], 10) };
   }
 
   if (/^#undo\b/i.test(trimmed)) {
@@ -436,11 +450,19 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       if (scope === "todo") {
         const changed = store.completeTodo(cmd.id, chatId);
         if (changed > 0) {
-          return `[OK] Tugas #${cmd.id} selesai. (Ketik #undo kalau mau batalin)`;
+          return `[OK] Tugas #${cmd.id} selesai. (Ketik #undo atau "batalin tugas ${cmd.id}" kalau mau batalin)`;
         }
         return `[!] Tugas #${cmd.id} gak ketemu atau udah selesai.`;
       }
       return `Mau tandai selesai nomor #${cmd.id} untuk Tugas atau Acara? Ketik "#done ${cmd.id}" atau "acara ${cmd.id} selesai".`;
+    }
+
+    case "uncomplete": {
+      const changed = store.uncompleteTodo ? store.uncompleteTodo(cmd.id, chatId) : 0;
+      if (changed > 0) {
+        return `[OK] Tugas #${cmd.id} dibalikin jadi belum selesai.`;
+      }
+      return `[!] Tugas #${cmd.id} gak ketemu atau statusnya belum ditandai selesai.`;
     }
 
     case "undo": {
@@ -880,6 +902,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #add <tugas> — Tambah tugas (opsi: dl:YYYY-MM-DD #tag)
 - #update <id> <pesan> — Edit tugas (misal: #update 1 Pitching gameseed dl:2026-09-27)
 - #done <id> — Tandai tugas selesai
+- #unfinish <id> — Batalkan status selesai tugas (jadi pending lagi)
 - #undo — Batalkan #done terakhir
 - #del <id> — Hapus tugas (misal: #del 1)
 

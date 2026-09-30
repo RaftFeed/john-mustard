@@ -797,6 +797,15 @@ export class Storage {
     return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
   }
 
+  // Sama seperti resolveTodoIndexes, tapi snapshot-nya menyertakan tugas yang sudah selesai
+  // (dipakai untuk membatalkan status selesai berdasarkan nomor urut / ID).
+  resolveCompletedTodoIndexes(indexes, chatId) {
+    const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
+    if (!chatId) return nums;
+    const snapshot = this.getTodos(chatId, true, null, true);
+    return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
+  }
+
   getTodoById(id, chatId) {
     return this.getTodoByRealId(this.resolveTodoId(id, chatId), chatId);
   }
@@ -1059,6 +1068,38 @@ export class Storage {
     return changes;
   }
 
+  uncompleteTodo(id, chatId, { rawId = false } = {}) {
+    let realId = null;
+    if (rawId) {
+      realId = parseInt(id, 10);
+    } else {
+      const resolved = this.resolveCompletedTodoIndexes([id], chatId);
+      realId = resolved && resolved.length ? resolved[0] : parseInt(id, 10);
+    }
+    if (!realId) return 0;
+    const scope = getUserTodoScope(chatId, this);
+    let changes = 0;
+    if (scope.isGroup) {
+      changes = this.db.prepare("UPDATE todos SET done = 0 WHERE id = ?").run(realId).changes;
+    } else {
+      const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+      const namePlaceholders = scope.names.map(() => "?").join(", ");
+      let cond = `chat_id IN (${cidPlaceholders})`;
+      if (scope.names.length > 0) {
+        cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+      }
+      if (isOwner(chatId)) {
+        changes = this.db.prepare("UPDATE todos SET done = 0 WHERE id = ?").run(realId).changes;
+      } else {
+        changes = this.db.prepare(`UPDATE todos SET done = 0 WHERE id = ? AND (${cond})`).run(realId, ...scope.chatIds, ...scope.names).changes;
+      }
+    }
+    if (changes > 0 && this.lastDoneByChat.get(chatId) === realId) {
+      this.lastDoneByChat.delete(chatId);
+    }
+    return changes;
+  }
+
   undoLastDone(chatId) {
     let lastId = this.lastDoneByChat.get(chatId);
     if (!lastId) {
@@ -1099,6 +1140,25 @@ export class Storage {
     }
     return this.db
       .prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 0 AND deleted_at IS NULL AND task LIKE ? ORDER BY id DESC LIMIT 1`)
+      .get(...scope.chatIds, ...scope.names, `%${query}%`);
+  }
+
+  // Cari tugas yang SUDAH selesai berdasarkan kata kunci nama (untuk batal selesai).
+  findCompletedTodo(chatId, query) {
+    const scope = getUserTodoScope(chatId, this);
+    if (scope.isGroup) {
+      return this.db
+        .prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 1 AND deleted_at IS NULL AND task LIKE ? ORDER BY id DESC LIMIT 1")
+        .get(chatId, `%${query}%`);
+    }
+    const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+    const namePlaceholders = scope.names.map(() => "?").join(", ");
+    let cond = `chat_id IN (${cidPlaceholders})`;
+    if (scope.names.length > 0) {
+      cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+    }
+    return this.db
+      .prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 1 AND deleted_at IS NULL AND task LIKE ? ORDER BY id DESC LIMIT 1`)
       .get(...scope.chatIds, ...scope.names, `%${query}%`);
   }
 
