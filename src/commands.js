@@ -402,6 +402,15 @@ export function resolveItemScope(target = "auto", { store, chatId, quoted } = {}
 export async function executeFastCommand(cmd, { store, chatId, isOwner = false, senderName = "", senderNumber = "", quoted = null } = {}) {
   if (!cmd) return null;
 
+  // Catat urutan list terakhir yang ditampilkan supaya nomor urut yang dirujuk user
+  // selalu merujuk ke item yang mereka lihat.
+  const rememberTodos = (list) => {
+    if (store && store.rememberTodoList && Array.isArray(list)) store.rememberTodoList(chatId, list);
+  };
+  const rememberRems = (list) => {
+    if (store && store.rememberReminderList && Array.isArray(list)) store.rememberReminderList(chatId, list);
+  };
+
   switch (cmd.type) {
     case "ping": {
       const uptime = formatUptime(process.uptime());
@@ -417,6 +426,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "listTodos": {
       const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodos(chatId, false);
+      rememberTodos(todos);
       return formatTodoList(todos, isGroup);
     }
 
@@ -424,6 +434,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodosDue(chatId, 0);
       if (todos.length === 0) return "*[Tugas Hari Ini]*\nGak ada tugas dengan deadline hari ini. Aman.";
+      rememberTodos(todos);
       return formatTodoList(todos, isGroup);
     }
 
@@ -431,6 +442,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       const isGroup = String(chatId).endsWith("@g.us");
       const todos = store.getTodosDue(chatId, 7);
       if (todos.length === 0) return "*[Tugas 7 Hari Ke Depan]*\nGak ada tugas dalam 7 hari ke depan. Santai.";
+      rememberTodos(todos);
       return formatTodoList(todos, isGroup);
     }
 
@@ -441,6 +453,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
           const remChanged = store.deleteReminder(chatId, cmd.id);
           if (remChanged > 0) {
             const remaining = store.listReminders ? store.listReminders(chatId) : [];
+            rememberRems(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
             return `[OK] Acara/pengingat #${cmd.id} selesai & dihapus dari agenda.${formatted}`;
           }
@@ -450,6 +463,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       if (scope === "todo") {
         const changed = store.completeTodo(cmd.id, chatId);
         if (changed > 0) {
+          rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
           return `[OK] Tugas #${cmd.id} selesai. (Ketik #undo atau "batalin tugas ${cmd.id}" kalau mau batalin)`;
         }
         return `[!] Tugas #${cmd.id} gak ketemu atau udah selesai.`;
@@ -460,6 +474,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "uncomplete": {
       const changed = store.uncompleteTodo ? store.uncompleteTodo(cmd.id, chatId) : 0;
       if (changed > 0) {
+        rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
         return `[OK] Tugas #${cmd.id} dibalikin jadi belum selesai.`;
       }
       return `[!] Tugas #${cmd.id} gak ketemu atau statusnya belum ditandai selesai.`;
@@ -472,10 +487,12 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         if (restoredDel) {
           if (restoredDel.type === "todo") {
             const remaining = store.getTodos ? store.getTodos(chatId, false) : [];
+            rememberTodos(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
             return `[OK] Tugas #${restoredDel.item.id} ("${restoredDel.item.task}") berhasil dipulihkan.${formatted}`;
           } else if (restoredDel.type === "reminder") {
             const remaining = store.listReminders ? store.listReminders(chatId) : [];
+            rememberRems(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
             return `[OK] Acara/pengingat #${restoredDel.item.id} ("${restoredDel.item.message}") berhasil dipulihkan.${formatted}`;
           }
@@ -483,6 +500,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       }
       const restored = store.undoLastDone(chatId);
       if (restored) {
+        rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
         return `[OK] Tugas #${restored.id} ("${restored.task}") dibalikin jadi pending.`;
       }
       return "[!] Gak ada riwayat tugas atau pengingat yang baru dihapus/ditandai selesai.";
@@ -496,6 +514,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
           const remChanged = store.deleteReminder(chatId, cmd.id);
           if (remChanged > 0) {
             const remaining = store.listReminders ? store.listReminders(chatId) : [];
+            rememberRems(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
             return `[OK] Acara/pengingat #${cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
           }
@@ -506,6 +525,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         const changed = store.deleteTodo(cmd.id, chatId);
         if (changed > 0) {
           const remaining = store.getTodos ? store.getTodos(chatId) : [];
+          rememberTodos(remaining);
           const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
           return `[OK] Tugas #${cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
         }
@@ -546,9 +566,11 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       let reply = `[OK] Berhasil menghapus ${totalDeleted} item (Ketik #undo untuk memulihkan).`;
       if (deletedTodos.length > 0) {
         const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        rememberTodos(remaining);
         reply += `\n\n${formatTodoList(remaining, isGroup)}`;
       } else if (deletedRems.length > 0) {
         const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        rememberRems(remaining);
         reply += `\n\n${formatRemindersList(remaining)}`;
       }
       return reply;
@@ -562,6 +584,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         const todoId = store.addTodo(chatId, rem.message, rem.event_at || rem.remind_at, rem.task_type || null, null, "");
         if (store.deleteReminder) store.deleteReminder(chatId, targetRemId);
         const remainingTodos = store.getTodos ? store.getTodos(chatId) : [];
+        rememberTodos(remainingTodos);
         const formatted = remainingTodos.length > 0 ? `\n\n${formatTodoList(remainingTodos, isGroup)}` : "";
         return `[OK] Berhasil dipindahkan ke daftar tugas (Tugas #${todoId}: "${rem.message}").${formatted}`;
       }
@@ -575,6 +598,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         const remId = store.addReminder(chatId, todo.task, remindAt, null, "reminder", remindAt);
         store.deleteTodo(cmd.id, chatId);
         const remainingRems = store.listReminders ? store.listReminders(chatId) : [];
+        rememberRems(remainingRems);
         const formatted = remainingRems.length > 0 ? `\n\n${formatRemindersList(remainingRems)}` : "";
         return `[OK] Berhasil dipindahkan ke agenda/acara (Acara #${remId}: "${todo.task}").${formatted}`;
       }
@@ -588,6 +612,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         const newMsg = rem.message.replace(new RegExp(cmd.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), cmd.replace);
         store.updateReminder(chatId, targetRemId, { message: newMsg });
         const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        rememberRems(remaining);
         return `[OK] Acara #${cmd.id} diubah jadi: "${newMsg}"\n\n${formatRemindersList(remaining)}`;
       }
       const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
@@ -596,6 +621,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         store.updateTodo(cmd.id, chatId, { task: newTask });
         const isGroup = String(chatId).endsWith("@g.us");
         const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        rememberTodos(remaining);
         return `[OK] Tugas #${cmd.id} diubah jadi: "${newTask}"\n\n${formatTodoList(remaining, isGroup)}`;
       }
       return `[!] Item #${cmd.id} gak ketemu.`;
@@ -607,6 +633,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       if (rem && store.updateReminder) {
         store.updateReminder(chatId, targetRemId, { message: cmd.newTitle });
         const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        rememberRems(remaining);
         return `[OK] Acara #${cmd.id} diubah jadi: "${cmd.newTitle}"\n\n${formatRemindersList(remaining)}`;
       }
       const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
@@ -614,6 +641,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         store.updateTodo(cmd.id, chatId, { task: cmd.newTitle });
         const isGroup = String(chatId).endsWith("@g.us");
         const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        rememberTodos(remaining);
         return `[OK] Tugas #${cmd.id} diubah jadi: "${cmd.newTitle}"\n\n${formatTodoList(remaining, isGroup)}`;
       }
       return `[!] Item #${cmd.id} gak ketemu.`;
@@ -630,6 +658,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         const updatedUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours - 7, minutes, 0);
         store.updateReminder(chatId, targetRemId, { remindAt: updatedUtc, eventAt: updatedUtc });
         const remaining = store.listReminders ? store.listReminders(chatId) : [];
+        rememberRems(remaining);
         return `[OK] Jam acara #${cmd.id} diubah jadi ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} WIB.\n\n${formatRemindersList(remaining)}`;
       }
       const todo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
@@ -641,6 +670,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         store.updateTodo(cmd.id, chatId, { deadline: updatedUtc });
         const isGroup = String(chatId).endsWith("@g.us");
         const remaining = store.getTodos ? store.getTodos(chatId) : [];
+        rememberTodos(remaining);
         return `[OK] Deadline tugas #${cmd.id} diubah jadi ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} WIB.\n\n${formatTodoList(remaining, isGroup)}`;
       }
       return `[!] Item #${cmd.id} gak ketemu.`;
@@ -733,6 +763,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
 
     case "reminders": {
       const list = store.listReminders ? store.listReminders(chatId) : [];
+      rememberRems(list);
       return formatRemindersList(list);
     }
 

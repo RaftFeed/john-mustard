@@ -214,4 +214,19 @@ test("Commands: executeFastCommand uncomplete reverts a finished task", async ()
   assert.strictEqual(store.getTodos("user1").length, 1);
 });
 
+test("Commands: viewing the to-do list anchors numbering (routine hidden)", async () => {
+  const store = new Storage(":memory:");
+  const ctx = { store, chatId: "user1", isOwner: true, senderNumber: "user1", senderName: "Tester" };
+  store.addTodo("user1", "Absen kuliah", null, null, "routine");
+  store.addTodo("user1", "Beli susu");
+  const b = store.addTodo("user1", "Bayar listrik");
+
+  const shown = await executeFastCommand({ type: "listTodos" }, ctx);
+  assert.ok(shown.includes("Beli susu"));
+  assert.ok(!shown.includes("Absen kuliah"));
+
+  // Nomor urut merujuk ke list yang ditampilkan (#2 = Bayar listrik), bukan tugas rutin.
+  assert.strictEqual(store.resolveTodoId(2, "user1"), b);
+});
+
 

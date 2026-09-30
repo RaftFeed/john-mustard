@@ -758,6 +758,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   } else if (name === "listTodos") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodos(queryChatId, Boolean(args.includeRoutine), args.assignee || null, Boolean(args.includeDone), args.targetDateIso);
+    if (store.rememberTodoList) store.rememberTodoList(queryChatId, todos);
     formattedList = formatTodoList(todos, isGroup, { targetDate: args.targetDateIso });
     toolResult = {
       count: todos.length,
@@ -797,6 +798,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const days = args.daysAhead !== undefined ? Number(args.daysAhead) : 0;
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const todos = store.getTodosDue(queryChatId, days, args.assignee || null);
+    if (store.rememberTodoList) store.rememberTodoList(queryChatId, todos);
     formattedList = formatTodoList(todos, isGroup);
     toolResult = {
       count: todos.length,
@@ -808,6 +810,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const changes = store.completeTodo(args.todoId, queryChatId, { rawId: preResolvedIndexes });
     const remaining = store.getTodos(queryChatId, false);
+    if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
     formattedList = formatTodoList(remaining, isGroup);
     toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
   } else if (name === "uncompleteTodo") {
@@ -823,6 +826,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
       const changes = store.uncompleteTodo(targetId, queryChatId, { rawId: useRaw });
       const remaining = store.getTodos(queryChatId, false);
+      if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
       formattedList = formatTodoList(remaining, isGroup);
       toolResult = changes > 0
         ? {
@@ -839,6 +843,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (restoredDel) {
       if (restoredDel.type === "todo") {
         const remaining = store.getTodos(queryChatId, false);
+        if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
         formattedList = formatTodoList(remaining, isGroup);
         toolResult = {
           success: true,
@@ -849,6 +854,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         };
       } else {
         const remaining = store.listReminders(queryChatId);
+        if (store.rememberReminderList) store.rememberReminderList(queryChatId, remaining);
         formattedList = formatRemindersList(remaining);
         toolResult = {
           success: true,
@@ -863,6 +869,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       if (!undone) {
         toolResult = { error: "Tidak ada tugas selesai atau terhapus yang bisa dibatalkan (undo)." };
       } else {
+        const remaining = store.getTodos(queryChatId, false);
+        if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
         toolResult = {
           success: true,
           undoneTodo: undone,
@@ -933,6 +941,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
         const changes = store.deleteTodo(targetTodo.id, queryChatId, { rawId: true });
         const remaining = store.getTodos(queryChatId, false);
+        if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
         formattedList = formatTodoList(remaining, isGroup);
         toolResult = {
           success: changes > 0,
@@ -1001,6 +1010,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   } else if (name === "listReminders") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     const reminders = store.listReminders(queryChatId, args.targetDateIso);
+    if (store.rememberReminderList) store.rememberReminderList(queryChatId, reminders);
     formattedList = formatRemindersList(reminders, { targetDate: args.targetDateIso });
     toolResult = {
       success: true,
@@ -1050,6 +1060,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
         const changes = store.deleteReminder(queryChatId, target, { rawId: preResolvedIndexes && targetIsNumeric });
         const remaining = store.listReminders(queryChatId);
+        if (store.rememberReminderList) store.rememberReminderList(queryChatId, remaining);
         formattedList = formatRemindersList(remaining);
         toolResult = {
           success: changes > 0,
@@ -1080,6 +1091,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         toolResult = { error: `Agenda/pengingat '${target}' tidak ditemukan.` };
       } else {
         const remaining = store.listReminders(queryChatId);
+        if (store.rememberReminderList) store.rememberReminderList(queryChatId, remaining);
         formattedList = formatRemindersList(remaining);
         toolResult = {
           success: true,

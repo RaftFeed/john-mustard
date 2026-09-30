@@ -631,6 +631,20 @@ test("Storage: resolveTodoIndexes pins batch numbers to a single snapshot", () =
   );
 });
 
+test("Storage: visual numbers follow the last displayed list (routine tasks hidden)", () => {
+  const store = new Storage(":memory:");
+  store.addTodo("u1", "Absen kuliah", null, null, "routine");
+  const a = store.addTodo("u1", "Beli susu");
+  const b = store.addTodo("u1", "Bayar listrik");
+
+  const displayed = store.getTodos("u1", false); // default: sembunyikan rutin
+  assert.deepStrictEqual(displayed.map((t) => t.id), [a, b]);
+  store.rememberTodoList("u1", displayed);
+
+  // Nomor 2 harus menunjuk ke item ke-2 yang DITAMPILKAN (b), bukan item rutin/a.
+  assert.strictEqual(store.resolveTodoId(2, "u1"), b);
+});
+
 test("LLM Engine: batch '1-4 done' marks the first four tasks, not alternate ones", async () => {
   const { processChat } = await import("../src/llm.js");
   const { Storage } = await import("../src/db.js");

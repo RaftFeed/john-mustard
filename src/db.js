@@ -160,6 +160,10 @@ export class Storage {
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
     this.lastDoneByChat = new Map();
+    // Urutan id list terakhir yang ditampilkan per chat, dipakai supaya nomor urut
+    // yang dirujuk user selalu cocok dengan list yang mereka lihat.
+    this.lastTodoOrderByChat = new Map();
+    this.lastReminderOrderByChat = new Map();
     this.lastDeletedByChat = new Map();
     this.pendingDeletions = new Map();
     this.init();
@@ -587,7 +591,7 @@ export class Storage {
     const num = parseInt(idOrIndex, 10);
     if (isNaN(num)) return null;
     if (!chatId) return num;
-    return this.resolveReminderIdFromSnapshot(num, this.listReminders(chatId));
+    return this.resolveReminderIdFromSnapshot(num, this.getReminderIndexSnapshot(chatId));
   }
 
   resolveReminderIdFromSnapshot(num, list) {
@@ -608,7 +612,7 @@ export class Storage {
   resolveReminderIndexes(indexes, chatId) {
     const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
     if (!chatId) return nums;
-    const snapshot = this.listReminders(chatId);
+    const snapshot = this.getReminderIndexSnapshot(chatId);
     return nums.map((num) => this.resolveReminderIdFromSnapshot(num, snapshot));
   }
 
@@ -761,6 +765,40 @@ export class Storage {
     return this.db.prepare(sql).all(...params);
   }
 
+  rememberTodoList(chatId, todos) {
+    if (!chatId || !Array.isArray(todos)) return;
+    this.lastTodoOrderByChat.set(chatId, todos.map((t) => t.id));
+  }
+
+  rememberReminderList(chatId, reminders) {
+    if (!chatId || !Array.isArray(reminders)) return;
+    this.lastReminderOrderByChat.set(chatId, reminders.map((r) => r.id));
+  }
+
+  // Snapshot nomor urut to-do: pakai urutan list terakhir yang ditampilkan ke user;
+  // fallback ke semua tugas (termasuk rutin) kalau belum ada list yang ditampilkan.
+  getTodoIndexSnapshot(chatId) {
+    const anchored = this.lastTodoOrderByChat.get(chatId);
+    if (anchored && anchored.length > 0) {
+      const rows = anchored
+        .map((id) => this.db.prepare("SELECT id, task, deadline, tag, category, assignee, done FROM todos WHERE id = ? AND deleted_at IS NULL").get(id))
+        .filter(Boolean);
+      if (rows.length > 0) return rows;
+    }
+    return this.getTodos(chatId, true);
+  }
+
+  getReminderIndexSnapshot(chatId) {
+    const anchored = this.lastReminderOrderByChat.get(chatId);
+    if (anchored && anchored.length > 0) {
+      const rows = anchored
+        .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
+        .filter(Boolean);
+      if (rows.length > 0) return rows;
+    }
+    return this.listReminders(chatId);
+  }
+
   resolveTodoId(idOrIndex, chatId) {
     const num = parseInt(idOrIndex, 10);
     if (isNaN(num)) return null;
@@ -769,7 +807,7 @@ export class Storage {
       return num;
     }
 
-    return this.resolveTodoIdFromSnapshot(num, this.getTodos(chatId, true));
+    return this.resolveTodoIdFromSnapshot(num, this.getTodoIndexSnapshot(chatId));
   }
 
   resolveTodoIdFromSnapshot(num, snapshot) {
@@ -793,16 +831,19 @@ export class Storage {
   resolveTodoIndexes(indexes, chatId) {
     const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
     if (!chatId) return nums;
-    const snapshot = this.getTodos(chatId, true);
+    const snapshot = this.getTodoIndexSnapshot(chatId);
     return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
   }
 
-  // Sama seperti resolveTodoIndexes, tapi snapshot-nya menyertakan tugas yang sudah selesai
+  // Sama seperti resolveTodoIndexes, tapi cocokkan ke list yang menyertakan tugas selesai
   // (dipakai untuk membatalkan status selesai berdasarkan nomor urut / ID).
   resolveCompletedTodoIndexes(indexes, chatId) {
     const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
     if (!chatId) return nums;
-    const snapshot = this.getTodos(chatId, true, null, true);
+    let snapshot = this.getTodoIndexSnapshot(chatId);
+    if (!snapshot.some((t) => Number(t.done) === 1)) {
+      snapshot = this.getTodos(chatId, true, null, true);
+    }
     return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
   }
 
