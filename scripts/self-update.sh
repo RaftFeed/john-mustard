@@ -60,6 +60,17 @@ cmd_notify() {
     -d "$payload" >/dev/null 2>&1 || true
 }
 
+# Push a commit to GitHub. Best-effort: without a deploy key / credential on the VPS
+# this just logs a warning and the commit stays local (never blocks a deploy).
+push_origin() {
+  local ref="${1:-HEAD}"
+  if GIT_TERMINAL_PROMPT=0 git -c credential.helper= push --quiet origin "${ref}:main" >>"$LOG" 2>&1; then
+    log "pushed ${ref} -> origin/main"
+  else
+    log "warn: push gagal (credential belum diset) - commit ${ref} tetap lokal di VPS"
+  fi
+}
+
 cmd_status() {
   echo "=== Self-Update Status ==="
   if [ -f "$STATUS_FILE" ]; then cat "$STATUS_FILE"; else echo "(belum ada status)"; fi
@@ -84,17 +95,44 @@ cmd_deploy() {
     return 4
   fi
 
-  # 2) Nothing to deploy?
+  # 2) Pull from GitHub first. Fast-forward only, and never while a self-update edit
+  #    is pending (uncommitted work must never be discarded).
+  local prev
+  prev="$(git rev-parse HEAD)"
   if [ -z "$(git status --porcelain)" ]; then
-    echo "Tidak ada perubahan untuk di-deploy."
-    log "no-op: working tree clean"
+    if git -c credential.helper= fetch --quiet origin 2>/dev/null; then
+      if ! git merge --ff-only --quiet origin/main 2>/dev/null; then
+        echo "ABORT: origin/main divergen dari VPS. Merge manual dulu."
+        log "ABORT: origin/main diverged from VPS, manual merge needed"
+        return 6
+      fi
+    else
+      log "warn: git fetch gagal (offline?) - lanjut tanpa sync"
+    fi
+  else
+    log "pending self-update terdeteksi - auto-pull dilewati"
+  fi
+
+  # 3) Nothing pending?
+  if [ -z "$(git status --porcelain)" ]; then
+    if [ "$(git rev-parse HEAD)" != "$prev" ] && [ -n "$(git diff --name-only "$prev" HEAD | grep '^src/' || true)" ]; then
+      local pulled
+      pulled="$(git rev-parse HEAD)"
+      set_status "pending-restart $(ts) commit=${pulled:0:7} prev=${prev:0:7} (pulled)"
+      log "sync: pulled src/ changes -> schedule restart (${pulled:0:7})"
+      echo "Sync GitHub: ada perubahan src/. Bot restart dalam ${RESTART_DELAY}s."
+      setsid bash "$REPO_DIR/scripts/self-update-watch.sh" "$prev" "$pulled" "$RESTART_DELAY" "$HEALTH_TIMEOUT" \
+        >/dev/null 2>&1 < /dev/null &
+      return 0
+    fi
+    echo "Sudah sinkron dengan GitHub dan gak ada perubahan."
+    log "no-op: in sync, clean tree"
     set_status "no-op $(ts) head=$(git rev-parse --short HEAD)"
     return 0
   fi
 
-  # 3) Commit the proposed change (rollback anchor = previous HEAD)
-  local prev new stat
-  prev="$(git rev-parse HEAD)"
+  # 4) Commit the pending change (rollback anchor = previous HEAD)
+  local new stat
   git add -A
   stat="$(git diff --cached --stat | tail -1 | sed 's/^ *//')"
   git -c user.name='John Mustard Self-Update' -c user.email='selfupdate@john-mustard.local' \
@@ -102,7 +140,7 @@ cmd_deploy() {
   new="$(git rev-parse --short HEAD)"
   log "commit ${new} (prev ${prev:0:7}) :: ${stat}"
 
-  # 4) Test gate (node unit tests in a throwaway container; node is not on the host)
+  # 5) Test gate (node unit tests in a throwaway container; node is not on the host)
   echo "Menjalankan test gate (${TEST_IMAGE})..."
   if ! docker run --rm -v "$REPO_DIR":/app -w /app "$TEST_IMAGE" sh -c 'node --test tests/*.test.js' 2>&1 | tail -20; then
     log "TEST GAGAL -> rollback ke ${prev:0:7}"
@@ -113,16 +151,19 @@ cmd_deploy() {
   fi
   log "test lulus (${new})"
 
-  # 5) Only a change under src/ needs a container restart (src is bind-mounted;
+  # 6) Only a change under src/ needs a container restart (src is bind-mounted;
   #    system-prompt.md/config are re-read per request).
   if [ -z "$(git diff --name-only "$prev" "$new" | grep '^src/' || true)" ]; then
+    push_origin "$new"
     log "deploy OK (${new}) - no src/ change, restart dilewati"
     set_status "deployed-ok $(ts) commit=${new} (no-restart-needed)"
     echo "TEST LULUS. Gak ada perubahan di src/ - restart bot dilewati."
     return 0
   fi
 
-  # 6) Schedule detached restart + health check + auto-rollback
+  # 7) Schedule detached restart + health check + auto-rollback.
+  #    Push happens in the watcher, only after the health check passes, so
+  #    origin/main never contains a commit that failed to come up.
   set_status "pending-restart $(ts) commit=${new} prev=${prev:0:7}"
   echo "TEST LULUS. Bot restart dalam ${RESTART_DELAY}s (commit ${new})."
   echo "Cek hasil dengan: #deploy status"
@@ -135,5 +176,6 @@ case "${1:-status}" in
   status) cmd_status ;;
   deploy) cmd_deploy ;;
   notify) cmd_notify "${2:-}" ;;
-  *) echo "Usage: self-update.sh [status|deploy|notify <msg>]" ;;
+  push) push_origin "${2:-HEAD}" ;;
+  *) echo "Usage: self-update.sh [status|deploy|notify <msg>|push <ref>]" ;;
 esac

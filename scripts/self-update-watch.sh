@@ -36,6 +36,7 @@ done
 if [ "$ok" = "1" ]; then
   log "deploy OK (commit ${NEW})"
   printf 'deployed-ok %s commit=%s\n' "$(date -Is)" "$NEW" > "$STATUS_FILE"
+  bash "$REPO_DIR/scripts/self-update.sh" push "$NEW"
   notify "Self-update sukses. Commit ${NEW} live."
 else
   log "HEALTH GAGAL -> rollback ke ${PREV:0:7}"
