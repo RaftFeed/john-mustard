@@ -953,3 +953,33 @@ test("LLM Engine: extractCandidateText filters out thought parts and CoT leaks",
   };
   assert.strictEqual(extractCandidateText(candidateWithThoughtTag), "Server Minecraft online.");
 });
+
+test("LLM Engine: extractCandidateText drops leaked reasoning with tool-result dumps", () => {
+  const candidateWaitLeak = {
+    parts: [
+      {
+        text: "Wait, why did deleteTodo with todoId: 3 return result: \"\"?\nWait, what did the FIRST deleteTodo return?\nLet's re-read the first deleteTodo tool output carefully!\njson\n{\n  \"deletedId\": 24,\n  \"formattedList\": \"🌄 [To-Do List]\\n_Selamat pagi!_\\n\\n🔴 *[1] Quiz KKA*\",\n  \"remainingCount\": 2,\n  \"success\": true\n}\nAHA!\nLook at the first call:\ncall:default_api:deleteTodo{confirmed: true, taskQuery: \"Tugas ROA\"}\nThe response was:\ndeletedId: 24"
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateWaitLeak), "");
+
+  const candidateFingerprint = {
+    parts: [
+      {
+        text: "Hmm the response was empty.\n{\n  \"success\": true,\n  \"formattedList\": \"🌄 [To-Do List]\"\n}"
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateFingerprint), "");
+
+  // A genuine reply that merely follows a reasoning preamble must still be salvaged.
+  const candidateSalvage = {
+    parts: [
+      {
+        text: "Wait, I need to confirm first.\n\nAda 2 to-do yang terlewat, yakin mau dihapus?"
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateSalvage), "Ada 2 to-do yang terlewat, yakin mau dihapus?");
+});

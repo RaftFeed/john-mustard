@@ -1,16 +1,29 @@
+const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let me\b|Let'?s\b|Aha!?\b|Look at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s)/i;
+
+// Hard reasoning fingerprints: leaked tool-result dumps / raw tool-call notation.
+// These never appear in a genuine user-facing reply, so they are never salvageable.
+const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b)/i;
+
+// A real reply appended after a reasoning preamble (used to salvage mixed outputs).
+const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
+
 export function isInternalThoughtText(text) {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().replace(/^[\s#*_~`>]+/, "");
-  return /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here's|let's)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:)/i.test(t);
+  return THOUGHT_OPENER_REGEX.test(t) || THOUGHT_FINGERPRINT_REGEX.test(t);
 }
 
 export function stripThoughtBlocks(text) {
   if (!text || typeof text !== "string") return "";
-  let cleaned = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
+  const cleaned = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
 
   if (isInternalThoughtText(cleaned)) {
+    // Tool-result dumps / raw tool-call notation: drop entirely, never emit to user.
+    if (THOUGHT_FINGERPRINT_REGEX.test(cleaned)) {
+      return "";
+    }
     // Check if there is an Indonesian response section after thought paragraphs
-    const match = cleaned.match(/\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i);
+    const match = cleaned.match(THOUGHT_TRAILING_REPLY_REGEX);
     if (match && match.index !== undefined) {
       return cleaned.slice(match.index).trim();
     }

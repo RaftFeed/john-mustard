@@ -1,2 +1,3 @@
 - Expects task/reminder and list-type responses rendered in the project's structured card format (e.g. a `[To-Do List]` header with `• Deadline:` / `• Tag:` bullets) rather than free-form prose; wants this used consistently ("tetap"). Confidence: 0.85
-- Communicates in Indonesian (Bahasa Indonesia). Confidence: 0.7
+- Communicates in Indonesian (Bahasa Indonesia), in a casual/informal "gw/lu" register, and expects replies in the same style. Confidence: 0.8
+- When reporting a bug, wants both the root cause explained ("kenapa") and the fix applied, not just a patch. Confidence: 0.6
