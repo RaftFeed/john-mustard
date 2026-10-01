@@ -14,6 +14,7 @@ import {
   isQuotedEventReminder,
   isAmbiguousEventReply,
   isListRequest,
+  isVagueCommandWithoutTarget,
   processChat,
   extractCandidateText,
   selectModelCascade,
@@ -59,6 +60,52 @@ test("LLM Guards: isAmbiguousScheduleStatement detects time constraints without 
   assert.strictEqual(isAmbiguousScheduleStatement("ganti jadi jam 20.00 ya"), false);
   assert.strictEqual(isAmbiguousScheduleStatement("mundurin ke jam 21.00 biar sempat"), false);
   assert.strictEqual(isAmbiguousScheduleStatement("tambahkan tugas cuci mobil"), false);
+});
+
+test("LLM Guards: isVagueCommandWithoutTarget identifies vague commands needing clarification", () => {
+  assert.strictEqual(isVagueCommandWithoutTarget("done"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("hapus"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("apus"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("selesai"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("tolong hapus"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("batalin"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("hapus 1"), false);
+  assert.strictEqual(isVagueCommandWithoutTarget("done tugas 2"), false);
+  assert.strictEqual(isVagueCommandWithoutTarget("selesaikan laporan"), false);
+});
+
+test("LLM Engine: tool disambiguation steering guides model for event vs todo keywords", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const originalFetch = globalThis.fetch;
+  let capturedPayloadEvent = null;
+  let capturedPayloadTodo = null;
+
+  try {
+    globalThis.fetch = async (url, opts) => {
+      const payload = JSON.parse(opts.body);
+      if (!capturedPayloadEvent) capturedPayloadEvent = payload;
+      else capturedPayloadTodo = payload;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: "Siap." }] } }] })
+      };
+    };
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "ada rapat koordinasi besok jam 10", { chatId: "user1" });
+    await processChat(mockRotator, "tugas koding web frontend deadline jumat", { chatId: "user1" });
+
+    const userPartsEvent = capturedPayloadEvent.contents.find((c) => c.role === "user").parts;
+    const steeringEvent = userPartsEvent.map((p) => p.text).join(" ");
+    assert.ok(steeringEvent.includes("addReminder (isEvent: true) BUKAN addTodo"));
+
+    const userPartsTodo = capturedPayloadTodo.contents.find((c) => c.role === "user").parts;
+    const steeringTodo = userPartsTodo.map((p) => p.text).join(" ");
+    assert.ok(steeringTodo.includes("addTodo BUKAN addReminder"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("WAHA: formatOutboundMentions resolves contact names, pushnames, and aliases to phone", () => {
@@ -1194,7 +1241,7 @@ test("LLM Engine: Tool guard blocks updateReminder if user said 'ingetin lagi' o
 
 test("LLM Cascade: selectModelCascade routes audio to AUDIO_CASCADE and media to SMART_CASCADE", () => {
   const audioCascade = selectModelCascade("", { audio: { buffer: Buffer.from("test") } });
-  assert.strictEqual(audioCascade[0], "ag/gemini-3.8-flash");
+  assert.strictEqual(audioCascade[0], "ag/gemini-3.8-flash-high");
   assert.strictEqual(audioCascade, AUDIO_CASCADE);
 
   const mediaCascade = selectModelCascade("", { media: { buffer: Buffer.from("test") } });

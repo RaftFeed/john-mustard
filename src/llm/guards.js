@@ -314,7 +314,7 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
   if (!text) return false;
   const hasMutationTool = toolsCalled.some((t) => MUTATION_TOOLS.has(t));
   if (hasMutationTool) return false;
-  const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan|benerin|atur|setel|setting|seting|pasang|masukin|masuk|beres|kelar)/i;
+  const claimRegex = /(sudah|udah|berhasil|telah|langsung|segera|lagi|otw)\s+(di|ku|saya|gw|gua|aku)?\s*(tambah|catat|buat|bikin|jadwal|ubah|ganti|koreksi|update|hapus|delete|selesai|simpan|kristalisasi|gabung|kompres|majuin|mundurin|geser|pindahin|pc|japri|dm|wa|chat\s+pribadi|kirim\s+pesan|benerin|atur|setel|setting|seting|pasang|masukin|masuk|beres|kelar|centang|tandai)/i;
   const promiseRegex = /(?:ini\s+langsung|segera|langsung|coba|nanti|akan|biar)\s+(?:aku|saya|gw|gua|ku|di)\s*(?:yang\s+)?(?:coba\s+|bantu\s+)?(?:pc|japri|dm|wa|kirimkan?\s+pesan|chat|tanyain|tanyakan|hubungi|kontak|sambungkan)/i;
   const contactPromiseRegex = /(?:aku|saya|gw|gua|ku)\s*(?:yang\s+)?(?:coba\s+|bantu\s+)?(?:tanyain|tanyakan|hubungi|kontak|pc|japri|dm|wa|chat|kirimkan?\s+pesan)/i;
   const verbalHoldRegex = /(?:tanyain|hubungi|kontak|pc|japri|chat).*(?:sebentar\s+ya|tunggu\s+sebentar)/i;
@@ -324,11 +324,25 @@ export function detectUnexecutedMutationClaim(text = "", toolsCalled = []) {
 export function isAmbiguousScheduleStatement(text = "") {
   if (!text) return false;
   const t = text.trim();
-  const hasDelayOrConstraint = /(belum|blm|blom|belom)\s+(balik|pulang|selesai|kelar|bisa|sempat|nyampe|ada)|(masih|lagi|lg)\s+(di\s*jalan|macet|kerja|kuliah|sekolah|sibuk|otw|repot)|jangan\s+(jam|pukul|\d+)/i.test(t);
+  const hasDelayOrConstraint =
+    /(belum|blm|blom|belom)\s+(balik|pulang|selesai|kelar|bisa|sempat|nyampe|ada)/i.test(t) ||
+    /(masih|lagi|lg)\s+(di\s*jalan|macet|kerja|kuliah|sekolah|sibuk|otw|repot)/i.test(t) ||
+    /jangan\s+(jam|pukul|\d+)/i.test(t) ||
+    /\b(?:gak|ga|nggak|gabisa|gbs|tak|tdk|g)\s*(?:bisa|sempat|keburu)\s*(?:jam|pukul|\d+)/i.test(t) ||
+    /\b(?:gak|ga|nggak|gabisa|gbs)\s+bisa\b/i.test(t) ||
+    /\b(?:telat|terlambat)\b/i.test(t) ||
+    /\bmundur\s+(?:dikit|dulu|entar)\b/i.test(t) ||
+    /\bnanti\s+(?:dulu|dl)\b/i.test(t);
   if (!hasDelayOrConstraint) return false;
 
   const hasExplicitTarget = /(?:jadi|ke|pindah\s+ke|geser\s+ke|mundur\s+ke|maju\s+ke)\s*(?:jam|pukul)?\s*\d{1,2}(?:[.:]\d{2})?/i.test(t);
   return !hasExplicitTarget;
+}
+
+export function isVagueCommandWithoutTarget(text = "") {
+  if (!text) return false;
+  const t = text.trim().toLowerCase();
+  return /^(?:tolong\s+)?(?:hapus|apus|del|delete|done|selesai|kelar|beres|batalin|cancel|undo)$/i.test(t);
 }
 
 const LIST_TOPIC_REGEX = /\b(tugas|todo|to-?dos?|to\s*do\s*list|todolist|pengingat|reminder|reminders|acara|agenda|jadwal|events?|deadline|backlog)\b/i;

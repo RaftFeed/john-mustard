@@ -100,7 +100,8 @@ import {
   hasExplicitRescheduleIntent,
   isFollowUpReminderIntent,
   isQuotedEventReminder,
-  isAmbiguousEventReply
+  isAmbiguousEventReply,
+  isVagueCommandWithoutTarget
 } from "./guards.js";
 import {
   stripHallucinatedToolChips,
@@ -181,9 +182,10 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
     : "";
 
   // Multi-turn context: muat riwayat pesan terakhir
-  const history = store?.getRecentChatHistory ? store.getRecentChatHistory(chatId, 6) : [];
   const isGroupChat = String(chatId).endsWith("@g.us");
   const isGreeting = isGreetingIntent(userText) && !isGroupChat;
+  const historyDepth = (isGreeting || (isActionIntent(userText) && !isListRequest(userText))) ? 3 : 6;
+  const history = store?.getRecentChatHistory ? store.getRecentChatHistory(chatId, historyDepth) : [];
   const greetingInstruction = isGreeting
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
     : "";
@@ -336,8 +338,11 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
       }
     }
 
+    const quotedSnippet = quotedRawText ? quotedRawText.slice(0, 500) : "";
+    const snippetContext = quotedSnippet ? `\n- ISI PESAN YANG DI-REPLY (PENTING):\n"""${quotedSnippet}"""` : "";
+
     quotedContext = `\n\n[KONTEKS PESAN YANG DI-REPLY]:
-- Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.
+- Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.${snippetContext}
 ${isBotQuoted
   ? "- PENGGUNA ME-REPLY PESAN BOT: Sambungkan jawabanmu langsung dengan apa yang kamu sampaikan sebelumnya (pertanyaan, konfirmasi, atau daftar to-do/acara). Jika user menyebut nomor urut (contoh: 'nomor 2', 'yang ketiga') atau memberi jawaban singkat (contoh: 'jam 8 aja', 'udah beres'), rujuk ke konteks pesan bot tersebut!"
   : `- Pengguna me-reply pesan dari ${qSender}. Jadikan isi pesan yang di-reply sebagai dasar/rujukan tindakanmu.`}
@@ -401,6 +406,25 @@ ${isBotQuoted
         text: "[INSTRUKSI SISTEM PENGINGAT ACARA]: Pengguna meminta diingatkan lagi (bukan mengundur acara). WAJIB panggil 'addReminder' untuk waktu tersebut (isEvent: false, taskType: 'reminder'). DILARANG memanggil 'updateReminder' atau menggeser jam mulai acara! Beritahukan ke pengguna bahwa pengingat telah diset dan jam acara tetap sama."
       });
     }
+    if (isVagueCommandWithoutTarget(userText) && !quoted) {
+      userParts.push({
+        text: "[PERINGATAN AMBIGU]: Pengguna memberikan perintah tindakan tanpa menyebut nomor atau nama item target dan tidak me-reply pesan spesifik. DILARANG menebak atau mengeksekusi sembarang item. WAJIB tanyakan konfirmasi singkat (1 kalimat): item nomor berapa atau mana yang dimaksud."
+      });
+    }
+    const isListReq = isListRequest(userText);
+    if (!isListReq && !isGreeting && userText) {
+      userParts.push({
+        text: "[PERINGATAN FORMAT RESPON]: Pengguna TIDAK meminta daftar. DILARANG menampilkan daftar To-Do penuh atau daftar Acara penuh. Cukup konfirmasi singkat 1-2 kalimat + kartu satuan item yang baru dibuat/diubah jika ada."
+      });
+    }
+
+    const hasEventKeyword = /\b(rapat|meeting|tm\b|webinar|jadwal|acara|event|janji\s+temu)\b/i.test(userText);
+    const hasTodoKeyword = /\b(tugas|pr\b|pekerjaan|belanja|beli|bayar|servis|cuci|bersih|koding|coding)\b/i.test(userText);
+    if (hasEventKeyword && !hasTodoKeyword) {
+      userParts.push({ text: "[STEERING]: Kata kunci acara/jadwal terdeteksi. Gunakan addReminder (isEvent: true) BUKAN addTodo." });
+    } else if (hasTodoKeyword && !hasEventKeyword) {
+      userParts.push({ text: "[STEERING]: Kata kunci tugas/pekerjaan terdeteksi. Gunakan addTodo BUKAN addReminder." });
+    }
   }
 
   const contents = [];
@@ -427,13 +451,20 @@ ${isBotQuoted
     contents.push({ role: "user", parts: userParts });
   }
 
-  // LLM Autonomy: mode AUTO default, tapi NONE jika jadwal ambigu atau kirim media santai
+  // LLM Autonomy: mode AUTO default, NONE jika ambigu/media santai, ANY jika niat aksi jelas
   const isAmbiguousSchedule = isAmbiguousScheduleStatement(userText);
   const isAmbiguousEvent = isAmbiguousEventReply(userText, quoted);
+  const isVagueCommand = isVagueCommandWithoutTarget(userText) && !quoted;
   const isMediaWithoutAction = Boolean(media && !isActionIntent(userText));
-  let toolConfig = (isAmbiguousSchedule || isAmbiguousEvent || isMediaWithoutAction)
-    ? { functionCallingConfig: { mode: "NONE" } }
-    : { functionCallingConfig: { mode: "AUTO" } };
+  const hasActionIntent = isActionIntent(userText) && !isAmbiguousSchedule && !isAmbiguousEvent && !isVagueCommand;
+  let toolConfig;
+  if (isAmbiguousSchedule || isAmbiguousEvent || isVagueCommand || isMediaWithoutAction) {
+    toolConfig = { functionCallingConfig: { mode: "NONE" } };
+  } else if (hasActionIntent && !isGreeting) {
+    toolConfig = { functionCallingConfig: { mode: "ANY" } };
+  } else {
+    toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+  }
 
   const toolsCalled = [];
   const successfulMutations = [];
@@ -446,7 +477,7 @@ ${isBotQuoted
     (lastFormattedList && (userWantsList || !FULL_LIST_HEADER_REGEX.test(lastFormattedList)))
       ? lastFormattedList
       : null;
-  const MAX_STEPS = 5;
+  const MAX_STEPS = isActionIntent(userText) && !userText.includes("?") ? 3 : 5;
   let turns = 0;
 
   const activeCascade = cascade || selectModelCascade(userText, { media, audio });
@@ -605,9 +636,13 @@ ${isBotQuoted
     });
 
     // Single-turn tool mutation short-circuit: potong latensi 50% untuk mutasi data murni
-    const isPureMutation = fnCallParts.every((p) =>
-      ["completeTodo", "uncompleteTodo", "deleteTodo", "deleteReminder", "updateReminder", "updateTodo", "addTodo", "addReminder"].includes(p.functionCall.name)
-    );
+    const SHORT_CIRCUIT_TOOLS = new Set([
+      "completeTodo", "uncompleteTodo", "deleteTodo", "deleteReminder",
+      "updateReminder", "updateTodo", "addTodo", "addReminder",
+      "setDailyDigest", "saveNote", "deleteNote", "addPerson", "deletePerson",
+      "addBacklog", "completeBacklog"
+    ]);
+    const isPureMutation = fnCallParts.every((p) => SHORT_CIRCUIT_TOOLS.has(p.functionCall.name));
     const allSucceeded = successfulMutations.length >= fnCallParts.length;
     const isPureAction = isActionIntent(userText) && !userText.includes("?") && !/\b(kenapa|gimana|bagaimana|apakah|menurut|saran|rekomendasi)\b/i.test(userText);
 

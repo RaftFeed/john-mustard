@@ -15,8 +15,8 @@ export const SMART_CASCADE = [
 ];
 
 export const AUDIO_CASCADE = [
-  "ag/gemini-3.8-flash",
   "ag/gemini-3.8-flash-high",
+  "ag/gemini-3.8-flash",
   "ag/gemini-3.7-flash-high"
 ];
 

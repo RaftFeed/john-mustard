@@ -32,7 +32,8 @@ export {
   hasExplicitRescheduleIntent,
   isFollowUpReminderIntent,
   isQuotedEventReminder,
-  isAmbiguousEventReply
+  isAmbiguousEventReply,
+  isVagueCommandWithoutTarget
 } from "./llm/guards.js";
 
 export {

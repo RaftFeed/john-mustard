@@ -229,4 +229,41 @@ test("Commands: viewing the to-do list anchors numbering (routine hidden)", asyn
   assert.strictEqual(store.resolveTodoId(2, "user1"), b);
 });
 
+test("Commands: parseFastCommand and executeFastCommand handle expanded natural add, list, and doneMultiple", async () => {
+  const store = new Storage(":memory:");
+  const ctx = { store, chatId: "user1", isOwner: true, senderNumber: "user1", senderName: "Tester" };
+
+  // Natural Add
+  const addCmd = parseFastCommand("tambahin tugas Beli telur dan susu");
+  assert.strictEqual(addCmd.type, "add");
+  assert.strictEqual(addCmd.raw, "Beli telur dan susu");
+  const addRes = await executeFastCommand(addCmd, ctx);
+  assert.ok(addRes.includes("Beli telur dan susu"));
+
+  const addCmd2 = parseFastCommand("catat ke todo Servis laptop");
+  assert.strictEqual(addCmd2.type, "add");
+  assert.strictEqual(addCmd2.raw, "Servis laptop");
+
+  // Natural List
+  assert.strictEqual(parseFastCommand("list tugas").type, "listTodos");
+  assert.strictEqual(parseFastCommand("lihat todo").type, "listTodos");
+  assert.strictEqual(parseFastCommand("daftar tugas").type, "listTodos");
+
+  // Multi-done
+  const mDone1 = parseFastCommand("1,2,3 done");
+  assert.strictEqual(mDone1.type, "doneMultiple");
+  assert.deepStrictEqual(mDone1.ids, [1, 2, 3]);
+
+  const mDone2 = parseFastCommand("done 1 2");
+  assert.strictEqual(mDone2.type, "doneMultiple");
+  assert.deepStrictEqual(mDone2.ids, [1, 2]);
+
+  // Execute doneMultiple
+  store.addTodo("user1", "Tugas 2");
+  store.addTodo("user1", "Tugas 3");
+  const doneRes = await executeFastCommand({ type: "doneMultiple", ids: [1, 2], target: "todo" }, ctx);
+  assert.ok(doneRes.includes("2 tugas selesai"));
+});
+
+
 

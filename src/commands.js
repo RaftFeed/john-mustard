@@ -42,7 +42,10 @@ export function parseFastCommand(text = "") {
   const trimmed = text.trim();
 
   // Keyword langsung tanpa tanda # atau ?
-  if (/^(#)?(todo|todos|tugas|list\s*todo|list\s*tugas)$/i.test(trimmed)) {
+  if (
+    /^(?:#)?(?:tolong\s+)?(?:list|lihat|tampil(?:kan|in)?|show|cek|daftar)\s+(?:tugas|todo|to-?do|daftar\s+tugas)$/i.test(trimmed) ||
+    /^(#)?(todo|todos|tugas|list\s*todo|list\s*tugas)$/i.test(trimmed)
+  ) {
     return { type: "listTodos" };
   }
   if (/^(#)?(agenda|acara|jadwal|events?|reminders?|pengingat)$/i.test(trimmed)) {
@@ -97,12 +100,22 @@ export function parseFastCommand(text = "") {
     return { type: "done", id: parseInt(todoDoneMatch[1], 10), target: "todo" };
   }
 
+  // Natural Add (tambahin tugas X, catat X ke todo, etc.)
+  const naturalAdd = trimmed.match(
+    /^(?:tolong\s+)?(?:tambahin|tambah|catat(?:in|kan)?|add|bikin)\s+(?:tugas|todo|to-?do|ke\s+(?:todo|tugas))\s*(.+)$/i
+  );
+  if (naturalAdd && naturalAdd[1].trim()) {
+    return { type: "add", raw: naturalAdd[1].trim() };
+  }
+
   // Natural Commands (Bypass LLM for instant <10ms execution)
   const naturalDone =
-    trimmed.match(/^(?:no(?:mor)?\s*)?(\d+)\s*(?:udh|udah|sdh|sudah)?\s*(?:kelar|beres|selesai|done)$/i) ||
-    trimmed.match(/^(?:kelar|beres|selesai|done)\s+(?:no(?:mor)?\s*)?(\d+)$/i);
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s*(?:udh|udah|sdh|sudah)?\s*(?:kelar|beres|selesai|done)$/i) ||
+    trimmed.match(/^(?:kelar|beres|selesai|done)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i);
   if (naturalDone) {
-    return { type: "done", id: parseInt(naturalDone[1], 10), target: "auto" };
+    const ids = naturalDone[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    if (ids.length === 1) return { type: "done", id: ids[0], target: "auto" };
+    if (ids.length > 1) return { type: "doneMultiple", ids, target: "auto" };
   }
 
   // Natural Uncomplete (batalin tugas 3, unfinish 3, 3 belum selesai, etc.)
@@ -469,6 +482,29 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         return `[!] Tugas #${cmd.id} gak ketemu atau udah selesai.`;
       }
       return `Mau tandai selesai nomor #${cmd.id} untuk Tugas atau Acara? Ketik "#done ${cmd.id}" atau "acara ${cmd.id} selesai".`;
+    }
+
+    case "doneMultiple": {
+      const scope = resolveItemScope(cmd.target || "auto", { store, chatId, quoted });
+      let completed = 0;
+      for (const id of cmd.ids) {
+        if (scope === "reminder" && store.deleteReminder) {
+          const changed = store.deleteReminder(chatId, id);
+          if (changed > 0) completed++;
+        } else {
+          const changed = store.completeTodo(id, chatId);
+          if (changed > 0) completed++;
+        }
+      }
+      if (completed > 0) {
+        if (scope === "reminder" && store.listReminders) {
+          rememberRems(store.listReminders(chatId));
+          return `[OK] ${completed} acara/pengingat selesai.`;
+        }
+        rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
+        return `[OK] ${completed} tugas selesai.`;
+      }
+      return `[!] Tidak ada tugas yang ditemukan atau sudah selesai.`;
     }
 
     case "uncomplete": {
