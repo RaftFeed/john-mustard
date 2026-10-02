@@ -226,6 +226,12 @@ docker compose ps
 
 Access the WAHA dashboard at `http://localhost:3000` to scan the WhatsApp QR code and start the session.
 
+### Continuous Deployment & Git Sync
+
+- **Two-Way Synchronization**: Hermes Agent on VPS pulls with rebase (`git pull --rebase origin main`) before applying any modifications, and pushes verified commits back to `origin/main`.
+- **Conflict Resilience**: Automated `git rebase --abort` with WAHA WhatsApp alerting ensures the VPS working tree remains clean if merge conflicts arise.
+- **GitHub Actions Auto-Deploy**: Incoming pushes trigger automated SSH deployment via safe rebase sync.
+
 ### Local Development
 
 To develop and test modules directly on the host machine:
