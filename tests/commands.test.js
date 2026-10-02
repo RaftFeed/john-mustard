@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { parseFastCommand, executeFastCommand } from "../src/commands.js";
+import { parseFastCommand, executeFastCommand, buildSelfUpdatePrompt } from "../src/commands.js";
 import { Storage } from "../src/db.js";
 
 test("Commands: parseFastCommand parses keywords and prefix commands", () => {
@@ -265,5 +265,9 @@ test("Commands: parseFastCommand and executeFastCommand handle expanded natural 
   assert.ok(doneRes.includes("2 tugas selesai"));
 });
 
-
-
+test("Commands: buildSelfUpdatePrompt mandates git pull --rebase, conflict abort, and push origin", () => {
+  const prompt = buildSelfUpdatePrompt("tambah perintah #joke");
+  assert.ok(prompt.includes("git fetch origin && git pull --rebase origin main"));
+  assert.ok(prompt.includes("git rebase --abort"));
+  assert.ok(prompt.includes("git push origin main"));
+});

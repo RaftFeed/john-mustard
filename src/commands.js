@@ -8,20 +8,24 @@ import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
 
 const SELF_UPDATE_REPO = "/home/ubuntu/john-mustard";
 
-function buildSelfUpdatePrompt(instruction) {
+export function buildSelfUpdatePrompt(instruction) {
   return [
     "Kamu mengerjakan repo John Mustard di VPS ini, path " + SELF_UPDATE_REPO + ".",
     "",
     "TUGAS: " + instruction,
     "",
     "ATURAN KERAS:",
+    "0. SYNC SEBELUM KERJA: Sebelum membaca/mengedit kode atau membuat commit, WAJIB jalankan:",
+    "   cd " + SELF_UPDATE_REPO + " && git fetch origin && git pull --rebase origin main",
+    "   Jika terjadi conflict saat rebase, WAJIB langsung jalankan `git rebase --abort` untuk menjaga repo tetap bersih, JANGAN dipaksa (no force push), dan laporkan conflict tersebut.",
     "1. Baca dulu kode terkait sebelum mengubah apa pun.",
     "2. Edit HANYA file di dalam: src/, tests/, scripts/, skills/, config/, atau system-prompt.md.",
     "3. DILARANG menyentuh: .env, docker-compose.yml, key-oracle/, 9router-data/, oauth_session_vps.json, dan semua file *.bak-*.",
     "4. Setelah selesai, WAJIB jalankan test gate ini dan tempel hasilnya:",
     "   cd " + SELF_UPDATE_REPO + " && docker run --rm -v $PWD:/app -w /app node:24-slim sh -c 'node --test tests/*.test.js'",
-    "5. JANGAN restart container apa pun. Deploy dilakukan terpisah lewat script deploy.",
-    "6. Laporan akhir (ringkas, bahasa Indonesia): daftar file yang diubah, ringkasan diff, dan hasil test (lulus/gagal + jumlah test)."
+    "5. JIKA MEMBUAT COMMIT: Pastikan test gate lulus, lalu push ke remote: `git push origin main`.",
+    "6. JANGAN restart container apa pun. Deploy dilakukan terpisah lewat script deploy.",
+    "7. Laporan akhir (ringkas, bahasa Indonesia): daftar file yang diubah, ringkasan diff, status push git, dan hasil test (lulus/gagal + jumlah test)."
   ].join("\n");
 }
 

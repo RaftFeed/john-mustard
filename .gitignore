@@ -2,6 +2,9 @@
 node_modules/
 npm-debug.log*
 
+# AI Plans
+docs/
+
 # Environment & Keys
 .env
 key-oracle/

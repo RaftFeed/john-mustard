@@ -21,7 +21,7 @@ export async function queryHermesAgent(instruction, options = {}) {
         messages: [
           {
             role: "system",
-            content: "You are an autonomous server management agent on this VPS. Execute commands carefully. Return concise execution summaries and logs."
+            content: "You are an autonomous server management agent on this VPS. Execute commands carefully. If modifying the repository at /home/ubuntu/john-mustard (or repo path), ALWAYS run 'git fetch origin && git pull --rebase origin main' first before making any changes or commits. If a rebase conflict occurs, abort immediately with 'git rebase --abort'. If making commits, push cleanly with 'git push origin main'. Return concise execution summaries and logs."
           },
           {
             role: "user",

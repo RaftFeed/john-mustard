@@ -20,6 +20,11 @@ jobs:
           script: |
             set -e
             cd ${{ secrets.WORK_DIR }}
-            git fetch --quiet origin
-            git merge --ff-only origin/main
+            git fetch origin
+            if ! git pull --rebase origin main; then
+              echo "Rebase conflict on VPS! Aborting rebase."
+              git rebase --abort
+              bash scripts/self-update.sh notify "[ALERT] Deploy GitHub Actions gagal: conflict rebase di VPS saat pull origin/main. Cek repository VPS."
+              exit 1
+            fi
             SELF_UPDATE_SYNC_RESTART=1 bash scripts/self-update.sh deploy

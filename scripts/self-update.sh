@@ -67,7 +67,13 @@ push_origin() {
   if GIT_TERMINAL_PROMPT=0 git -c credential.helper= push --quiet origin "${ref}:main" >>"$LOG" 2>&1; then
     log "pushed ${ref} -> origin/main"
   else
-    log "warn: push gagal (credential belum diset) - commit ${ref} tetap lokal di VPS"
+    # Try one pull --rebase and retry push if remote moved ahead
+    if git -c credential.helper= pull --rebase origin main >>"$LOG" 2>&1 && \
+       GIT_TERMINAL_PROMPT=0 git -c credential.helper= push --quiet origin "${ref}:main" >>"$LOG" 2>&1; then
+      log "pushed ${ref} -> origin/main after pull --rebase"
+    else
+      log "warn: push gagal (credential belum diset atau conflict) - commit ${ref} tetap lokal di VPS"
+    fi
   fi
 }
 
@@ -95,15 +101,17 @@ cmd_deploy() {
     return 4
   fi
 
-  # 2) Pull from GitHub first. Fast-forward only, and never while a self-update edit
+  # 2) Pull from GitHub first. Rebase cleanly, and never while a self-update edit
   #    is pending (uncommitted work must never be discarded).
   local prev
   prev="$(git rev-parse HEAD)"
   if [ -z "$(git status --porcelain)" ]; then
     if git -c credential.helper= fetch --quiet origin 2>/dev/null; then
-      if ! git merge --ff-only --quiet origin/main 2>/dev/null; then
-        echo "ABORT: origin/main divergen dari VPS. Merge manual dulu."
-        log "ABORT: origin/main diverged from VPS, manual merge needed"
+      if ! git -c credential.helper= pull --rebase origin main >>"$LOG" 2>&1; then
+        log "CONFLICT: git pull --rebase gagal! Membatalkan rebase..."
+        git rebase --abort >/dev/null 2>&1 || true
+        cmd_notify "[ALERT] Self-update rebase conflict dengan origin/main di VPS! Rebase dibatalkan, working tree bersih. Selesaikan konflik manual."
+        echo "ABORT: origin/main conflict saat rebase di VPS. Rebase dibatalkan."
         return 6
       fi
     else
