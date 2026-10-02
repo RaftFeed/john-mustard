@@ -1855,7 +1855,7 @@ export function formatRemindersList(reminders = [], options = {}) {
     }
 
     const tagLine = `\`${pillTokens.join(" ")}\``;
-    const titleText = isOverdue ? `*[${idx + 1}] [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
+    const titleText = isOverdue ? `*[${idx + 1}] ⚠️ [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
 
     lines.push(`${badge} ${titleText}`);
     lines.push(`├── ${scheduleStr}`);
@@ -2056,7 +2056,7 @@ export function formatTodoList(todos, isGroup = false, options = {}) {
     if (isDone) {
       titleText = `*[${index + 1}] [SELESAI] ${item.task}*`;
     } else if (isOverdue) {
-      titleText = `*[${index + 1}] [TERLEWAT] ${item.task}*`;
+      titleText = `*[${index + 1}] ⚠️ [TERLEWAT] ${item.task}*`;
     }
 
     lines.push(`${badge} ${titleText}`);
