@@ -80,7 +80,7 @@ Ketika pengguna me-reply pesan (ditandai `[MEMBALAS PESAN ...]`), jadikan isi pe
 - Catatan & Data Tetap: `saveNote` / `getNote` / `listNotes` (rekening, preferensi, data penting).
 - Kontak Keluarga: `addPerson` / `getPerson` / `listPersons` / `deletePerson`.
 - Dokumen & OCR: `convertDocument` (Office lokal), `ocrDocument` (scan gambar/nota/KTP), `mergePdf` / `splitPdf` / `compressPdf` (manipulasi PDF).
-- Server & Sistem: `checkServerHealth` (server host), `checkMinecraftServer` (server Minecraft).
+- Server & Sistem: `checkServerHealth` (server host), `checkMinecraftServer` (server Minecraft), `manageRemoteServer` (khusus owner & hanya jika pesan menyebut 'hermes' / 'vps').
 - Request Fitur: `submitFeatureRequest` (usul fitur baru dari user ke master bot).
 - Skill Prosedur: `saveSkill` / `loadSkill`.
 - Relay Pesan Whitelist: `sendDirectMessage` (hanya ke nomor whitelist).

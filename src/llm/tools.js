@@ -693,7 +693,7 @@ export const TOOLS = [
       },
       {
         name: "manageRemoteServer",
-        description: "Jalankan perintah administrasi atau diagnosa server VPS / Minecraft via Hermes Agent (cek log docker, restart container, cek disk/load). Khusus owner.",
+        description: "Jalankan perintah administrasi atau diagnosa server VPS / Minecraft via Hermes Agent (cek log docker, restart container, cek disk/load). Khusus owner. WAJIB dan HANYA panggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps'.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1756,6 +1756,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   } else if (name === "manageRemoteServer") {
     if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: `Fitur manageRemoteServer hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
+    } else if (userText && !/\b(?:hermes|vps)\b/i.test(userText)) {
+      toolResult = {
+        error: "Tool manageRemoteServer HANYA boleh dipanggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps' dalam pesan. Untuk server biasa, gunakan checkServerHealth atau checkMinecraftServer."
+      };
     } else {
       const res = await queryHermesAgent(args.instruction);
       if (!res.success) {

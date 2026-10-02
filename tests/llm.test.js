@@ -545,7 +545,7 @@ test("LLM Engine: addReminder short-circuits to a card-style confirmation", asyn
             parts: [{
               functionCall: {
                 name: "addReminder",
-                args: { message: "Rapat Pleno", eventAtIso: "2026-10-02T10:00:00+07:00" }
+                args: { message: "Rapat Pleno", eventAtIso: new Date(Date.now() + 86400_000).toISOString() }
               }
             }]
           }

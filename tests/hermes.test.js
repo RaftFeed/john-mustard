@@ -151,3 +151,13 @@ test("Hermes: manageRemoteServer tool executes for owner", async () => {
     else delete process.env.HERMES_API_URL;
   }
 });
+
+test("Hermes: manageRemoteServer rejects when userText does not mention hermes or vps", async () => {
+  const rejectedRes = await executeTool("manageRemoteServer", { instruction: "cek disk" }, {
+    chatId: `${OWNER_PHONE}@c.us`,
+    senderNumber: OWNER_PHONE,
+    userText: "tolong bersihkan server dong"
+  });
+  assert.strictEqual(rejectedRes.toolResult.error.includes("HANYA boleh dipanggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps'"), true);
+});
+
