@@ -271,3 +271,40 @@ test("Commands: buildSelfUpdatePrompt mandates git pull --rebase, conflict abort
   assert.ok(prompt.includes("git rebase --abort"));
   assert.ok(prompt.includes("git push origin main"));
 });
+
+test("Commands: executeFastCommand done auto-deletes overdue completed todo and allows undo", async () => {
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "user_auto_del";
+  const ctx = { store, chatId };
+
+  // 1. Todo with past deadline
+  const tId = store.addTodo(chatId, "Tugas Telat", Date.now() - 3600_000);
+  const doneCmd = parseFastCommand(`#done ${tId}`);
+  const doneRes = await executeFastCommand(doneCmd, ctx);
+
+  assert.ok(doneRes.includes("selesai & otomatis dihapus karena sudah lewat deadline"));
+
+  // Verify it is marked done AND soft-deleted in DB
+  const rawTodo = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(tId);
+  assert.strictEqual(rawTodo.done, 1);
+  assert.ok(rawTodo.deleted_at);
+
+  // 2. Undo restores the todo
+  const undoCmd = parseFastCommand("#undo");
+  const undoRes = await executeFastCommand(undoCmd, ctx);
+  assert.ok(undoRes.includes("berhasil dipulihkan"));
+  const rawRestored = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(tId);
+  assert.strictEqual(rawRestored.deleted_at, null);
+
+  // 3. Todo without past deadline (future deadline) -> completed, but NOT deleted
+  const tFutureId = store.addTodo(chatId, "Tugas Masa Depan", Date.now() + 3600_000);
+  const doneFutureCmd = parseFastCommand(`#done ${tFutureId}`);
+  const doneFutureRes = await executeFastCommand(doneFutureCmd, ctx);
+  assert.ok(doneFutureRes.includes("[OK] Tugas"));
+  assert.ok(!doneFutureRes.includes("otomatis dihapus"));
+  const rawFuture = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(tFutureId);
+  assert.strictEqual(rawFuture.done, 1);
+  assert.strictEqual(rawFuture.deleted_at, null);
+});
+

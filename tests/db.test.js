@@ -391,4 +391,47 @@ test("Storage: setDailyDigest covers to-do list and acara list with legacy compa
   assert.strictEqual(store.listReminders(chatId).length, 0);
 });
 
+test("Storage: cleanupCompletedOverdueTodos soft deletes only done and overdue tasks", () => {
+  const store = new Storage(":memory:");
+  const now = Date.now();
+
+  // 1. Task done=1 with past deadline -> SHOULD be deleted
+  const idDoneOverdue = store.addTodo("user1", "Tugas Selesai & Lewat", now - 3600_000);
+  store.completeTodo(idDoneOverdue, "user1", { rawId: true });
+
+  // 2. Task done=0 with past deadline -> SHOULD NOT be deleted (still pending)
+  const idPendingOverdue = store.addTodo("user1", "Tugas Pending & Lewat", now - 3600_000);
+
+  // 3. Task done=1 with future deadline -> SHOULD NOT be deleted (not overdue yet)
+  const idDoneFuture = store.addTodo("user1", "Tugas Selesai Belum Lewat", now + 3600_000);
+  store.completeTodo(idDoneFuture, "user1", { rawId: true });
+
+  // 4. Task done=1 without deadline -> SHOULD NOT be deleted
+  const idDoneNoDeadline = store.addTodo("user1", "Tugas Selesai Tanpa Deadline");
+  store.completeTodo(idDoneNoDeadline, "user1", { rawId: true });
+
+  const res = store.cleanupCompletedOverdueTodos(now);
+  assert.strictEqual(res.count, 1);
+  assert.strictEqual(res.items[0].id, idDoneOverdue);
+
+  // Check in DB
+  const rawDeleted = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(idDoneOverdue);
+  assert.ok(rawDeleted.deleted_at);
+
+  const rawPendingOverdue = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(idPendingOverdue);
+  assert.strictEqual(rawPendingOverdue.deleted_at, null);
+
+  const rawDoneFuture = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(idDoneFuture);
+  assert.strictEqual(rawDoneFuture.deleted_at, null);
+
+  const rawDoneNoDeadline = store.db.prepare("SELECT * FROM todos WHERE id = ?").get(idDoneNoDeadline);
+  assert.strictEqual(rawDoneNoDeadline.deleted_at, null);
+
+  // Check that restoreLastDeleted works
+  const restored = store.restoreLastDeleted("user1");
+  assert.ok(restored);
+  assert.strictEqual(restored.item.id, idDoneOverdue);
+});
+
+
 

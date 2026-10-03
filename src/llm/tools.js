@@ -809,11 +809,19 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "completeTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const targetTodo = preResolvedIndexes
+      ? (store.getTodoByRealId ? store.getTodoByRealId(parseInt(args.todoId, 10), queryChatId) : null)
+      : (store.getTodoById ? store.getTodoById(args.todoId, queryChatId) : null);
     const changes = store.completeTodo(args.todoId, queryChatId, { rawId: preResolvedIndexes });
+    let autoArchived = false;
+    if (changes > 0 && targetTodo && targetTodo.deadline && targetTodo.deadline <= Date.now() && store.deleteTodo) {
+      store.deleteTodo(targetTodo.id, queryChatId, { rawId: true });
+      autoArchived = true;
+    }
     const remaining = store.getTodos(queryChatId, false);
     if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
     formattedList = formatTodoList(remaining, isGroup);
-    toolResult = { success: changes > 0, todoId: args.todoId, formattedList };
+    toolResult = { success: changes > 0, todoId: args.todoId, autoArchived, formattedList };
   } else if (name === "uncompleteTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
     let targetId = args.todoId;

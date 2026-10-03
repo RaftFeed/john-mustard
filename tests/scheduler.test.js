@@ -300,3 +300,25 @@ test("Scheduler: 2-stage todo deadline reminder sends SEGERA then TERLEWAT", asy
 
   clearActiveTimers();
 });
+
+test("Scheduler: tickScheduler runs cleanupCompletedOverdueTodos silently without WA spam", async () => {
+  const sentMessages = [];
+  const mockSender = async (chatId, text) => {
+    sentMessages.push({ chatId, text });
+  };
+
+  let cleanedCalled = false;
+  const mockStore = {
+    getPendingReminders: () => [],
+    cleanupCompletedOverdueTodos() {
+      cleanedCalled = true;
+      return { count: 2, items: [{ id: 1 }, { id: 2 }] };
+    }
+  };
+
+  const res = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res.ticked, true);
+  assert.strictEqual(cleanedCalled, true);
+  assert.strictEqual(sentMessages.length, 0); // Silent: no WA spam
+});
+

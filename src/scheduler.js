@@ -309,6 +309,15 @@ export async function tickScheduler(store, { rotator = null, textSender = sendTe
     }
   }
 
+  // 5. Auto-delete (soft delete) todos yang sudah selesai (done = 1) dan lewat deadline (deadline <= now)
+  if (typeof store.cleanupCompletedOverdueTodos === "function") {
+    try {
+      store.cleanupCompletedOverdueTodos();
+    } catch (err) {
+      console.error("Gagal auto-delete completed overdue todos:", err.message);
+    }
+  }
+
   return { ticked: true, sent: count };
 }
 

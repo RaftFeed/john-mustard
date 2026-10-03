@@ -1246,6 +1246,22 @@ export class Storage {
     return this.db.prepare("UPDATE todos SET reminded = 2 WHERE id = ?").run(id).changes;
   }
 
+  cleanupCompletedOverdueTodos(now = Date.now()) {
+    const items = this.db
+      .prepare(
+        "SELECT * FROM todos WHERE done = 1 AND deadline IS NOT NULL AND deadline <= ? AND deleted_at IS NULL"
+      )
+      .all(now);
+    if (!items || items.length === 0) return { count: 0, items: [] };
+
+    const stmt = this.db.prepare("UPDATE todos SET deleted_at = ? WHERE id = ?");
+    for (const item of items) {
+      stmt.run(now, item.id);
+      this.recordDeletedItem(item.chat_id, { type: "todo", item: { ...item, deleted_at: now } });
+    }
+    return { count: items.length, items };
+  }
+
   deleteTodo(id, chatId, { rawId = false } = {}) {
     const existing = rawId ? this.getTodoByRealId(parseInt(id, 10), chatId) : this.getTodoById(id, chatId);
     if (!existing) return 0;

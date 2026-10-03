@@ -478,8 +478,15 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         return `[!] Acara/pengingat #${cmd.id} gak ketemu atau udah selesai.`;
       }
       if (scope === "todo") {
+        const targetTodo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
         const changed = store.completeTodo(cmd.id, chatId);
         if (changed > 0) {
+          const isOverdue = Boolean(targetTodo && targetTodo.deadline && targetTodo.deadline <= Date.now());
+          if (isOverdue && store.deleteTodo) {
+            store.deleteTodo(targetTodo.id, chatId, { rawId: true });
+            rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
+            return `[OK] Tugas #${cmd.id} selesai & otomatis dihapus karena sudah lewat deadline. (Ketik #undo kalau mau batalin)`;
+          }
           rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
           return `[OK] Tugas #${cmd.id} selesai. (Ketik #undo atau "batalin tugas ${cmd.id}" kalau mau batalin)`;
         }
@@ -491,13 +498,21 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "doneMultiple": {
       const scope = resolveItemScope(cmd.target || "auto", { store, chatId, quoted });
       let completed = 0;
+      let autoArchived = 0;
       for (const id of cmd.ids) {
         if (scope === "reminder" && store.deleteReminder) {
           const changed = store.deleteReminder(chatId, id);
           if (changed > 0) completed++;
         } else {
+          const targetTodo = store.getTodoById ? store.getTodoById(id, chatId) : null;
           const changed = store.completeTodo(id, chatId);
-          if (changed > 0) completed++;
+          if (changed > 0) {
+            completed++;
+            if (targetTodo && targetTodo.deadline && targetTodo.deadline <= Date.now() && store.deleteTodo) {
+              store.deleteTodo(targetTodo.id, chatId, { rawId: true });
+              autoArchived++;
+            }
+          }
         }
       }
       if (completed > 0) {
@@ -506,6 +521,9 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
           return `[OK] ${completed} acara/pengingat selesai.`;
         }
         rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
+        if (autoArchived > 0) {
+          return `[OK] ${completed} tugas selesai (${autoArchived} otomatis dihapus karena lewat deadline).`;
+        }
         return `[OK] ${completed} tugas selesai.`;
       }
       return `[!] Tidak ada tugas yang ditemukan atau sudah selesai.`;
