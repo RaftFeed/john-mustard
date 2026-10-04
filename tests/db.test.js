@@ -433,5 +433,41 @@ test("Storage: cleanupCompletedOverdueTodos soft deletes only done and overdue t
   assert.strictEqual(restored.item.id, idDoneOverdue);
 });
 
+test("Storage: clearCompletedTodos bulk soft-deletes done tasks and supports batch undo", () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_clear";
+
+  const t1 = store.addTodo(chatId, "Belajar React");
+  const t2 = store.addTodo(chatId, "Cek email banned");
+  const t3 = store.addTodo(chatId, "Sholat Dzuhur");
+  const t4 = store.addTodo(chatId, "Cek broksum");
+
+  // Tandai t3 dan t4 selesai
+  store.completeTodo(t3, chatId, { rawId: true });
+  store.completeTodo(t4, chatId, { rawId: true });
+
+  const res = store.clearCompletedTodos(chatId);
+  assert.strictEqual(res.count, 2);
+  assert.strictEqual(res.items.length, 2);
+
+  // Periksa tugas aktif: hanya t1 dan t2 yang tersisa
+  const activeTodos = store.getTodos(chatId, false);
+  assert.strictEqual(activeTodos.length, 2);
+  assert.ok(activeTodos.some((t) => t.id === t1));
+  assert.ok(activeTodos.some((t) => t.id === t2));
+  assert.ok(!activeTodos.some((t) => t.id === t3));
+  assert.ok(!activeTodos.some((t) => t.id === t4));
+
+  // Pulihkan dengan restoreLastDeleted
+  const restoredBatch = store.restoreLastDeleted(chatId);
+  assert.ok(restoredBatch);
+  assert.strictEqual(restoredBatch.type, "todoBatch");
+  assert.strictEqual(restoredBatch.count, 2);
+
+  // Periksa tugas setelah dipulihkan dengan includeDone=true
+  const allTodos = store.getTodos(chatId, false, null, true);
+  assert.strictEqual(allTodos.length, 4);
+});
+
 
 

@@ -146,6 +146,14 @@ export const TOOLS = [
         }
       },
       {
+        name: "clearCompletedTodos",
+        description: "Hapus semua tugas yang sudah berstatus selesai ([SELESAI]) dari To-Do List. Panggil tool ini saat user minta menghapus atau membersihkan tugas yang sudah selesai/done (contoh: 'yg done apus', 'hapus semua yang selesai', 'bersihkan tugas yang sudah selesai').",
+        parameters: {
+          type: "OBJECT",
+          properties: {}
+        }
+      },
+      {
         name: "addReminder",
         description: "Buat pengingat/reminder atau jadwal acara/agenda yang akan otomatis diping ke WhatsApp",
         parameters: {
@@ -914,51 +922,90 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         instruction: "WAJIB kembalikan persis teks di field 'formatted' apa adanya sebagai konfirmasi perubahan tugas. DILARANG memformat ulang, DILARANG mengubah bullet, dan DILARANG menambahkan pertanyaan penawaran bantuan di akhir."
       };
     }
+  } else if (name === "clearCompletedTodos") {
+    const queryChatId = isGroup ? chatId : (callerId || chatId);
+    const result = store.clearCompletedTodos ? store.clearCompletedTodos(queryChatId) : { count: 0, items: [] };
+    const remaining = store.getTodos(queryChatId, false);
+    if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
+    formattedList = formatTodoList(remaining, isGroup);
+    if (result.count === 0) {
+      toolResult = {
+        success: false,
+        message: "Tidak ada tugas berstatus selesai yang perlu dihapus.",
+        remainingCount: remaining.length,
+        formattedList
+      };
+    } else {
+      toolResult = {
+        success: true,
+        deletedCount: result.count,
+        remainingCount: remaining.length,
+        formattedList,
+        instruction: "Informasikan bahwa tugas selesai berhasil dihapus dan dapat dipulihkan dengan #undo. Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'."
+      };
+    }
   } else if (name === "deleteTodo") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    let targetId = args.todoId;
-    if (!targetId && args.taskQuery) {
-      const found = store.findTodo(queryChatId, args.taskQuery);
-      if (found) targetId = found.id;
-    }
-    const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
-    const targetTodo = !targetId ? null : (useRaw ? store.getTodoByRealId(targetId, queryChatId) : store.getTodoById(targetId, queryChatId));
-    if (!targetTodo) {
-      toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
+    if (
+      (!args.todoId && args.taskQuery && /^(?:selesai|done|yang\s+selesai|yg\s+done|tugas\s+selesai)$/i.test(String(args.taskQuery).trim())) ||
+      args.clearCompleted === true
+    ) {
+      const result = store.clearCompletedTodos ? store.clearCompletedTodos(queryChatId) : { count: 0, items: [] };
+      const remaining = store.getTodos(queryChatId, false);
+      if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
+      formattedList = formatTodoList(remaining, isGroup);
+      toolResult = {
+        success: result.count > 0,
+        deletedCount: result.count,
+        remainingCount: remaining.length,
+        formattedList,
+        instruction: "Informasikan bahwa tugas selesai berhasil dihapus dan dapat dipulihkan dengan #undo. Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'."
+      };
     } else {
-      const isConfirmed = Boolean(
-        args.confirmed === true ||
-        (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
-        (userText && /\b(hapus|apus|del|delete)\s+(?:tugas|todo)\s+\d+\b/i.test(userText)) ||
-        (userText && /\b\d+\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
-      );
-
-      const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
-      const isPendingMatch = pending && pending.type === "todo" && pending.id === targetTodo.id;
-
-      if (!isConfirmed && !isPendingMatch) {
-        if (store.setPendingDeletion) {
-          store.setPendingDeletion(queryChatId, { type: "todo", id: targetTodo.id, title: targetTodo.task });
-        }
-        toolResult = {
-          status: "pending_confirmation",
-          todoId: targetTodo.id,
-          task: targetTodo.task,
-          message: `Penghapusan tugas #${targetTodo.id} ("${targetTodo.task}") membutuhkan konfirmasi pengguna. Minta konfirmasi ke pengguna dengan jelas (contoh: "Apakah kamu yakin ingin menghapus to-do '${targetTodo.task}'? Ketik ya untuk menghapus"). DILARANG menyatakan tugas sudah terhapus sebelum ada konfirmasi.`
-        };
+      let targetId = args.todoId;
+      if (!targetId && args.taskQuery) {
+        const found = store.findTodo(queryChatId, args.taskQuery);
+        if (found) targetId = found.id;
+      }
+      const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
+      const targetTodo = !targetId ? null : (useRaw ? store.getTodoByRealId(targetId, queryChatId) : store.getTodoById(targetId, queryChatId));
+      if (!targetTodo) {
+        toolResult = { error: "Tugas tidak ditemukan untuk dihapus." };
       } else {
-        if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
-        const changes = store.deleteTodo(targetTodo.id, queryChatId, { rawId: true });
-        const remaining = store.getTodos(queryChatId, false);
-        if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
-        formattedList = formatTodoList(remaining, isGroup);
-        toolResult = {
-          success: changes > 0,
-          deletedId: targetTodo.id,
-          remainingCount: remaining.length,
-          formattedList,
-          instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus. Informasikan ke pengguna bahwa tugas bisa dipulihkan dengan mengetik #undo."
-        };
+        const isConfirmed = Boolean(
+          args.confirmed === true ||
+          (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
+          (userText && /\b(hapus|apus|del|delete)\s+(?:tugas|todo)\s+\d+\b/i.test(userText)) ||
+          (userText && /\b\d+\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+        );
+
+        const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
+        const isPendingMatch = pending && pending.type === "todo" && pending.id === targetTodo.id;
+
+        if (!isConfirmed && !isPendingMatch) {
+          if (store.setPendingDeletion) {
+            store.setPendingDeletion(queryChatId, { type: "todo", id: targetTodo.id, title: targetTodo.task });
+          }
+          toolResult = {
+            status: "pending_confirmation",
+            todoId: targetTodo.id,
+            task: targetTodo.task,
+            message: `Penghapusan tugas #${targetTodo.id} ("${targetTodo.task}") membutuhkan konfirmasi pengguna. Minta konfirmasi ke pengguna dengan jelas (contoh: "Apakah kamu yakin ingin menghapus to-do '${targetTodo.task}'? Ketik ya untuk menghapus"). DILARANG menyatakan tugas sudah terhapus sebelum ada konfirmasi.`
+          };
+        } else {
+          if (store.clearPendingDeletion) store.clearPendingDeletion(queryChatId);
+          const changes = store.deleteTodo(targetTodo.id, queryChatId, { rawId: true });
+          const remaining = store.getTodos(queryChatId, false);
+          if (store.rememberTodoList) store.rememberTodoList(queryChatId, remaining);
+          formattedList = formatTodoList(remaining, isGroup);
+          toolResult = {
+            success: changes > 0,
+            deletedId: targetTodo.id,
+            remainingCount: remaining.length,
+            formattedList,
+            instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus. Informasikan ke pengguna bahwa tugas bisa dipulihkan dengan mengetik #undo."
+          };
+        }
       }
     }
   } else if (name === "addReminder") {

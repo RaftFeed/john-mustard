@@ -308,3 +308,40 @@ test("Commands: executeFastCommand done auto-deletes overdue completed todo and 
   assert.strictEqual(rawFuture.deleted_at, null);
 });
 
+test("Commands: parseFastCommand and executeFastCommand clearDone deletes completed tasks and supports undo", async () => {
+  assert.strictEqual(parseFastCommand("#clear-done").type, "clearDone");
+  assert.strictEqual(parseFastCommand("#cleardone").type, "clearDone");
+  assert.strictEqual(parseFastCommand("#del-done").type, "clearDone");
+  assert.strictEqual(parseFastCommand("yg done apus").type, "clearDone");
+  assert.strictEqual(parseFastCommand("hapus yg done").type, "clearDone");
+  assert.strictEqual(parseFastCommand("hapus tugas yang sudah selesai").type, "clearDone");
+  assert.strictEqual(parseFastCommand("semua tugas selesai hapus").type, "clearDone");
+
+  const store = new Storage(":memory:");
+  const chatId = "user_clear_cmd";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Tester" };
+
+  // Kasus tidak ada tugas selesai
+  const noDoneRes = await executeFastCommand({ type: "clearDone" }, ctx);
+  assert.ok(noDoneRes.includes("Tidak ada tugas berstatus selesai"));
+
+  // Tambah beberapa tugas
+  const t1 = store.addTodo(chatId, "Task 1");
+  const t2 = store.addTodo(chatId, "Task 2");
+  const t3 = store.addTodo(chatId, "Task 3");
+  store.completeTodo(t2, chatId, { rawId: true });
+  store.completeTodo(t3, chatId, { rawId: true });
+
+  const clearRes = await executeFastCommand({ type: "clearDone" }, ctx);
+  assert.ok(clearRes.includes("Berhasil menghapus 2 tugas"));
+  assert.ok(clearRes.includes("#undo"));
+
+  // Check remaining todos
+  assert.strictEqual(store.getTodos(chatId, false).length, 1);
+
+  // Undo batch
+  const undoRes = await executeFastCommand(parseFastCommand("#undo"), ctx);
+  assert.ok(undoRes.includes("Berhasil memulihkan 2 tugas"));
+  assert.strictEqual(store.getTodos(chatId, false, null, true).length, 3);
+});
+

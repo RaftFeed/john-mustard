@@ -62,6 +62,15 @@ export function parseFastCommand(text = "") {
     return { type: "week" };
   }
 
+  // Clear completed tasks (hapus tugas selesai / yg done apus / #clear-done)
+  if (
+    /^(?:#)?(?:clear-?done|hapus-?done|del-?done|clean-?done|hapus-?selesai)$/i.test(trimmed) ||
+    /^(?:#)?(?:tolong\s+)?(?:hapus|apus|del|delete|clear|bersihkan)\s+(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)$/i.test(trimmed) ||
+    /^(?:#)?(?:tolong\s+)?(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)\s+(?:tolong\s+)?(?:hapus|apus|del|delete|clear|bersihkan)$/i.test(trimmed)
+  ) {
+    return { type: "clearDone" };
+  }
+
   // Explicit Reminder Delete (hapus acara 1, 1 acara apus, del agenda 2, etc.)
   const remDelMatch =
     trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event|reminder)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
@@ -543,7 +552,12 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       if (store.restoreLastDeleted) {
         const restoredDel = store.restoreLastDeleted(chatId);
         if (restoredDel) {
-          if (restoredDel.type === "todo") {
+          if (restoredDel.type === "todoBatch") {
+            const remaining = store.getTodos ? store.getTodos(chatId, false) : [];
+            rememberTodos(remaining);
+            const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
+            return `[OK] Berhasil memulihkan ${restoredDel.count} tugas yang sebelumnya selesai.${formatted}`;
+          } else if (restoredDel.type === "todo") {
             const remaining = store.getTodos ? store.getTodos(chatId, false) : [];
             rememberTodos(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
@@ -632,6 +646,18 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
         reply += `\n\n${formatRemindersList(remaining)}`;
       }
       return reply;
+    }
+
+    case "clearDone": {
+      const isGroup = String(chatId).endsWith("@g.us");
+      const result = store.clearCompletedTodos ? store.clearCompletedTodos(chatId) : { count: 0, items: [] };
+      if (!result || result.count === 0) {
+        return "[!] Tidak ada tugas berstatus selesai yang perlu dihapus.";
+      }
+      const remaining = store.getTodos ? store.getTodos(chatId, false) : [];
+      rememberTodos(remaining);
+      const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
+      return `[OK] Berhasil menghapus ${result.count} tugas yang sudah selesai (Ketik #undo untuk memulihkan).${formatted}`;
     }
 
     case "moveToTodo": {

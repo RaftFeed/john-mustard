@@ -1262,6 +1262,31 @@ export class Storage {
     return { count: items.length, items };
   }
 
+  clearCompletedTodos(chatId) {
+    if (!chatId) return { count: 0, items: [] };
+    const scope = getUserTodoScope(chatId, this);
+    const now = Date.now();
+    let items = [];
+    if (scope.isGroup) {
+      items = this.db.prepare("SELECT * FROM todos WHERE chat_id = ? AND done = 1 AND deleted_at IS NULL").all(chatId);
+    } else {
+      const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
+      const namePlaceholders = scope.names.map(() => "?").join(", ");
+      let cond = `chat_id IN (${cidPlaceholders})`;
+      if (scope.names.length > 0) cond += ` OR LOWER(assignee) IN (${namePlaceholders})`;
+      items = this.db.prepare(`SELECT * FROM todos WHERE (${cond}) AND done = 1 AND deleted_at IS NULL`).all(...scope.chatIds, ...scope.names);
+    }
+    if (!items || items.length === 0) return { count: 0, items: [] };
+
+    const stmt = this.db.prepare("UPDATE todos SET deleted_at = ? WHERE id = ?");
+    for (const item of items) {
+      stmt.run(now, item.id);
+    }
+    const batchRecord = { type: "todoBatch", items: items.map((item) => ({ ...item, deleted_at: now })) };
+    this.recordDeletedItem(chatId, batchRecord);
+    return { count: items.length, items };
+  }
+
   deleteTodo(id, chatId, { rawId = false } = {}) {
     const existing = rawId ? this.getTodoByRealId(parseInt(id, 10), chatId) : this.getTodoById(id, chatId);
     if (!existing) return 0;
@@ -1316,7 +1341,18 @@ export class Storage {
 
     if (!last) return null;
 
-    if (last.type === "todo") {
+    if (last.type === "todoBatch" && Array.isArray(last.items) && last.items.length > 0) {
+      let restoredCount = 0;
+      const stmt = this.db.prepare("UPDATE todos SET deleted_at = NULL WHERE id = ?");
+      for (const item of last.items) {
+        if (stmt.run(item.id).changes > 0) restoredCount++;
+      }
+      if (restoredCount > 0) {
+        this.lastDeletedByChat.delete(chatId);
+        this.lastDeletedByChat.delete(key);
+        return { type: "todoBatch", count: restoredCount, items: last.items.map((i) => ({ ...i, deleted_at: null })) };
+      }
+    } else if (last.type === "todo") {
       const res = this.db.prepare("UPDATE todos SET deleted_at = NULL WHERE id = ?").run(last.item.id);
       if (res.changes > 0) {
         this.lastDeletedByChat.delete(chatId);

@@ -300,7 +300,7 @@ export async function fetchUrlContent(rawUrl) {
 }
 
 const MUTATION_TOOLS = new Set([
-  "addTodo", "completeTodo", "uncompleteTodo", "updateTodo", "deleteTodo", "undoLastTodo",
+  "addTodo", "completeTodo", "uncompleteTodo", "updateTodo", "deleteTodo", "clearCompletedTodos", "undoLastTodo",
   "addReminder", "deleteReminder", "updateReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
   "submitFeatureRequest",
   "saveSkill", "deleteSkill", "updateSkill", "saveNote", "appendNote", "deleteNote",

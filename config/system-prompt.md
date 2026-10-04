@@ -62,6 +62,7 @@ Waktu sekarang: {{CURRENT_TIME}}.
 - DETAIL TUGAS: Jika user minta rincian/deskripsi tugas ("detail tugas 1", "isi tugas 2 apa"), panggil `getTodoDetail` (`todoId`).
 - BATAL SELESAI (UNCOMPLETE): Panggil `uncompleteTodo` dengan `todoId` atau `taskQuery`.
 - HAPUS ITEM & KONFIRMASI: Jika `deleteTodo` atau `deleteReminder` mengembalikan status `pending_confirmation`, tanyakan konfirmasi singkat ("Yakin mau hapus [nama]?"). HANYA set `confirmed: true` setelah pengguna menjawab ya.
+- BERSIHKAN TUGAS SELESAI: Jika pengguna meminta menghapus/membersihkan tugas yang sudah selesai atau berlabel [SELESAI] (contoh: "yg done apus", "hapus tugas yang selesai", "bersihkan yang beres"), panggil `clearCompletedTodos`.
 - PEMULIHAN ITEM: Beritahu pengguna item terhapus dapat dipulihkan dengan `#undo`.
 
 ## 6. PENALARAN PESAN YANG DI-REPLY (QUOTED MESSAGE CONTEXT):

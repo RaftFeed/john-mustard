@@ -1408,3 +1408,52 @@ test("LLM Engine: extractCandidateText drops leaked reasoning with tool-result d
   };
   assert.strictEqual(extractCandidateText(candidateSalvage), "Ada 2 to-do yang terlewat, yakin mau dihapus?");
 });
+
+test("LLM Engine: extractCandidateText filters out Debugging opener leaks", () => {
+  const candidateFullLeak = {
+    parts: [
+      {
+        text: "Debugging a Potential Backend Issue\n\nOkay, hold on a second. I just tried to deleteTodo with taskQuery: \"SELESAI\", and it returned an empty string, which is highly unusual. That's not the behavior I'd expect."
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateFullLeak), "");
+
+  const candidateLeakWithList = {
+    parts: [
+      {
+        text: "Debugging a Potential Backend Issue\n\nOkay, hold on a second. I just tried to deleteTodo with taskQuery: \"SELESAI\"...\n\n🌄 [To-Do List]\n_Selamat siang!_\n\n🟡 *[1] Task 1*"
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateLeakWithList), "🌄 [To-Do List]\n_Selamat siang!_\n\n🟡 *[1] Task 1*");
+});
+
+test("LLM Tools: clearCompletedTodos clears done todos and deleteTodo falls back cleanly", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_llm_clear";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Tester" };
+
+  const t1 = store.addTodo(chatId, "Belajar React");
+  const t2 = store.addTodo(chatId, "Sholat Dzuhur");
+  const t3 = store.addTodo(chatId, "Cek broksum");
+
+  store.completeTodo(t2, chatId, { rawId: true });
+  store.completeTodo(t3, chatId, { rawId: true });
+
+  // 1. Tool clearCompletedTodos
+  const res1 = await executeTool("clearCompletedTodos", {}, ctx);
+  assert.strictEqual(res1.toolResult.success, true);
+  assert.strictEqual(res1.toolResult.deletedCount, 2);
+  assert.strictEqual(store.getTodos(chatId, false).length, 1);
+
+  // Undo batch
+  store.restoreLastDeleted(chatId);
+  assert.strictEqual(store.getTodos(chatId, false, null, true).length, 3);
+
+  // 2. Defensive fallback via deleteTodo with taskQuery "SELESAI"
+  const res2 = await executeTool("deleteTodo", { taskQuery: "SELESAI" }, ctx);
+  assert.strictEqual(res2.toolResult.success, true);
+  assert.strictEqual(res2.toolResult.deletedCount, 2);
+  assert.strictEqual(store.getTodos(chatId, false).length, 1);
+});

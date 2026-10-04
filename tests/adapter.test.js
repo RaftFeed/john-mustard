@@ -142,5 +142,14 @@ test("LLM Engine: extractCandidateText filters out leaked CoT headers without th
     ]
   };
   assert.strictEqual(extractCandidateText(candidateFullLeakBold), "");
+
+  const candidateDebuggingLeak = {
+    parts: [
+      {
+        text: "Debugging a Potential Backend Issue\n\nOkay, hold on a second. I just tried to deleteTodo with taskQuery: \"SELESAI\", and it returned an empty string, which is highly unusual."
+      }
+    ]
+  };
+  assert.strictEqual(extractCandidateText(candidateDebuggingLeak), "");
 });
 
