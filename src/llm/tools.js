@@ -90,7 +90,7 @@ export const TOOLS = [
       },
       {
         name: "completeTodo",
-        description: "Tandai tugas di To-Do List sebagai selesai",
+        description: "Tandai tugas di To-Do List sebagai selesai. Jika tugas ini memiliki deadline dan deadlinenya sudah lewat, sistem otomatis menghapusnya dari daftar aktif.",
         parameters: {
           type: "OBJECT",
           properties: {

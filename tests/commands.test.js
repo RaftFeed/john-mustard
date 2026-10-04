@@ -313,6 +313,9 @@ test("Commands: parseFastCommand and executeFastCommand clearDone deletes comple
   assert.strictEqual(parseFastCommand("#cleardone").type, "clearDone");
   assert.strictEqual(parseFastCommand("#del-done").type, "clearDone");
   assert.strictEqual(parseFastCommand("yg done apus").type, "clearDone");
+  assert.strictEqual(parseFastCommand("Yg udh done apus aja").type, "clearDone");
+  assert.strictEqual(parseFastCommand("bersihin yang beres").type, "clearDone");
+  assert.strictEqual(parseFastCommand("hapus yang selesai").type, "clearDone");
   assert.strictEqual(parseFastCommand("hapus yg done").type, "clearDone");
   assert.strictEqual(parseFastCommand("hapus tugas yang sudah selesai").type, "clearDone");
   assert.strictEqual(parseFastCommand("semua tugas selesai hapus").type, "clearDone");
