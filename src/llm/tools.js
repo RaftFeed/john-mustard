@@ -12,6 +12,7 @@ import {
   formatNotesList,
   formatRemindersList,
   formatPersonList,
+  formatVaultList,
   normalizePhone,
   OWNER_PHONE,
   isOwner,
@@ -235,6 +236,49 @@ export const TOOLS = [
         }
       },
       {
+        name: "listVaultFiles",
+        description: "Tampilkan daftar file dokumen/gambar yang tersimpan di Document Vault secara ringkas dengan nomor urut [1..N]",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            category: {
+              type: "STRING",
+              description: "Filter kategori opsional: id_cards, receipts, documents, media"
+            },
+            limit: {
+              type: "NUMBER",
+              description: "Jumlah file maksimal yang ditampilkan (default 10)"
+            }
+          }
+        }
+      },
+      {
+        name: "deleteVaultFile",
+        description: "Hapus file dokumen atau gambar dari Document Vault. Panggil tool ini saat user minta menghapus file atau menyebut nomor file dari daftar Vault yang baru saja ditampilkan (contoh: '1 apus aja', 'hapus file promo diskon', 'del vault 2').",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            fileId: { type: "NUMBER", description: "Nomor urut visual [1..N] atau ID file di Document Vault" },
+            filenameQuery: { type: "STRING", description: "Kata kunci nama file jika nomor tidak disebutkan" },
+            confirmed: { type: "BOOLEAN", description: "Set true jika pengguna sudah secara eksplisit mengonfirmasi penghapusan" }
+          }
+        }
+      },
+      {
+        name: "updateVaultFile",
+        description: "Ubah nama file, kategori, atau ringkasan dokumen di Document Vault",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            fileId: { type: "NUMBER", description: "Nomor urut visual [1..N] atau ID file di Document Vault" },
+            filenameQuery: { type: "STRING", description: "Kata kunci nama file jika nomor tidak disebutkan" },
+            newFilename: { type: "STRING", description: "Nama file baru" },
+            newCategory: { type: "STRING", description: "Kategori baru: id_cards, receipts, documents, media" },
+            newSummary: { type: "STRING", description: "Ringkasan / deskripsi baru untuk file" }
+          }
+        }
+      },
+      {
         name: "sendVaultFile",
         description: "Kirim file dokumen atau foto dari Vault langsung ke chat WhatsApp pengguna",
         parameters: {
@@ -302,6 +346,17 @@ export const TOOLS = [
         }
       },
       {
+        name: "deleteBacklog",
+        description: "Hapus ide improvement dari backlog (khusus owner/admin)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            backlogId: { type: "NUMBER", description: "ID backlog yang ingin dihapus" }
+          },
+          required: ["backlogId"]
+        }
+      },
+      {
         name: "submitFeatureRequest",
         description: "Catat dan laporkan usulan / request fitur baru dari pengguna (bisa dipanggil oleh siapa saja). Otomatis mengirimkan notifikasi ke master/owner.",
         parameters: {
@@ -320,6 +375,17 @@ export const TOOLS = [
           properties: {
             status: { type: "STRING", description: "Filter status: 'pending', 'done', atau 'all'. Default 'pending'." }
           }
+        }
+      },
+      {
+        name: "deleteFeatureRequest",
+        description: "Hapus usulan / request fitur pengguna dari daftar (khusus owner/master)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            requestId: { type: "NUMBER", description: "ID feature request yang ingin dihapus" }
+          },
+          required: ["requestId"]
         }
       },
       {
@@ -741,7 +807,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   const callerId = senderNumber || chatId;
 
   const isGroup = String(chatId).endsWith("@g.us");
-  if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess")) {
+  if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess" || name === "listVaultFiles" || name === "deleteVaultFile" || name === "updateVaultFile")) {
     return {
       toolResult: { error: "Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik." },
       formattedList: null
@@ -1183,6 +1249,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       }
     }
     const files = store.searchVaultFiles(args.query || "", args.category || null, callerId, queryEmbedding);
+    if (store.rememberVaultList) {
+      store.rememberVaultList(chatId, files);
+    }
+    formattedList = formatVaultList(files);
     toolResult = {
       count: files.length,
       files: files.map((f) => ({
@@ -1190,8 +1260,106 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         filename: f.filename,
         category: f.category,
         summary: f.summary
-      }))
+      })),
+      formatted: formattedList
     };
+  } else if (name === "listVaultFiles") {
+    const files = store.listVaultFiles(callerId, {
+      category: args.category || null,
+      limit: typeof args.limit === "number" ? args.limit : 10
+    });
+    if (store.rememberVaultList) {
+      store.rememberVaultList(chatId, files);
+    }
+    formattedList = formatVaultList(files);
+    toolResult = {
+      count: files.length,
+      files: files.map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        category: f.category,
+        summary: f.summary
+      })),
+      formatted: formattedList
+    };
+  } else if (name === "deleteVaultFile") {
+    let targetId = args.fileId;
+    if (!targetId && args.filenameQuery) {
+      const found = store.getVaultFileByName(args.filenameQuery, callerId);
+      if (found) targetId = found.id;
+    }
+    const realId = store.resolveVaultFileId ? store.resolveVaultFileId(targetId, chatId) : parseInt(targetId, 10);
+    const targetFile = realId ? store.getVaultFileById(realId) : null;
+
+    if (!targetFile || targetFile.deleted_at) {
+      toolResult = { error: "File tidak ditemukan di Document Vault." };
+    } else if (!isOwner(chatId, senderNumber) && targetFile.owner_id && normalizePhone(targetFile.owner_id) !== normalizePhone(callerId)) {
+      toolResult = { error: "Akses ditolak. Anda hanya dapat menghapus file milik Anda sendiri." };
+    } else {
+      const isConfirmed = Boolean(
+        args.confirmed === true ||
+        (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
+        (userText && /\b(hapus|apus|del|delete)\s+(?:file|vault|dokumen)?\s*\d+\b/i.test(userText)) ||
+        (userText && /\b\d+\s+(?:file|vault|dokumen)?\s*(?:hapus|apus|del|delete)\b/i.test(userText))
+      );
+
+      const pending = store.getPendingDeletion ? store.getPendingDeletion(chatId) : null;
+      const isPendingMatch = pending && pending.type === "vault" && pending.id === targetFile.id;
+
+      if (!isConfirmed && !isPendingMatch) {
+        if (store.setPendingDeletion) {
+          store.setPendingDeletion(chatId, { type: "vault", id: targetFile.id, title: targetFile.filename });
+        }
+        toolResult = {
+          status: "pending_confirmation",
+          fileId: targetFile.id,
+          filename: targetFile.filename,
+          message: `Penghapusan file #${targetFile.id} ("${targetFile.filename}") membutuhkan konfirmasi pengguna. Minta konfirmasi (contoh: "Apakah kamu yakin ingin menghapus file '${targetFile.filename}' dari Vault?"). DILARANG menyatakan file sudah terhapus sebelum ada konfirmasi.`
+        };
+      } else {
+        if (store.clearPendingDeletion) store.clearPendingDeletion(chatId);
+        const changes = store.deleteVaultFile(targetFile.id, callerId);
+        const remaining = store.listVaultFiles(callerId);
+        if (store.rememberVaultList) store.rememberVaultList(chatId, remaining);
+        formattedList = formatVaultList(remaining);
+        toolResult = {
+          success: changes > 0,
+          deletedId: targetFile.id,
+          filename: targetFile.filename,
+          remainingCount: remaining.length,
+          formattedList,
+          message: `File '${targetFile.filename}' berhasil dihapus dari Vault dan dipindahkan ke .trash. (Ketik #undo kalau mau membatalkan/restore).`,
+          instruction: "Informasikan bahwa file Vault berhasil dihapus dan bisa dipulihkan dengan #undo."
+        };
+      }
+    }
+  } else if (name === "updateVaultFile") {
+    let targetId = args.fileId;
+    if (!targetId && args.filenameQuery) {
+      const found = store.getVaultFileByName(args.filenameQuery, callerId);
+      if (found) targetId = found.id;
+    }
+    const realId = store.resolveVaultFileId ? store.resolveVaultFileId(targetId, chatId) : parseInt(targetId, 10);
+    const targetFile = realId ? store.getVaultFileById(realId) : null;
+
+    if (!targetFile || targetFile.deleted_at) {
+      toolResult = { error: "File tidak ditemukan di Document Vault." };
+    } else {
+      const changes = store.updateVaultFile(targetFile.id, callerId, {
+        filename: args.newFilename,
+        category: args.newCategory,
+        summary: args.newSummary
+      });
+      if (changes > 0) {
+        toolResult = {
+          success: true,
+          fileId: targetFile.id,
+          message: `File #${targetFile.id} di Document Vault berhasil diperbarui.`
+        };
+      } else {
+        toolResult = { error: "Gagal memperbarui file Vault atau akses ditolak." };
+      }
+    }
   } else if (name === "sendVaultFile") {
     const file = store.getVaultFileById(args.fileId);
     if (!file) {
@@ -1292,6 +1460,20 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const list = store.getFeatureRequests(args.status || "pending");
       formattedList = formatFeatureRequestsList(list);
       toolResult = { count: list.length, requests: list, formatted: formattedList };
+    }
+  } else if (name === "deleteBacklog") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: `Fitur backlog hanya khusus untuk nomor admin/owner (+${OWNER_PHONE}).` };
+    } else {
+      const changes = store.deleteBacklog(args.backlogId, chatId);
+      toolResult = { success: changes > 0, backlogId: args.backlogId };
+    }
+  } else if (name === "deleteFeatureRequest") {
+    if (!isOwner(chatId, senderNumber)) {
+      toolResult = { error: `Daftar request fitur hanya bisa dikelola oleh master (+${OWNER_PHONE}).` };
+    } else {
+      const changes = store.deleteFeatureRequest(args.requestId, chatId);
+      toolResult = { success: changes > 0, requestId: args.requestId };
     }
   } else if (name === "searchWeb") {
     const apiKey = process.env.TAVILY_API_KEY;

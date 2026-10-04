@@ -345,3 +345,109 @@ test("Commands: parseFastCommand and executeFastCommand clearDone deletes comple
   assert.strictEqual(store.getTodos(chatId, false, null, true).length, 3);
 });
 
+test("Commands: Unified Fast Commands CRUD for Vault, Notes, Contacts, Backlogs, and Requests", async () => {
+  // 1. Parsing tests
+  assert.strictEqual(parseFastCommand("#vault").type, "vaultList");
+  assert.strictEqual(parseFastCommand("#vault list").type, "vaultList");
+  assert.strictEqual(parseFastCommand("#vault cari steam").type, "vaultSearch");
+  assert.strictEqual(parseFastCommand("#vault cari steam").query, "steam");
+  assert.strictEqual(parseFastCommand("#vault get 2").type, "vaultGet");
+  assert.strictEqual(parseFastCommand("#vault get 2").id, 2);
+  assert.strictEqual(parseFastCommand("#vault del 1").type, "vaultDel");
+  assert.strictEqual(parseFastCommand("#vault del 1").id, 1);
+  assert.strictEqual(parseFastCommand("#vault rename 1 new_file.pdf").type, "vaultRename");
+  assert.strictEqual(parseFastCommand("#vault rename 1 new_file.pdf").name, "new_file.pdf");
+
+  assert.strictEqual(parseFastCommand("#notes").type, "noteList");
+  assert.strictEqual(parseFastCommand("#note list").type, "noteList");
+  assert.strictEqual(parseFastCommand("#note get wifi").type, "noteGet");
+  assert.strictEqual(parseFastCommand("#note get wifi").key, "wifi");
+  assert.strictEqual(parseFastCommand("#note add wifi sandi123").type, "noteAdd");
+  assert.strictEqual(parseFastCommand("#note add wifi sandi123").key, "wifi");
+  assert.strictEqual(parseFastCommand("#note add wifi sandi123").content, "sandi123");
+  assert.strictEqual(parseFastCommand("#note del wifi").type, "noteDel");
+  assert.strictEqual(parseFastCommand("#note del wifi").key, "wifi");
+
+  assert.strictEqual(parseFastCommand("#kontak add Joko | 0812345 | Teman | Teman SMA").type, "contactAdd");
+  assert.strictEqual(parseFastCommand("#kontak del Joko").type, "contactDel");
+  assert.strictEqual(parseFastCommand("#kontak del Joko").name, "Joko");
+
+  assert.strictEqual(parseFastCommand("#backlog del 3").type, "backlogDel");
+  assert.strictEqual(parseFastCommand("#backlog del 3").id, 3);
+
+  assert.strictEqual(parseFastCommand("#request del 4").type, "requestDel");
+  assert.strictEqual(parseFastCommand("#request del 4").id, 4);
+  assert.strictEqual(parseFastCommand("#fr del 4").type, "requestDel");
+
+  // 2. Execution tests
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Lord Rafid" };
+
+  // Vault execution
+  const vId = store.saveVaultFile({
+    ownerId: chatId,
+    filename: "Steam Promo",
+    category: "documents",
+    filepath: "vault/documents/promo.pdf",
+    mimetype: "application/pdf",
+    filesize: 1024,
+    summary: "Diskon 50%"
+  });
+
+  const vListRes = await executeFastCommand(parseFastCommand("#vault"), ctx);
+  assert.ok(vListRes.includes("Steam Promo"));
+  assert.ok(vListRes.includes("[1]"));
+
+  const vSearchRes = await executeFastCommand(parseFastCommand("#vault cari steam"), ctx);
+  assert.ok(vSearchRes.includes("Steam Promo"));
+
+  const vRenameRes = await executeFastCommand(parseFastCommand("#vault rename 1 Steam Sale Summer"), ctx);
+  assert.ok(vRenameRes.includes("berhasil diupdate"));
+  assert.strictEqual(store.getVaultFileById(vId).filename, "Steam Sale Summer");
+
+  const vDelRes = await executeFastCommand(parseFastCommand("#vault del 1"), ctx);
+  assert.ok(vDelRes.includes("berhasil dihapus"));
+  assert.strictEqual(store.listVaultFiles(chatId).length, 0);
+
+  // Undo vault
+  const undoRes = await executeFastCommand(parseFastCommand("#undo"), ctx);
+  assert.ok(undoRes.includes("berhasil dipulihkan"));
+  assert.strictEqual(store.listVaultFiles(chatId).length, 1);
+
+  // Notes execution
+  const noteAddRes = await executeFastCommand(parseFastCommand("#note add wifi sandi123"), ctx);
+  assert.ok(noteAddRes.includes("Catatan 'wifi' berhasil disimpan"));
+
+  const noteGetRes = await executeFastCommand(parseFastCommand("#note get wifi"), ctx);
+  assert.ok(noteGetRes.includes("sandi123"));
+
+  const noteListRes = await executeFastCommand(parseFastCommand("#note list"), ctx);
+  assert.ok(noteListRes.includes("wifi"));
+
+  const noteDelRes = await executeFastCommand(parseFastCommand("#note del wifi"), ctx);
+  assert.ok(noteDelRes.includes("berhasil dihapus"));
+
+  // Contacts execution
+  const cAddRes = await executeFastCommand(parseFastCommand("#kontak add Joko | 0812345 | Teman | Teman SMA"), ctx);
+  assert.ok(cAddRes.includes("berhasil disimpan"));
+  assert.strictEqual(store.getPerson("Joko")?.role, "Teman");
+
+  const cDelRes = await executeFastCommand(parseFastCommand("#kontak del Joko"), ctx);
+  assert.ok(cDelRes.includes("berhasil dihapus"));
+  assert.strictEqual(store.getPerson("Joko"), null);
+
+  // Backlog Del execution
+  const bId = store.addBacklog(chatId, "Ide super");
+  const bDelRes = await executeFastCommand(parseFastCommand(`#backlog del ${bId}`), ctx);
+  assert.ok(bDelRes.includes("berhasil dihapus"));
+  assert.strictEqual(store.getBacklogs(chatId).length, 0);
+
+  // Request Del execution
+  const rId = store.addFeatureRequest("628111", "User", "Fitur widget");
+  const rDelRes = await executeFastCommand(parseFastCommand(`#request del ${rId}`), ctx);
+  assert.ok(rDelRes.includes("berhasil dihapus"));
+  assert.strictEqual(store.getFeatureRequests().length, 0);
+});
+
+

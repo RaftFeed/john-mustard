@@ -164,6 +164,7 @@ export class Storage {
     // yang dirujuk user selalu cocok dengan list yang mereka lihat.
     this.lastTodoOrderByChat = new Map();
     this.lastReminderOrderByChat = new Map();
+    this.lastVaultOrderByChat = new Map();
     this.lastDeletedByChat = new Map();
     this.pendingDeletions = new Map();
     this.init();
@@ -173,7 +174,7 @@ export class Storage {
     try {
       const todos = this.db.prepare("SELECT count(*) as count FROM todos WHERE deleted_at IS NULL").get()?.count || 0;
       const pendingTodos = this.db.prepare("SELECT count(*) as count FROM todos WHERE done = 0 AND deleted_at IS NULL").get()?.count || 0;
-      const vault = this.db.prepare("SELECT count(*) as count FROM vault_files").get()?.count || 0;
+      const vault = this.db.prepare("SELECT count(*) as count FROM vault_files WHERE deleted_at IS NULL").get()?.count || 0;
       const notes = this.db.prepare("SELECT count(*) as count FROM notes").get()?.count || 0;
       const logs = this.db.prepare("SELECT count(*) as count FROM usage_logs").get()?.count || 0;
       return { todos, pendingTodos, vault, notes, logs };
@@ -217,7 +218,8 @@ export class Storage {
         filesize INTEGER NOT NULL,
         summary TEXT,
         embedding BLOB,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        deleted_at INTEGER DEFAULT NULL
       );
       CREATE TABLE IF NOT EXISTS file_permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,6 +324,7 @@ export class Storage {
     try { this.db.exec("ALTER TABLE reminders ADD COLUMN deleted_at INTEGER DEFAULT NULL"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN owner_id TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE vault_files ADD COLUMN embedding BLOB"); } catch {}
+    try { this.db.exec("ALTER TABLE vault_files ADD COLUMN deleted_at INTEGER DEFAULT NULL"); } catch {}
 
     // Seed default contact & whitelist directory
     this.initDefaultProfiles();
@@ -1005,7 +1008,7 @@ export class Storage {
     let sql = `
       SELECT DISTINCT v.* FROM vault_files v
       LEFT JOIN file_permissions p ON v.id = p.file_id
-      WHERE 1=1
+      WHERE v.deleted_at IS NULL
     `;
     const params = [];
 
@@ -1067,9 +1070,9 @@ export class Storage {
     const clean = String(filename).trim();
     if (ownerId) {
       const norm = normalizePhone(ownerId);
-      return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? AND (owner_id = ? OR owner_id = '') ORDER BY id DESC LIMIT 1").get(`%${clean}%`, norm);
+      return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? AND (owner_id = ? OR owner_id = '') AND deleted_at IS NULL ORDER BY id DESC LIMIT 1").get(`%${clean}%`, norm);
     }
-    return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? ORDER BY id DESC LIMIT 1").get(`%${clean}%`);
+    return this.db.prepare("SELECT * FROM vault_files WHERE filename LIKE ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1").get(`%${clean}%`);
   }
 
   resolveVaultFile(target, ownerId = null) {
@@ -1081,6 +1084,140 @@ export class Storage {
       if (byId) return byId;
     }
     return this.getVaultFileByName(str, ownerId);
+  }
+
+  listVaultFiles(userId = null, { category = null, limit = 20, offset = 0 } = {}) {
+    let sql = `
+      SELECT DISTINCT v.* FROM vault_files v
+      LEFT JOIN file_permissions p ON v.id = p.file_id
+      WHERE v.deleted_at IS NULL
+    `;
+    const params = [];
+
+    if (userId && !isOwner(userId)) {
+      const norm = normalizePhone(userId);
+      sql += " AND (v.owner_id = ? OR p.user_id = ? OR v.owner_id = '' OR v.owner_id IS NULL)";
+      params.push(norm, norm);
+    }
+
+    if (category) {
+      sql += " AND v.category = ?";
+      params.push(category);
+    }
+
+    sql += " ORDER BY v.id DESC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    return this.db.prepare(sql).all(...params);
+  }
+
+  rememberVaultList(chatId, files) {
+    if (!chatId || !Array.isArray(files)) return;
+    this.lastVaultOrderByChat.set(chatId, files.map((f) => f.id));
+  }
+
+  getVaultIndexSnapshot(chatId) {
+    const anchored = this.lastVaultOrderByChat.get(chatId);
+    if (anchored && anchored.length > 0) {
+      const rows = anchored
+        .map((id) => this.db.prepare("SELECT * FROM vault_files WHERE id = ? AND deleted_at IS NULL").get(id))
+        .filter(Boolean);
+      if (rows.length > 0) return rows;
+    }
+    return this.listVaultFiles(chatId);
+  }
+
+  resolveVaultFileId(idOrIndex, chatId) {
+    const num = parseInt(idOrIndex, 10);
+    if (isNaN(num)) return null;
+
+    if (!chatId) return num;
+
+    const snapshot = this.getVaultIndexSnapshot(chatId);
+    if (!snapshot || snapshot.length === 0) return num;
+
+    if (num >= 1 && num <= snapshot.length) {
+      return snapshot[num - 1].id;
+    }
+
+    const byId = snapshot.find((f) => f.id === num);
+    if (byId) return byId.id;
+
+    return num;
+  }
+
+  updateVaultFile(id, userId, { filename, category, summary } = {}) {
+    const file = this.db.prepare("SELECT * FROM vault_files WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!file) return 0;
+
+    if (userId && !isOwner(userId) && normalizePhone(file.owner_id) !== normalizePhone(userId)) {
+      return 0;
+    }
+
+    const newFilename = filename !== undefined ? String(filename).trim() : file.filename;
+    const newCategory = category !== undefined ? String(category).trim() : file.category;
+    const newSummary = summary !== undefined ? String(summary).trim() : file.summary;
+
+    let newFilepath = file.filepath;
+    if (category && category !== file.category && file.filepath && fs.existsSync(file.filepath)) {
+      const targetDir = path.join("vault", newCategory);
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+      const targetPath = path.join(targetDir, path.basename(file.filepath));
+      try {
+        fs.renameSync(file.filepath, targetPath);
+        newFilepath = targetPath;
+      } catch (err) {
+        console.warn("[Vault] Failed moving file on category update:", err.message);
+      }
+    }
+
+    const stmt = this.db.prepare(
+      "UPDATE vault_files SET filename = ?, category = ?, summary = ?, filepath = ? WHERE id = ?"
+    );
+    return stmt.run(newFilename, newCategory, newSummary, newFilepath, id).changes;
+  }
+
+  deleteVaultFile(id, userId, { hard = false } = {}) {
+    const file = this.db.prepare("SELECT * FROM vault_files WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!file) return 0;
+
+    if (userId && !isOwner(userId) && normalizePhone(file.owner_id) !== normalizePhone(userId)) {
+      return 0;
+    }
+
+    if (hard) {
+      if (file.filepath && fs.existsSync(file.filepath)) {
+        try { fs.unlinkSync(file.filepath); } catch {}
+      }
+      return this.db.prepare("DELETE FROM vault_files WHERE id = ?").run(id).changes;
+    }
+
+    const now = Date.now();
+    let trashPath = file.filepath;
+    if (file.filepath && fs.existsSync(file.filepath)) {
+      const trashDir = path.join("vault", ".trash");
+      if (!fs.existsSync(trashDir)) fs.mkdirSync(trashDir, { recursive: true });
+      trashPath = path.join(trashDir, path.basename(file.filepath));
+      try {
+        fs.renameSync(file.filepath, trashPath);
+      } catch (err) {
+        console.warn("[Vault] Failed moving file to .trash:", err.message);
+      }
+    }
+
+    const changes = this.db.prepare("UPDATE vault_files SET deleted_at = ?, filepath = ? WHERE id = ?").run(now, trashPath, id).changes;
+    if (changes > 0) {
+      this.recordDeletedItem(userId, {
+        type: "vault",
+        item: { ...file, deleted_at: now },
+        originalPath: file.filepath,
+        trashPath
+      });
+    }
+    return changes;
+  }
+
+  restoreLastDeletedVaultFile(userId) {
+    return this.restoreLastDeleted(userId);
   }
 
   completeTodo(id, chatId, { rawId = false } = {}) {
@@ -1326,16 +1463,29 @@ export class Storage {
         `SELECT * FROM reminders WHERE (${cidCond}) AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`
       ).get(...params);
 
-      if (lastTodo && lastReminder) {
-        if ((lastTodo.deleted_at || 0) >= (lastReminder.deleted_at || 0)) {
-          last = { type: "todo", item: lastTodo };
+      const normPhone = normalizePhone(chatId);
+      const isOwnerUser = isOwner(chatId);
+      let lastVault = null;
+      try {
+        if (isOwnerUser) {
+          lastVault = this.db.prepare(
+            `SELECT * FROM vault_files WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`
+          ).get();
         } else {
-          last = { type: "reminder", item: lastReminder };
+          lastVault = this.db.prepare(
+            `SELECT * FROM vault_files WHERE (owner_id = ? OR owner_id = '') AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`
+          ).get(normPhone);
         }
-      } else if (lastTodo) {
-        last = { type: "todo", item: lastTodo };
-      } else if (lastReminder) {
-        last = { type: "reminder", item: lastReminder };
+      } catch {}
+
+      const candidates = [];
+      if (lastTodo) candidates.push({ type: "todo", item: lastTodo, time: lastTodo.deleted_at || 0 });
+      if (lastReminder) candidates.push({ type: "reminder", item: lastReminder, time: lastReminder.deleted_at || 0 });
+      if (lastVault) candidates.push({ type: "vault", item: lastVault, time: lastVault.deleted_at || 0 });
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.time - a.time);
+        last = candidates[0];
       }
     }
 
@@ -1365,6 +1515,23 @@ export class Storage {
         this.lastDeletedByChat.delete(chatId);
         this.lastDeletedByChat.delete(key);
         return { type: "reminder", item: { ...last.item, deleted_at: null } };
+      }
+    } else if (last.type === "vault") {
+      const origPath = last.originalPath || last.item.filepath;
+      if (last.trashPath && fs.existsSync(last.trashPath) && origPath) {
+        try {
+          const parentDir = path.dirname(origPath);
+          if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+          fs.renameSync(last.trashPath, origPath);
+        } catch (err) {
+          console.warn("[Vault] Failed moving file back on undo:", err.message);
+        }
+      }
+      const res = this.db.prepare("UPDATE vault_files SET deleted_at = NULL, filepath = ? WHERE id = ?").run(origPath, last.item.id);
+      if (res.changes > 0) {
+        this.lastDeletedByChat.delete(chatId);
+        this.lastDeletedByChat.delete(key);
+        return { type: "vault", item: { ...last.item, deleted_at: null, filepath: origPath } };
       }
     }
 
@@ -1434,6 +1601,16 @@ export class Storage {
     ).run(id, norm).changes;
   }
 
+  deleteBacklog(id, userId) {
+    if (!isOwner(userId)) return 0;
+    return this.db.prepare("DELETE FROM backlogs WHERE id = ?").run(id).changes;
+  }
+
+  updateBacklog(id, userId, idea) {
+    if (!isOwner(userId)) return 0;
+    return this.db.prepare("UPDATE backlogs SET idea = ? WHERE id = ?").run(String(idea || "").trim(), id).changes;
+  }
+
   // --- Feature Requests (User Requests -> Master) ---
   addFeatureRequest(senderPhone, senderName, requestText) {
     const norm = normalizePhone(senderPhone);
@@ -1452,6 +1629,29 @@ export class Storage {
 
   completeFeatureRequest(id) {
     return this.db.prepare("UPDATE feature_requests SET status = 'done' WHERE id = ?").run(id).changes;
+  }
+
+  deleteFeatureRequest(id, userId) {
+    if (!isOwner(userId)) return 0;
+    return this.db.prepare("DELETE FROM feature_requests WHERE id = ?").run(id).changes;
+  }
+
+  updateFeatureRequest(id, { status, requestText } = {}) {
+    let sql = "UPDATE feature_requests SET ";
+    const sets = [];
+    const params = [];
+    if (status !== undefined) {
+      sets.push("status = ?");
+      params.push(status);
+    }
+    if (requestText !== undefined) {
+      sets.push("request_text = ?");
+      params.push(String(requestText).trim());
+    }
+    if (sets.length === 0) return 0;
+    sql += sets.join(", ") + " WHERE id = ?";
+    params.push(id);
+    return this.db.prepare(sql).run(...params).changes;
   }
 
   // --- Skills / Auto-Crystallization ---
@@ -1667,6 +1867,19 @@ export class Storage {
     if (!name) return 0;
     const q = String(name).trim();
     return this.db.prepare("DELETE FROM contacts WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?)").run(q, `%${q}%`).changes;
+  }
+
+  updatePerson(name, { role, notes, relationship, phone } = {}) {
+    if (!name) return 0;
+    const existing = this.getPerson(name);
+    if (!existing) return 0;
+    const newRole = role !== undefined ? role : existing.role;
+    const newNotes = notes !== undefined ? notes : existing.notes;
+    const newRel = relationship !== undefined ? relationship : existing.relationship;
+    const newPhone = phone !== undefined ? normalizePhone(phone) : existing.phone;
+    return this.db.prepare(
+      "UPDATE contacts SET role = ?, notes = ?, relationship = ?, phone = ? WHERE id = ?"
+    ).run(newRole, newNotes, newRel, newPhone, existing.id).changes;
   }
 
   isMessageDuplicate(messageId, ttlMs = 60_000) {
@@ -1968,6 +2181,25 @@ export function formatFeatureRequestsList(requests) {
   });
   lines.push("_Tandai selesai: #request done <id>_");
   return lines.join("\n").trim();
+}
+
+export function formatVaultList(files = []) {
+  if (!files || files.length === 0) {
+    return "*[Document Vault]*\nBelum ada file tersimpan di Vault.";
+  }
+  const lines = [`📂 *[Document Vault — ${files.length} File Tersimpan]*\n`];
+  files.forEach((f, idx) => {
+    const num = idx + 1;
+    const cat = f.category ? `[${f.category}]` : "";
+    const sizeKb = f.filesize ? `${Math.round(f.filesize / 1024)}KB` : "";
+    const meta = [cat, sizeKb].filter(Boolean).join(" ");
+    lines.push(`• *[${num}]* ${f.filename} ${meta ? `_(${meta})_` : ""}`);
+    if (f.summary) {
+      lines.push(`   📝 ${f.summary.length > 80 ? f.summary.slice(0, 77) + "..." : f.summary}`);
+    }
+  });
+  lines.push("\n_Aksi: #vault get <no>, #vault del <no>, #vault cari <kata>_");
+  return lines.join("\n");
 }
 
 export function formatTodoList(todos, isGroup = false, options = {}) {

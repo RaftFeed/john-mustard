@@ -339,6 +339,8 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
         taskQuotedRule = `\n- TUGAS YANG DI-REPLY (SANGAT PENTING): Pesan yang di-reply adalah pengingat untuk tugas todo id ${quotedTodo.id} ("${quotedTodo.task}"). Jika pengguna membalas dengan perintah singkat tanpa target jelas (contoh: "apus", "hapus", "udah beres", "done", "selesai", "batalin"), WAJIB tujukan HANYA ke tugas id ${quotedTodo.id} ini (pakai todoId: ${quotedTodo.id}). DILARANG KERAS menghapus, menandai selesai, atau mengubah tugas lain!`;
       } else if (/\[(?:Pengingat Tugas|To-Do List)/i.test(quotedRawText)) {
         taskQuotedRule = `\n- BALASAN KE DAFTAR/PENGINGAT TUGAS: Jika pengguna memberi perintah tanpa nomor atau nama target (contoh: "apus", "hapus", "done"), DILARANG menebak salah satu tugas. WAJIB tanyakan tugas yang mana (contoh: "Mau hapus nomor berapa?").`;
+      } else if (/\[Document Vault|file tersimpan di Vault/i.test(quotedRawText)) {
+        taskQuotedRule = `\n- BALASAN KE DAFTAR VAULT: Pesan yang di-reply adalah daftar file Document Vault. Jika pengguna menyebut nomor (contoh: "1 apus aja", "hapus 2", "kirim nomor 1"), nomor tersebut adalah nomor urut visual file di daftar Vault. Panggil tool deleteVaultFile, sendVaultFile, atau updateVaultFile dengan fileId tersebut!`;
       }
     }
 

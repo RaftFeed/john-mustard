@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
-import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
-import { sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
+import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatVaultList, formatNotesList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
+import { sendText, sendFile, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { queryHermesAgent, formatHermesResponse } from "./hermes.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
@@ -255,6 +255,71 @@ export function parseFastCommand(text = "") {
     return { type: "reminders" };
   }
 
+  const vaultMatch = trimmed.match(/^#vault(\s+(.*))?$/is);
+  if (vaultMatch) {
+    const sub = (vaultMatch[2] || "").trim();
+    if (!sub || sub.toLowerCase() === "list") {
+      return { type: "vaultList" };
+    }
+    const cariMatch = sub.match(/^(?:cari|search)\s+(.+)$/i);
+    if (cariMatch) {
+      return { type: "vaultSearch", query: cariMatch[1].trim() };
+    }
+    const getMatch = sub.match(/^(?:get|ambil|kirim)\s+(\d+)$/i);
+    if (getMatch) {
+      return { type: "vaultGet", id: parseInt(getMatch[1], 10) };
+    }
+    const delMatch = sub.match(/^(?:del|delete|hapus|apus)\s+(\d+)$/i);
+    if (delMatch) {
+      return { type: "vaultDel", id: parseInt(delMatch[1], 10) };
+    }
+    const renameMatch = sub.match(/^rename\s+(\d+)\s+(.+)$/i);
+    if (renameMatch) {
+      return { type: "vaultRename", id: parseInt(renameMatch[1], 10), name: renameMatch[2].trim() };
+    }
+    return { type: "vaultSearch", query: sub };
+  }
+
+  const noteMatch = trimmed.match(/^#(notes?|catatan)(\s+(.*))?$/is);
+  if (noteMatch) {
+    const sub = (noteMatch[3] || "").trim();
+    if (!sub || sub.toLowerCase() === "list") {
+      return { type: "noteList" };
+    }
+    const getMatch = sub.match(/^get\s+(\S+)$/i);
+    if (getMatch) {
+      return { type: "noteGet", key: getMatch[1] };
+    }
+    const addMatch = sub.match(/^(?:add|set|simpan)\s+(\S+)\s+(.+)$/is);
+    if (addMatch) {
+      return { type: "noteAdd", key: addMatch[1], content: addMatch[2].trim() };
+    }
+    const delMatch = sub.match(/^(?:del|hapus|delete|remove)\s+(\S+)$/i);
+    if (delMatch) {
+      return { type: "noteDel", key: delMatch[1] };
+    }
+    return { type: "noteGet", key: sub };
+  }
+  if (/^#delnote\s+(\S+)$/i.test(trimmed)) {
+    const match = trimmed.match(/^#delnote\s+(\S+)$/i);
+    return { type: "noteDel", key: match[1] };
+  }
+
+  const kontakAddMatch = trimmed.match(/^#(?:kontak|contacts|directory)\s+add\s+(.+)$/is);
+  if (kontakAddMatch) {
+    const parts = kontakAddMatch[1].split("|").map((s) => s.trim());
+    return {
+      type: "contactAdd",
+      name: parts[0] || "",
+      phone: parts[1] || "",
+      role: parts[2] || "",
+      notes: parts[3] || ""
+    };
+  }
+  const kontakDelMatch = trimmed.match(/^#(?:kontak|contacts|directory)\s+(?:del|hapus|delete)\s+(.+)$/i);
+  if (kontakDelMatch) {
+    return { type: "contactDel", name: kontakDelMatch[1].trim() };
+  }
   if (/^#(kontak|contacts|directory)\b/i.test(trimmed)) {
     return { type: "contacts" };
   }
@@ -276,11 +341,15 @@ export function parseFastCommand(text = "") {
   if (backlogMatch) {
     const sub = (backlogMatch[2] || "").trim();
     const bDoneMatch = sub.match(/^done\s+(\d+)$/i);
+    const bDelMatch = sub.match(/^(?:del|delete|hapus|remove)\s+(\d+)$/i);
     if (!sub || sub.toLowerCase() === "list") {
       return { type: "backlogList" };
     }
     if (bDoneMatch) {
       return { type: "backlogDone", id: parseInt(bDoneMatch[1], 10) };
+    }
+    if (bDelMatch) {
+      return { type: "backlogDel", id: parseInt(bDelMatch[1], 10) };
     }
     return { type: "backlogAdd", idea: sub };
   }
@@ -289,13 +358,22 @@ export function parseFastCommand(text = "") {
   if (requestMatch) {
     const sub = (requestMatch[3] || "").trim();
     const rDoneMatch = sub.match(/^done\s+(\d+)$/i);
+    const rDelMatch = sub.match(/^(?:del|delete|hapus|remove)\s+(\d+)$/i);
     if (!sub || sub.toLowerCase() === "list") {
       return { type: "requestList" };
     }
     if (rDoneMatch) {
       return { type: "requestDone", id: parseInt(rDoneMatch[1], 10) };
     }
+    if (rDelMatch) {
+      return { type: "requestDel", id: parseInt(rDelMatch[1], 10) };
+    }
     return { type: "requestAdd", text: sub };
+  }
+
+  const frDelMatch = trimmed.match(/^#fr\s+(?:del|delete|hapus)\s+(\d+)$/i);
+  if (frDelMatch) {
+    return { type: "requestDel", id: parseInt(frDelMatch[1], 10) };
   }
 
   if (/^#requests\b/i.test(trimmed)) {
@@ -567,6 +645,10 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
             rememberRems(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
             return `[OK] Acara/pengingat #${restoredDel.item.id} ("${restoredDel.item.message}") berhasil dipulihkan.${formatted}`;
+          } else if (restoredDel.type === "vault") {
+            const remaining = store.listVaultFiles ? store.listVaultFiles(chatId) : [];
+            if (store.rememberVaultList) store.rememberVaultList(chatId, remaining);
+            return `[OK] File '${restoredDel.item.filename}' berhasil dipulihkan kembali ke Vault dari .trash.`;
           }
         }
       }
@@ -974,6 +1056,97 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return `[!] Request fitur #${cmd.id} gak ketemu.`;
     }
 
+    case "backlogDel": {
+      if (!isOwner) return "[!] Fitur #backlog khusus owner.";
+      const changed = store.deleteBacklog ? store.deleteBacklog(cmd.id, chatId) : 0;
+      if (changed > 0) return `[OK] Backlog *[#${cmd.id}]* berhasil dihapus.`;
+      return `[!] Backlog *[#${cmd.id}]* tidak ditemukan.`;
+    }
+
+    case "requestDel": {
+      if (!isOwner) return `[!] Hanya master (+${OWNER_PHONE}) yang bisa menghapus request fitur.`;
+      const changed = store.deleteFeatureRequest ? store.deleteFeatureRequest(cmd.id, chatId) : 0;
+      if (changed > 0) return `[OK] Request fitur #${cmd.id} berhasil dihapus.`;
+      return `[!] Request fitur #${cmd.id} tidak ditemukan.`;
+    }
+
+    case "vaultList": {
+      const files = store.listVaultFiles ? store.listVaultFiles(chatId) : [];
+      if (store.rememberVaultList) store.rememberVaultList(chatId, files);
+      return formatVaultList(files);
+    }
+
+    case "vaultSearch": {
+      const files = store.searchVaultFiles ? store.searchVaultFiles(cmd.query, null, chatId) : [];
+      if (store.rememberVaultList) store.rememberVaultList(chatId, files);
+      return formatVaultList(files);
+    }
+
+    case "vaultGet": {
+      const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
+      const file = store.getVaultFileById ? store.getVaultFileById(realId) : null;
+      if (!file) return `[!] File #${cmd.id} tidak ditemukan di Document Vault.`;
+      if (!store.hasFileAccess(file.id, chatId)) return `[!] Akses ditolak ke file #${cmd.id}.`;
+      await sendFile(chatId, file.filepath, file.filename, file.summary || file.filename);
+      return `[OK] Mengirimkan file '${file.filename}'...`;
+    }
+
+    case "vaultDel": {
+      const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
+      const file = store.getVaultFileById ? store.getVaultFileById(realId) : null;
+      if (!file) return `[!] File #${cmd.id} tidak ditemukan di Document Vault.`;
+      const changed = store.deleteVaultFile ? store.deleteVaultFile(realId, chatId) : 0;
+      if (changed > 0) {
+        return `[OK] File '${file.filename}' berhasil dihapus dari Vault dan dipindahkan ke .trash. (Ketik #undo kalau mau batalin).`;
+      }
+      return `[!] Gagal menghapus file #${cmd.id} (akses ditolak atau file tidak ada).`;
+    }
+
+    case "vaultRename": {
+      const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
+      const changed = store.updateVaultFile ? store.updateVaultFile(realId, chatId, { filename: cmd.name }) : 0;
+      if (changed > 0) return `[OK] File #${cmd.id} berhasil diupdate menjadi '${cmd.name}'.`;
+      return `[!] Gagal mengupdate file #${cmd.id}.`;
+    }
+
+    case "noteList": {
+      const notes = store.listNotes ? store.listNotes(chatId) : [];
+      return formatNotesList(notes);
+    }
+
+    case "noteGet": {
+      const note = store.getNote ? store.getNote(chatId, cmd.key) : null;
+      if (!note) return `[!] Catatan '${cmd.key}' tidak ditemukan.`;
+      return `*[Catatan: ${note.key}]*\n${note.content}`;
+    }
+
+    case "noteAdd": {
+      const saved = store.saveNote ? store.saveNote(chatId, cmd.key, cmd.content) : { key: cmd.key };
+      return `[OK] Catatan '${saved.key}' berhasil disimpan.`;
+    }
+
+    case "noteDel": {
+      const changed = store.deleteNote ? store.deleteNote(chatId, cmd.key) : 0;
+      if (changed > 0) return `[OK] Catatan '${cmd.key}' berhasil dihapus.`;
+      return `[!] Catatan '${cmd.key}' tidak ditemukan.`;
+    }
+
+    case "contactAdd": {
+      const p = store.addPerson ? store.addPerson({
+        name: cmd.name,
+        phone: cmd.phone,
+        role: cmd.role,
+        notes: cmd.notes
+      }) : { name: cmd.name };
+      return `[OK] Kontak '${p.name}' berhasil disimpan.`;
+    }
+
+    case "contactDel": {
+      const changed = store.deletePerson ? store.deletePerson(cmd.name) : 0;
+      if (changed > 0) return `[OK] Kontak '${cmd.name}' berhasil dihapus.`;
+      return `[!] Kontak '${cmd.name}' tidak ditemukan.`;
+    }
+
     case "health": {
       if (!isOwner) return `[!] Fitur #health khusus owner (+${OWNER_PHONE}).`;
       return formatServerHealth(store);
@@ -1018,8 +1191,19 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #update <id> <pesan> — Edit tugas (misal: #update 1 Pitching gameseed dl:2026-09-27)
 - #done <id> — Tandai tugas selesai
 - #unfinish <id> — Batalkan status selesai tugas (jadi pending lagi)
-- #undo — Batalkan #done terakhir
+- #undo — Batalkan status #done atau penghapusan file/tugas terakhir
 - #del <id> — Hapus tugas (misal: #del 1)
+
+*Perintah Vault & Catatan (Dokumen):*
+- #vault / #vault list — Lihat daftar dokumen vault tersimpan
+- #vault cari <keyword> — Cari dokumen di vault
+- #vault get <id> — Ambil/unduh file dokumen dari vault
+- #vault del <id> — Hapus file dari vault (bisa di-#undo)
+- #vault rename <id> <nama> — Ganti nama file dokumen
+- #note / #note list — Lihat daftar catatan
+- #note get <key> — Baca isi catatan
+- #note add <key> <isi> — Tambah/update catatan
+- #note del <key> — Hapus catatan
 
 *Perintah Otomasi & Pengaturan:*
 - #request <ide> — Kirim ide/request fitur ke master bot
@@ -1030,6 +1214,8 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #proposals — Cek antrean proposal skill
 - #rollback <skill> [v] — Kembalikan versi skill
 - #kontak — Direktori koordinasi pasangan & keluarga
+- #kontak add <nama> | <no> | <role> | <notes> — Tambah/update kontak
+- #kontak del <nama> — Hapus kontak dari direktori
 - #whitelist — Cek daftar nomor yang di-whitelist
 - #pc <nama/nomor> <pesan> — Kirim pesan pribadi (PC) langsung ke kontak whitelist (alias: #japri)
 
@@ -1039,9 +1225,11 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #vps / #hermes <instruksi> — Delegasi task atau diagnosa VPS via Hermes Agent
 - #requests — Lihat daftar request fitur dari pengguna
 - #request done <id> — Tandai request selesai
+- #request del <id> — Hapus request fitur
 - #backlog <ide> — Catat ide fitur/perbaikan
 - #backlog list — Lihat daftar backlog ide
 - #backlog done <id> — Tandai backlog selesai
+- #backlog del <id> — Hapus ide backlog
 
 *Fitur Otomatis (Langsung Chat / VN):*
 - Voice Note: Kirim rekaman suara apa pun, langsung diproses sat-set.

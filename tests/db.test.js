@@ -1,6 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
+import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, formatVaultList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -469,5 +471,154 @@ test("Storage: clearCompletedTodos bulk soft-deletes done tasks and supports bat
   assert.strictEqual(allTodos.length, 4);
 });
 
+test("Storage: Document Vault CRUD, .trash move, #undo restore, and visual indexing", (t) => {
+  const store = new Storage(":memory:");
+  const ownerId = "6285236467838";
+  const userA = "628111111111";
+  const userB = "628222222222";
 
+  // 1. Create temporary mock files on disk
+  const testDir = path.join("vault", "documents");
+  const trashDir = path.join("vault", ".trash");
+  fs.mkdirSync(testDir, { recursive: true });
+  fs.mkdirSync(trashDir, { recursive: true });
 
+  const file1Path = path.join(testDir, "test_steam_promo.pdf");
+  const file2Path = path.join(testDir, "test_jadwal_uts.pdf");
+  fs.writeFileSync(file1Path, "dummy steam promo content");
+  fs.writeFileSync(file2Path, "dummy jadwal uts content");
+
+  t.after(() => {
+    try { fs.rmSync(file1Path, { force: true }); } catch {}
+    try { fs.rmSync(file2Path, { force: true }); } catch {}
+    try { fs.rmSync(path.join(trashDir, "test_steam_promo.pdf"), { force: true }); } catch {}
+    try { fs.rmSync(path.join(trashDir, "test_jadwal_uts.pdf"), { force: true }); } catch {}
+  });
+
+  // Save vault files
+  const id1 = store.saveVaultFile({
+    ownerId: userA,
+    filename: "Promo Diskon Game Steam",
+    category: "documents",
+    filepath: file1Path,
+    mimetype: "application/pdf",
+    filesize: 1024,
+    summary: "Promo Steam Summer Sale"
+  });
+
+  const id2 = store.saveVaultFile({
+    ownerId: userB,
+    filename: "Jadwal UTS 2026",
+    category: "documents",
+    filepath: file2Path,
+    mimetype: "application/pdf",
+    filesize: 2048,
+    summary: "Jadwal UTS semester genap"
+  });
+
+  assert.ok(id1 > 0);
+  assert.ok(id2 > 0);
+
+  // 2. Read / List vault files
+  const listOwner = store.listVaultFiles(ownerId);
+  assert.strictEqual(listOwner.length, 2, "Owner should see all files");
+
+  const listUserA = store.listVaultFiles(userA);
+  assert.strictEqual(listUserA.length, 1, "User A should only see own file");
+  assert.strictEqual(listUserA[0].id, id1);
+
+  // Visual index testing (list is sorted DESC: 1st item is id2, 2nd item is id1)
+  store.rememberVaultList("chat_123", listOwner);
+  assert.strictEqual(store.resolveVaultFileId(1, "chat_123"), id2);
+  assert.strictEqual(store.resolveVaultFileId(2, "chat_123"), id1);
+  assert.strictEqual(store.resolveVaultFileId(999, "chat_123"), 999);
+
+  // Format list testing
+  const formatted = formatVaultList(listOwner);
+  assert.ok(formatted.includes("[1]"));
+  assert.ok(formatted.includes("Promo Diskon Game Steam"));
+  assert.ok(formatted.includes("#vault get"));
+
+  // 3. Update vault file
+  const updateRes = store.updateVaultFile(id1, userA, {
+    filename: "Promo Diskon Steam Rev1",
+    summary: "Promo diskon revisi"
+  });
+  assert.strictEqual(updateRes, 1);
+  const updatedFile = store.getVaultFileById(id1);
+  assert.strictEqual(updatedFile.filename, "Promo Diskon Steam Rev1");
+  assert.strictEqual(updatedFile.summary, "Promo diskon revisi");
+
+  // User B cannot update User A's file
+  const deniedUpdate = store.updateVaultFile(id1, userB, { filename: "Hacked" });
+  assert.strictEqual(deniedUpdate, 0);
+
+  // 4. Delete vault file (User B cannot delete User A's file)
+  const deniedDelete = store.deleteVaultFile(id1, userB);
+  assert.strictEqual(deniedDelete, 0);
+
+  // User A deletes own file
+  const deleteRes = store.deleteVaultFile(id1, userA);
+  assert.strictEqual(deleteRes, 1);
+
+  // File should be soft-deleted in DB (not in list)
+  const listAfterDelete = store.listVaultFiles(ownerId);
+  assert.strictEqual(listAfterDelete.length, 1);
+  assert.strictEqual(listAfterDelete[0].id, id2);
+
+  // Physical file should be moved to .trash
+  const trashPath = path.join(trashDir, path.basename(file1Path));
+  assert.strictEqual(fs.existsSync(file1Path), false, "Original file should no longer exist in testDir");
+  assert.strictEqual(fs.existsSync(trashPath), true, "File should have been moved to .trash directory");
+
+  // 5. Restore via universal #undo (restoreLastDeleted)
+  const restored = store.restoreLastDeleted(userA);
+  assert.ok(restored);
+  assert.strictEqual(restored.type, "vault");
+  assert.strictEqual(restored.item.id, id1);
+
+  // Check file is restored on disk and in DB
+  assert.strictEqual(fs.existsSync(file1Path), true, "File should be restored to original path");
+  assert.strictEqual(fs.existsSync(trashPath), false, "File should no longer be in .trash");
+  const listAfterRestore = store.listVaultFiles(ownerId);
+  assert.strictEqual(listAfterRestore.length, 2);
+});
+
+test("Storage: Backlog, Feature Request, and Person CRUD operations", () => {
+  const store = new Storage(":memory:");
+  const ownerId = "6285236467838";
+  const user = "628999999999";
+
+  // Backlog CRUD
+  const bId = store.addBacklog(ownerId, "Bikin fitur sync Google Calendar");
+  assert.ok(bId > 0);
+  assert.strictEqual(store.getBacklogs(ownerId).length, 1);
+
+  // Update backlog
+  const bUp = store.updateBacklog(bId, ownerId, "Bikin fitur sync Outlook Calendar");
+  assert.strictEqual(bUp, 1);
+  assert.strictEqual(store.getBacklogs(ownerId)[0].idea, "Bikin fitur sync Outlook Calendar");
+
+  // Delete backlog (non-owner denied)
+  assert.strictEqual(store.deleteBacklog(bId, user), 0);
+  assert.strictEqual(store.deleteBacklog(bId, ownerId), 1);
+  assert.strictEqual(store.getBacklogs(ownerId).length, 0);
+
+  // Feature Request Delete
+  const frId = store.addFeatureRequest(user, "User X", "Fitur voice command");
+  assert.ok(frId > 0);
+  assert.strictEqual(store.getFeatureRequests().length, 1);
+  // Delete feature request (non-owner denied)
+  assert.strictEqual(store.deleteFeatureRequest(frId, user), 0);
+  assert.strictEqual(store.deleteFeatureRequest(frId, ownerId), 1);
+  assert.strictEqual(store.getFeatureRequests().length, 0);
+
+  // Person / Contact Update
+  store.addPerson({ name: "Budi", phone: "628123456", role: "Teman", relationship: "teman" });
+  assert.strictEqual(store.getPerson("Budi")?.role, "Teman");
+  const pUp = store.updatePerson("Budi", { role: "Sahabat", notes: "Teman sekelas" });
+  assert.strictEqual(pUp, 1);
+  const budi = store.getPerson("Budi");
+  assert.strictEqual(budi.role, "Sahabat");
+  assert.strictEqual(budi.notes, "Teman sekelas");
+});

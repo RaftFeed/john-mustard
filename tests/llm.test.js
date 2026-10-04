@@ -1457,3 +1457,74 @@ test("LLM Tools: clearCompletedTodos clears done todos and deleteTodo falls back
   assert.strictEqual(res2.toolResult.deletedCount, 2);
   assert.strictEqual(store.getTodos(chatId, false).length, 1);
 });
+
+test("LLM Tools: listVaultFiles, deleteVaultFile with visual index, updateVaultFile, and backlog/FR delete", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838"; // Owner
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Lord Rafid" };
+
+  const id1 = store.saveVaultFile({
+    ownerId: chatId,
+    filename: "Promo Diskon Game Steam",
+    category: "documents",
+    filepath: "vault/documents/steam.pdf",
+    mimetype: "application/pdf",
+    filesize: 1024,
+    summary: "Promo Steam"
+  });
+
+  const id2 = store.saveVaultFile({
+    ownerId: chatId,
+    filename: "Jadwal UTS 2026",
+    category: "documents",
+    filepath: "vault/documents/uts.pdf",
+    mimetype: "application/pdf",
+    filesize: 2048,
+    summary: "Jadwal UTS"
+  });
+
+  // 1. Tool listVaultFiles
+  const listRes = await executeTool("listVaultFiles", {}, ctx);
+  assert.strictEqual(listRes.toolResult.count, 2);
+  assert.ok(listRes.formattedList.includes("Promo Diskon Game Steam"));
+  assert.ok(listRes.formattedList.includes("Jadwal UTS 2026"));
+
+  // 2. Tool updateVaultFile
+  const updateRes = await executeTool("updateVaultFile", {
+    fileId: 1, // visual index 1 (which is id2 Jadwal UTS because list is sorted DESC)
+    newFilename: "Jadwal UTS 2026 Rev",
+    newSummary: "Revisi jadwal UTS"
+  }, ctx);
+  assert.strictEqual(updateRes.toolResult.success, true);
+  const updated = store.getVaultFileById(id2);
+  assert.strictEqual(updated.filename, "Jadwal UTS 2026 Rev");
+
+  // 3. Tool deleteVaultFile with ambiguous target -> pending confirmation
+  const pendingRes = await executeTool("deleteVaultFile", {
+    fileId: 2 // visual index 2 (which is id1 Promo Diskon Game Steam)
+  }, { ...ctx, userText: "coba cek dulu deh" });
+  assert.strictEqual(pendingRes.toolResult.status, "pending_confirmation");
+  assert.strictEqual(pendingRes.toolResult.fileId, id1);
+
+  // 4. Tool deleteVaultFile with explicit target / confirmed -> deletes immediately
+  const delRes = await executeTool("deleteVaultFile", {
+    fileId: 2,
+    confirmed: true
+  }, { ...ctx, userText: "1 apus aja wkwk" });
+  assert.strictEqual(delRes.toolResult.success, true);
+  assert.strictEqual(delRes.toolResult.deletedId, id1);
+  assert.strictEqual(store.listVaultFiles(chatId).length, 1);
+
+  // 5. Tool deleteBacklog & deleteFeatureRequest
+  const bId = store.addBacklog(chatId, "Fitur AI RAG");
+  const frId = store.addFeatureRequest("628111", "Andi", "Mode hemat kuota");
+
+  const delBacklogRes = await executeTool("deleteBacklog", { backlogId: bId }, ctx);
+  assert.strictEqual(delBacklogRes.toolResult.success, true);
+  assert.strictEqual(store.getBacklogs(chatId).length, 0);
+
+  const delFrRes = await executeTool("deleteFeatureRequest", { requestId: frId }, ctx);
+  assert.strictEqual(delFrRes.toolResult.success, true);
+  assert.strictEqual(store.getFeatureRequests().length, 0);
+});
+
