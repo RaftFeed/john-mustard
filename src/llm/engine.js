@@ -424,12 +424,22 @@ ${isBotQuoted
       });
     }
 
+    const isDailyDigestReq = /\b(rekap\s*harian|daily\s*digest)\b/i.test(userText) ||
+      (/\brekap\b/i.test(userText) && /\b(acara|agenda|pengingat)\b/i.test(userText) && /\b(to-?do|tugas)\b/i.test(userText));
+    if (isDailyDigestReq) {
+      userParts.push({
+        text: "[INSTRUKSI REKAP HARIAN]: Permintaan rekap harian lengkap terdeteksi. Kamu WAJIB memanggil KEDUA tool: listReminders (untuk jadwal acara/agenda & pengingat hari ini) DAN listTodos (untuk to-do list aktif). Sajikan keduanya secara terstruktur dalam satu pesan: 1) Agenda & Acara Hari Ini, 2) To-Do List Aktif."
+      });
+    }
+
     const hasEventKeyword = /\b(rapat|meeting|tm\b|webinar|jadwal|acara|event|janji\s+temu)\b/i.test(userText);
     const hasTodoKeyword = /\b(tugas|pr\b|pekerjaan|belanja|beli|bayar|servis|cuci|bersih|koding|coding)\b/i.test(userText);
-    if (hasEventKeyword && !hasTodoKeyword) {
-      userParts.push({ text: "[STEERING]: Kata kunci acara/jadwal terdeteksi. Gunakan addReminder (isEvent: true) BUKAN addTodo." });
-    } else if (hasTodoKeyword && !hasEventKeyword) {
-      userParts.push({ text: "[STEERING]: Kata kunci tugas/pekerjaan terdeteksi. Gunakan addTodo BUKAN addReminder." });
+    if (!isDailyDigestReq) {
+      if (hasEventKeyword && !hasTodoKeyword) {
+        userParts.push({ text: "[STEERING]: Kata kunci acara/jadwal terdeteksi. Gunakan addReminder (isEvent: true) BUKAN addTodo." });
+      } else if (hasTodoKeyword && !hasEventKeyword) {
+        userParts.push({ text: "[STEERING]: Kata kunci tugas/pekerjaan terdeteksi. Gunakan addTodo BUKAN addReminder." });
+      }
     }
   }
 
@@ -477,12 +487,17 @@ ${isBotQuoted
   const executedTrajectory = [];
   let currentCandidate = null;
   let lastFormattedList = null;
+  const collectedFormattedLists = [];
   const userWantsList = isListRequest(userText);
   // Daftar penuh (to-do/acara) hanya ditempel kalau user minta; kartu satuan (add/update) selalu tampil.
-  const appendableList = () =>
-    (lastFormattedList && (userWantsList || !FULL_LIST_HEADER_REGEX.test(lastFormattedList)))
+  const appendableList = () => {
+    if (collectedFormattedLists.length > 1) {
+      return userWantsList ? collectedFormattedLists.join("\n\n") : null;
+    }
+    return (lastFormattedList && (userWantsList || !FULL_LIST_HEADER_REGEX.test(lastFormattedList)))
       ? lastFormattedList
       : null;
+  };
   const MAX_STEPS = isActionIntent(userText) && !userText.includes("?") ? 3 : 5;
   let turns = 0;
 
@@ -628,6 +643,9 @@ ${isBotQuoted
 
       if (resultObj.formattedList) {
         lastFormattedList = resultObj.formattedList;
+        if (!collectedFormattedLists.includes(resultObj.formattedList)) {
+          collectedFormattedLists.push(resultObj.formattedList);
+        }
       }
 
       userResponseParts.push({

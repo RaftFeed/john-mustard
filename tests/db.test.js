@@ -377,15 +377,20 @@ test("Storage: setDailyDigest covers to-do list and acara list with legacy compa
   assert.strictEqual(store.setDailyDigest(chatId, true), remId);
   assert.strictEqual(store.listReminders(chatId).length, 1);
 
-  // Legacy digest rows ("Rekap to-do harian...") are still found and disabled
+  // Legacy digest rows ("Rekap to-do harian...") are updated with new message on enable
   const legacyChat = "user_digest_legacy";
-  store.addReminder(
+  const legId = store.addReminder(
     legacyChat,
     "Rekap to-do harian: kirimkan daftar tugas hari ini.",
     Date.now() + 3600_000,
     "daily",
     "scheduled_action"
   );
+  store.setDailyDigest(legacyChat, true);
+  const updatedLegacy = store.getReminderById(legId);
+  assert.ok(updatedLegacy.message.includes("To-Do List"));
+  assert.ok(/acara/i.test(updatedLegacy.message));
+
   assert.ok(store.setDailyDigest(legacyChat, false) >= 1);
   assert.strictEqual(store.listReminders(legacyChat).length, 0);
 
