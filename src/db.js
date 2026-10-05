@@ -336,6 +336,13 @@ export class Storage {
 
     // Migrate old todo reminded=1 (already overdue) to reminded=2 so they don't re-spam
     try { this.db.prepare("UPDATE todos SET reminded = 2 WHERE reminded = 1 AND deadline <= ?").run(Date.now()); } catch {}
+
+    // Migrate legacy daily digest reminders to include acara & agenda
+    try {
+      this.db.prepare(
+        "UPDATE reminders SET message = 'Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.' WHERE task_type = 'scheduled_action' AND message LIKE 'Rekap to-do harian%' AND deleted_at IS NULL"
+      ).run();
+    } catch {}
   }
 
   initDefaultProfiles() {
@@ -1010,7 +1017,12 @@ export class Storage {
     const exist = this.db.prepare(
       `SELECT id FROM reminders WHERE chat_id = ? AND ${digestTag} AND status = 'pending' AND deleted_at IS NULL`
     ).get(chatId);
-    if (exist) return exist.id;
+    if (exist) {
+      this.db.prepare(
+        "UPDATE reminders SET message = ? WHERE id = ?"
+      ).run("Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.", exist.id);
+      return exist.id;
+    }
 
     const now = new Date();
     const next7am = new Date(now);

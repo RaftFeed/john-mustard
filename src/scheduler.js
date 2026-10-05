@@ -1,6 +1,6 @@
 import { sendText } from "./waha.js";
 import { processChat } from "./llm.js";
-import { isSimilarReminder } from "./db.js";
+import { isSimilarReminder, formatRemindersList, formatTodoList } from "./db.js";
 
 export const NEAR_HORIZON_MS = 10 * 60 * 1000; // 10 menit
 const activeTimers = new Map(); // id -> NodeJS.Timeout
@@ -46,19 +46,37 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
   }
 
   try {
-    if (item.task_type === "scheduled_action" && rotator) {
-      try {
-        const reply = await processChat(rotator, item.message, {
-          store,
-          chatId: item.chat_id,
-          onToolCall: () => {}
-        });
-        if (reply && reply !== "[NO_REPLY]") {
-          await textSender(item.chat_id, `*[Jadwal Otomatis]*\n${reply}`);
+    if (item.task_type === "scheduled_action") {
+      const isDailyDigest = /rekap\s*harian|daily\s*digest|to-do list.*acara/i.test(item.message);
+      let executed = false;
+      if (rotator) {
+        try {
+          const reply = await processChat(rotator, item.message, {
+            store,
+            chatId: item.chat_id,
+            onToolCall: () => {}
+          });
+          if (reply && reply !== "[NO_REPLY]") {
+            await textSender(item.chat_id, `*[Jadwal Otomatis]*\n${reply}`);
+            executed = true;
+          }
+        } catch (err) {
+          console.error(`Scheduled action #${item.id} error:`, err.message);
         }
-      } catch (err) {
-        console.error(`Scheduled action #${item.id} error:`, err.message);
-        await textSender(item.chat_id, `[!] Gagal eksekusi jadwal #${item.id}: ${err.message}`);
+      }
+      if (!executed) {
+        if (isDailyDigest && typeof store.listReminders === "function" && typeof store.getTodos === "function") {
+          const rems = store.listReminders(item.chat_id);
+          const todos = store.getTodos(item.chat_id, false);
+          const isGroup = String(item.chat_id).endsWith("@g.us");
+          const formattedRems = formatRemindersList(rems);
+          const formattedTodos = formatTodoList(todos, isGroup);
+          await textSender(item.chat_id, `*[Jadwal Otomatis - Rekap Harian]*\n\n${formattedRems}\n\n${formattedTodos}`);
+        } else if (!rotator) {
+          await textSender(item.chat_id, `*[Jadwal Otomatis]*\n${item.message}`);
+        } else {
+          await textSender(item.chat_id, `[!] Gagal eksekusi jadwal #${item.id}.`);
+        }
       }
     } else {
       const isStage1 = Boolean(item.event_at && item.remind_at < item.event_at && item.event_at > Date.now());

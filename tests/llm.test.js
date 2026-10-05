@@ -1557,3 +1557,57 @@ test("LLM Tools: listVaultFiles, deleteVaultFile with visual index, updateVaultF
   assert.strictEqual(store.getFeatureRequests().length, 0);
 });
 
+test("LLM Engine: daily digest preserves both reminders list and to-do list", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let call = 0;
+
+  globalThis.fetch = async () => {
+    call++;
+    if (call === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [
+                { functionCall: { name: "listReminders", args: {} } },
+                { functionCall: { name: "listTodos", args: {} } }
+              ]
+            }
+          }]
+        })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Berikut rekap harian untuk hari ini:" }] } }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    store.addReminder("user1", "Rapat Koordinasi", Date.now() + 3600_000, null, "event", Date.now() + 3600_000);
+    store.addTodo("user1", "Selesaikan Slide Presentasi", Date.now() + 7200_000);
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+
+    const reply = await processChat(mockRotator, "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.", {
+      store,
+      chatId: "user1",
+      senderNumber: "user1"
+    });
+
+    assert.ok(reply.includes("[Daftar Acara & Pengingat]"), "Must include reminders list");
+    assert.ok(reply.includes("Rapat Koordinasi"));
+    assert.ok(reply.includes("[To-Do List]"), "Must include to-do list");
+    assert.ok(reply.includes("Selesaikan Slide Presentasi"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

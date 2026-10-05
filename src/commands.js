@@ -68,8 +68,8 @@ export function parseFastCommand(text = "") {
   // Clear completed tasks (hapus tugas selesai / yg done apus / #clear-done)
   if (
     /^(?:#)?(?:clear-?done|hapus-?done|del-?done|clean-?done|hapus-?selesai)$/i.test(trimmed) ||
-    /^(?:#)?(?:tolong\s+)?(?:hapus|apus|del|delete|clear|bersihkan)\s+(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)$/i.test(trimmed) ||
-    /^(?:#)?(?:tolong\s+)?(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)\s+(?:tolong\s+)?(?:hapus|apus|del|delete|clear|bersihkan)$/i.test(trimmed)
+    /^(?:#)?(?:tolong\s+|coba\s+)?(?:hapus|apus|del|delete|clear|bersihkan|bersihin|sapu\s+bersih)\s+(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)(?:\s+(?:aja|dong|ya|dah|deh|lah|wok|bray))?$/i.test(trimmed) ||
+    /^(?:#)?(?:tolong\s+|coba\s+)?(?:semua\s+)?(?:tugas\s+|todo\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:selesai|done|beres|kelar)\s+(?:tolong\s+)?(?:hapus|apus|del|delete|clear|bersihkan|bersihin|sapu\s+bersih)(?:\s+(?:aja|dong|ya|dah|deh|lah|wok|bray))?$/i.test(trimmed)
   ) {
     return { type: "clearDone" };
   }

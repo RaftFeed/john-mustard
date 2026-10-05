@@ -322,3 +322,49 @@ test("Scheduler: tickScheduler runs cleanupCompletedOverdueTodos silently withou
   assert.strictEqual(sentMessages.length, 0); // Silent: no WA spam
 });
 
+test("Scheduler: daily digest scheduled_action includes both reminders and todos", async () => {
+  const sentMessages = [];
+  const mockSender = async (chatId, text) => {
+    sentMessages.push({ chatId, text });
+  };
+
+  const reminders = [
+    {
+      id: 501,
+      chat_id: "user_digest",
+      message: "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.",
+      remind_at: Date.now() - 1000,
+      task_type: "scheduled_action",
+      status: "pending",
+      recurrence: "daily"
+    }
+  ];
+
+  const mockStore = {
+    claimReminder: (id) => true,
+    markReminderDone: (id) => {},
+    advanceRecurringReminder: (id, rec) => Date.now() + 86400000,
+    getPendingReminders: () => reminders,
+    getNearHorizonReminders: () => [],
+    getReminderById: (id) => reminders.find((r) => r.id === id),
+    getPendingTodoEarlyReminders: () => [],
+    getPendingTodoDeadlines: () => [],
+    listReminders: (chatId) => [
+      { id: 1, message: "Rapat Proyek", remind_at: Date.now() + 3600000, task_type: "event", event_at: Date.now() + 3600000 }
+    ],
+    getTodos: (chatId) => [
+      { id: 1, task: "Selesaikan Laporan", done: 0 }
+    ]
+  };
+
+  const res = await tickScheduler(mockStore, { textSender: mockSender });
+  assert.strictEqual(res.ticked, true);
+  assert.strictEqual(sentMessages.length, 1);
+  assert.ok(sentMessages[0].text.includes("Daftar Acara & Pengingat"));
+  assert.ok(sentMessages[0].text.includes("To-Do List"));
+  assert.ok(sentMessages[0].text.includes("Rapat Proyek"));
+  assert.ok(sentMessages[0].text.includes("Selesaikan Laporan"));
+
+  clearActiveTimers();
+});
+
