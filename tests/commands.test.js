@@ -450,4 +450,65 @@ test("Commands: Unified Fast Commands CRUD for Vault, Notes, Contacts, Backlogs,
   assert.strictEqual(store.getFeatureRequests().length, 0);
 });
 
+test("Commands: #acara and #pengingat separate lists, targeted delete, and #daily status", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_split";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Lord" };
+
+  const now = Date.now();
+  // 1. Add Acara
+  store.addReminder(chatId, "Webinar Cloud Computing", now + 3600_000, null, "event", now + 7200_000);
+
+  // 2. Add Pengingat biasa
+  store.addReminder(chatId, "Beli galon air", now + 3600_000, null, "reminder", null);
+
+  // 3. Add Rekap harian
+  store.setDailyDigest(chatId, true);
+
+  // parseFastCommand test
+  assert.strictEqual(parseFastCommand("#acara").type, "reminders");
+  assert.strictEqual(parseFastCommand("#acara").category, "acara");
+  assert.strictEqual(parseFastCommand("#agenda").category, "acara");
+  assert.strictEqual(parseFastCommand("#pengingat").type, "reminders");
+  assert.strictEqual(parseFastCommand("#pengingat").category, "pengingat");
+  assert.strictEqual(parseFastCommand("hapus acara 1").target, "reminder");
+  assert.strictEqual(parseFastCommand("hapus acara 1").category, "acara");
+  assert.strictEqual(parseFastCommand("hapus pengingat 1").target, "reminder");
+  assert.strictEqual(parseFastCommand("hapus pengingat 1").category, "pengingat");
+  assert.strictEqual(parseFastCommand("acara 1 kelar").target, "reminder");
+  assert.strictEqual(parseFastCommand("acara 1 kelar").category, "acara");
+  assert.strictEqual(parseFastCommand("pengingat 1 kelar").target, "reminder");
+  assert.strictEqual(parseFastCommand("pengingat 1 kelar").category, "pengingat");
+
+  // executeFastCommand #acara: MUST have Acara, MUST NOT have Rekap harian or Beli galon
+  const resAcara = await executeFastCommand(parseFastCommand("#acara"), ctx);
+  assert.ok(resAcara.includes("[Daftar Acara & Agenda]"));
+  assert.ok(resAcara.includes("Webinar Cloud Computing"));
+  assert.ok(!resAcara.includes("Rekap harian"));
+  assert.ok(!resAcara.includes("Beli galon air"));
+
+  // executeFastCommand #pengingat: MUST have Beli galon and Rekap harian with [Sistem], MUST NOT have Webinar
+  const resPengingat = await executeFastCommand(parseFastCommand("#pengingat"), ctx);
+  assert.ok(resPengingat.includes("[Daftar Pengingat]"));
+  assert.ok(resPengingat.includes("Beli galon air"));
+  assert.ok(resPengingat.includes("Rekap harian"));
+  assert.ok(resPengingat.includes("[Sistem]"));
+  assert.ok(!resPengingat.includes("Webinar Cloud Computing"));
+
+  // executeFastCommand #daily status
+  const resDailyStatusOn = await executeFastCommand(parseFastCommand("#daily"), ctx);
+  assert.ok(resDailyStatusOn.includes("Status: Aktif"));
+
+  // Delete acara 1
+  const resDelAcara = await executeFastCommand(parseFastCommand("hapus acara 1"), ctx);
+  assert.ok(resDelAcara.includes("Acara #1 berhasil dihapus"));
+  assert.strictEqual(store.listEvents(chatId).length, 0);
+  assert.strictEqual(store.listPengingat(chatId).length, 2);
+
+  // Turn off daily digest
+  await executeFastCommand(parseFastCommand("#daily 0"), ctx);
+  const resDailyStatusOff = await executeFastCommand(parseFastCommand("#daily"), ctx);
+  assert.ok(resDailyStatusOff.includes("Status: Nonaktif"));
+});
+
 

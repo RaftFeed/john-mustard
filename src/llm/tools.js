@@ -11,6 +11,8 @@ import {
   formatSkillList,
   formatNotesList,
   formatRemindersList,
+  formatAcaraList,
+  formatPengingatList,
   formatPersonList,
   formatVaultList,
   normalizePhone,
@@ -172,10 +174,14 @@ export const TOOLS = [
       },
       {
         name: "listReminders",
-        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. HANYA untuk acara kalender spesifik/sekali jalan atau pengingat aktif. BUKAN untuk jadwal kuliah/sekolah/kelas mingguan (jadwal kuliah/kelas mingguan tersimpan di catatan, gunakan getNote 'jadwal_kuliah'). Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
+        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. Gunakan category='acara' jika pengguna menanyakan acara/agenda kegiatan mendatang. Gunakan category='pengingat' jika pengguna menanyakan pengingat/reminder/rekap. Jika kosong/all, tampilkan semua pengingat & acara. HANYA untuk acara kalender spesifik/sekali jalan atau pengingat aktif. BUKAN untuk jadwal kuliah/sekolah/kelas mingguan (jadwal kuliah/kelas mingguan tersimpan di catatan, gunakan getNote 'jadwal_kuliah'). Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
         parameters: {
           type: "OBJECT",
           properties: {
+            category: {
+              type: "STRING",
+              description: "Kategori filter: 'acara' (acara & agenda kegiatan mendatang), 'pengingat' (pengingat biasa & rekap harian sistem), atau 'all' (semua pengingat & acara, default)"
+            },
             targetDateIso: {
               type: "STRING",
               description: "Filter tanggal spesifik dalam format YYYY-MM-DD (contoh: '2026-09-28' untuk hari Senin). Wajib hitung tanggal dari konteks waktu saat ini jika user menyebutkan hari ('senin', 'selasa', 'besok', 'hari ini'). Kosongkan jika pengguna ingin melihat semua pengingat/acara tanpa batasan hari."
@@ -1135,12 +1141,25 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "listReminders") {
     const queryChatId = isGroup ? chatId : (callerId || chatId);
-    const reminders = store.listReminders(queryChatId, args.targetDateIso);
-    if (store.rememberReminderList) store.rememberReminderList(queryChatId, reminders);
-    formattedList = formatRemindersList(reminders, { targetDate: args.targetDateIso });
+    const cat = (args.category || "").toLowerCase();
+    let reminders;
+    if (cat === "acara" && store.listEvents) {
+      reminders = store.listEvents(queryChatId, args.targetDateIso);
+      if (store.rememberAcaraList) store.rememberAcaraList(queryChatId, reminders);
+      formattedList = formatAcaraList(reminders, { targetDate: args.targetDateIso });
+    } else if (cat === "pengingat" && store.listPengingat) {
+      reminders = store.listPengingat(queryChatId, args.targetDateIso);
+      if (store.rememberPengingatList) store.rememberPengingatList(queryChatId, reminders);
+      formattedList = formatPengingatList(reminders, { targetDate: args.targetDateIso });
+    } else {
+      reminders = store.listReminders(queryChatId, args.targetDateIso);
+      if (store.rememberReminderList) store.rememberReminderList(queryChatId, reminders);
+      formattedList = formatRemindersList(reminders, { targetDate: args.targetDateIso });
+    }
     toolResult = {
       success: true,
       count: reminders.length,
+      category: cat || "all",
       targetDate: args.targetDateIso || null,
       formatted: formattedList,
       instruction: "WAJIB kembalikan persis isi teks di field 'formatted' apa adanya. DILARANG memformat ulang dan DILARANG menambahkan kalimat basa-basi/penawaran bantuan di akhir."

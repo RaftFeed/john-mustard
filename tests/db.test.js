@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, formatVaultList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
+import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, formatAcaraList, formatPengingatList, formatVaultList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -621,4 +621,52 @@ test("Storage: Backlog, Feature Request, and Person CRUD operations", () => {
   const budi = store.getPerson("Budi");
   assert.strictEqual(budi.role, "Sahabat");
   assert.strictEqual(budi.notes, "Teman sekelas");
+});
+
+test("Storage: separate Acara and Pengingat lists and formats", () => {
+  const store = new Storage(":memory:");
+  const chatId = "test_user";
+  const now = Date.now();
+
+  // 1. Add Acara (event with event_at or keyword)
+  const evId = store.addReminder(chatId, "UTS Sistem Informasi", now + 3600_000, null, "event", now + 7200_000);
+  
+  // 2. Add Pengingat (regular reminder)
+  const remId = store.addReminder(chatId, "Minum vitamin C", now + 3600_000, null, "reminder", null);
+
+  // 3. Add Rekap harian (scheduled_action)
+  const digestId = store.setDailyDigest(chatId, true);
+
+  // Test listEvents (only Acara, NO scheduled_action, NO regular reminder)
+  const events = store.listEvents(chatId);
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].id, evId);
+  assert.strictEqual(events[0].message, "UTS Sistem Informasi");
+
+  // Test listPengingat (only regular reminder + scheduled_action, NO Acara)
+  const pengingat = store.listPengingat(chatId);
+  assert.strictEqual(pengingat.length, 2);
+  const ids = pengingat.map((p) => p.id);
+  assert.ok(ids.includes(remId));
+  assert.ok(ids.includes(digestId));
+
+  // Test formatAcaraList
+  const formattedAcara = formatAcaraList(events);
+  assert.ok(formattedAcara.includes("[Daftar Acara & Agenda]"));
+  assert.ok(formattedAcara.includes("UTS Sistem Informasi"));
+  assert.ok(!formattedAcara.includes("Rekap harian"));
+  assert.ok(!formattedAcara.includes("Minum vitamin C"));
+
+  // Test formatPengingatList
+  const formattedPengingat = formatPengingatList(pengingat);
+  assert.ok(formattedPengingat.includes("[Daftar Pengingat]"));
+  assert.ok(formattedPengingat.includes("Minum vitamin C"));
+  assert.ok(formattedPengingat.includes("Rekap harian"));
+  assert.ok(formattedPengingat.includes("[Sistem]"));
+  assert.ok(!formattedPengingat.includes("UTS Sistem Informasi"));
+
+  // Test hasActiveDailyDigest
+  assert.strictEqual(store.hasActiveDailyDigest(chatId), true);
+  store.setDailyDigest(chatId, false);
+  assert.strictEqual(store.hasActiveDailyDigest(chatId), false);
 });

@@ -460,9 +460,10 @@ test("LLM Tools: addReminder and updateReminder return a formatted single remind
   const store = new Storage(":memory:");
   const chatId = "6285236467838";
 
+  const futureIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   const resAdd = await executeTool("addReminder", {
     message: "TM Valorant Senin",
-    eventAtIso: "2026-10-05T19:00:00+07:00"
+    eventAtIso: futureIso
   }, { store, chatId });
 
   assert.strictEqual(resAdd.toolResult.success, true);
@@ -480,6 +481,34 @@ test("LLM Tools: addReminder and updateReminder return a formatted single remind
   assert.ok(resUpd.formattedList.includes("├── "));
   assert.ok(resUpd.formattedList.includes("`Sekali #acara`"));
   assert.ok(!resUpd.formattedList.includes("[Daftar Acara & Pengingat]"), "Must be a single card, not full list");
+});
+
+test("LLM Tools: listReminders supports category 'acara' and 'pengingat'", async () => {
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+
+  const future = Date.now() + 3600_000;
+  store.addReminder(chatId, "Webinar Cloud Computing", future, null, "event", future + 3600_000);
+  store.addReminder(chatId, "Beli galon air", future, null, "reminder", null);
+  store.setDailyDigest(chatId, true);
+
+  // category: "acara"
+  const resAcara = await executeTool("listReminders", { category: "acara" }, { store, chatId });
+  assert.strictEqual(resAcara.toolResult.success, true);
+  assert.ok(resAcara.formattedList.includes("[Daftar Acara & Agenda]"));
+  assert.ok(resAcara.formattedList.includes("Webinar Cloud Computing"));
+  assert.ok(!resAcara.formattedList.includes("Beli galon air"));
+  assert.ok(!resAcara.formattedList.includes("Rekap harian"));
+
+  // category: "pengingat"
+  const resPengingat = await executeTool("listReminders", { category: "pengingat" }, { store, chatId });
+  assert.strictEqual(resPengingat.toolResult.success, true);
+  assert.ok(resPengingat.formattedList.includes("[Daftar Pengingat]"));
+  assert.ok(resPengingat.formattedList.includes("Beli galon air"));
+  assert.ok(resPengingat.formattedList.includes("Rekap harian"));
+  assert.ok(resPengingat.formattedList.includes("[Sistem]"));
+  assert.ok(!resPengingat.formattedList.includes("Webinar Cloud Computing"));
 });
 
 test("LLM Engine: addTodo short-circuits to a card-style confirmation", async () => {

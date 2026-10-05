@@ -164,6 +164,8 @@ export class Storage {
     // yang dirujuk user selalu cocok dengan list yang mereka lihat.
     this.lastTodoOrderByChat = new Map();
     this.lastReminderOrderByChat = new Map();
+    this.lastAcaraOrderByChat = new Map();
+    this.lastPengingatOrderByChat = new Map();
     this.lastVaultOrderByChat = new Map();
     this.lastDeletedByChat = new Map();
     this.pendingDeletions = new Map();
@@ -590,6 +592,31 @@ export class Storage {
       .all(...scope.chatIds, ...dateParams);
   }
 
+  isEventRow(row) {
+    if (!row) return false;
+    if (row.task_type === "scheduled_action") return false;
+    const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
+    return Boolean(row.event_at || row.task_type === "event" || EVENT_REGEX.test(row.message || ""));
+  }
+
+  listEvents(chatId, targetDate = null) {
+    const all = this.listReminders(chatId, targetDate);
+    return all.filter((r) => this.isEventRow(r));
+  }
+
+  listPengingat(chatId, targetDate = null) {
+    const all = this.listReminders(chatId, targetDate);
+    return all.filter((r) => !this.isEventRow(r) || r.task_type === "scheduled_action");
+  }
+
+  hasActiveDailyDigest(chatId) {
+    const digestTag = "(message LIKE 'Rekap to-do harian%' OR message LIKE 'Rekap harian%')";
+    const exist = this.db.prepare(
+      `SELECT id FROM reminders WHERE chat_id = ? AND ${digestTag} AND status = 'pending' AND deleted_at IS NULL`
+    ).get(chatId);
+    return Boolean(exist);
+  }
+
   resolveReminderId(idOrIndex, chatId) {
     const num = parseInt(idOrIndex, 10);
     if (isNaN(num)) return null;
@@ -778,6 +805,16 @@ export class Storage {
     this.lastReminderOrderByChat.set(chatId, reminders.map((r) => r.id));
   }
 
+  rememberAcaraList(chatId, events) {
+    if (!chatId || !Array.isArray(events)) return;
+    this.lastAcaraOrderByChat.set(chatId, events.map((r) => r.id));
+  }
+
+  rememberPengingatList(chatId, pengingat) {
+    if (!chatId || !Array.isArray(pengingat)) return;
+    this.lastPengingatOrderByChat.set(chatId, pengingat.map((r) => r.id));
+  }
+
   // Snapshot nomor urut to-do: pakai urutan list terakhir yang ditampilkan ke user;
   // fallback ke semua tugas (termasuk rutin) kalau belum ada list yang ditampilkan.
   getTodoIndexSnapshot(chatId) {
@@ -800,6 +837,42 @@ export class Storage {
       if (rows.length > 0) return rows;
     }
     return this.listReminders(chatId);
+  }
+
+  getAcaraIndexSnapshot(chatId) {
+    const anchored = this.lastAcaraOrderByChat.get(chatId);
+    if (anchored && anchored.length > 0) {
+      const rows = anchored
+        .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
+        .filter(Boolean);
+      if (rows.length > 0) return rows;
+    }
+    return this.listEvents(chatId);
+  }
+
+  getPengingatIndexSnapshot(chatId) {
+    const anchored = this.lastPengingatOrderByChat.get(chatId);
+    if (anchored && anchored.length > 0) {
+      const rows = anchored
+        .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
+        .filter(Boolean);
+      if (rows.length > 0) return rows;
+    }
+    return this.listPengingat(chatId);
+  }
+
+  resolveAcaraId(idOrIndex, chatId) {
+    const num = parseInt(idOrIndex, 10);
+    if (isNaN(num)) return null;
+    if (!chatId) return num;
+    return this.resolveReminderIdFromSnapshot(num, this.getAcaraIndexSnapshot(chatId));
+  }
+
+  resolvePengingatId(idOrIndex, chatId) {
+    const num = parseInt(idOrIndex, 10);
+    if (isNaN(num)) return null;
+    if (!chatId) return num;
+    return this.resolveReminderIdFromSnapshot(num, this.getPengingatIndexSnapshot(chatId));
   }
 
   resolveTodoId(idOrIndex, chatId) {
@@ -1814,9 +1887,14 @@ export class Storage {
          OR LOWER(name) LIKE LOWER(?) 
          OR (phone != '' AND (phone = ? OR phone = ? OR phone = ?))
          OR (notes != '' AND (notes LIKE ? OR notes LIKE ?))
-      ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id ASC
+      ORDER BY 
+        CASE 
+          WHEN LOWER(name) = LOWER(?) THEN 0 
+          WHEN LOWER(name) LIKE LOWER(?) THEN 1 
+          ELSE 2 
+        END ASC, id ASC
       LIMIT 1
-    `).get(q, `%${q}%`, q, norm, mappedPhone || norm, `%${q}%`, `%(LID: ${q})%`, q) || null;
+    `).get(q, `%${q}%`, q, norm, mappedPhone || norm, `%${q}%`, `%(LID: ${q})%`, q, `%${q}%`) || null;
   }
 
   saveLidMapping(lid, phone, name = "") {
@@ -2128,6 +2206,269 @@ export function formatRemindersList(reminders = [], options = {}) {
   });
 
   lines.push("_Semangat!_ 💪");
+  return lines.join("\n").trim();
+}
+
+export function formatAcaraList(events = [], options = {}) {
+  const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
+  const filtered = (events || []).filter((r) => {
+    if (r.task_type === "scheduled_action") return false;
+    return Boolean(r.event_at || r.task_type === "event" || EVENT_REGEX.test(r.message || ""));
+  });
+
+  const dayRange = options?.targetDate ? parseWibDayRange(options.targetDate) : null;
+  const fullDaysId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+  if (!filtered || filtered.length === 0) {
+    if (dayRange) {
+      const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
+      const dayName = fullDaysId[dObj.getUTCDay()];
+      return `*[Daftar Acara & Agenda]*\nTidak ada jadwal acara atau agenda untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+    }
+    return "*[Daftar Acara & Agenda]*\nBelum ada jadwal acara aktif.";
+  }
+
+  const now = new Date();
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  const nowWib = new Date(now.getTime() + WIB_OFFSET_MS);
+  const hour = nowWib.getUTCHours();
+  let salam = "Selamat pagi";
+  if (hour >= 11 && hour < 15) salam = "Selamat siang";
+  else if (hour >= 15 && hour < 18) salam = "Selamat sore";
+  else if (hour >= 18 || hour < 4) salam = "Selamat malam";
+
+  let header = `🗓️ [Daftar Acara & Agenda]\n_${salam}!_\n`;
+  if (dayRange) {
+    const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
+    const dayName = fullDaysId[dObj.getUTCDay()];
+    header = `🗓️ [Jadwal Hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
+  }
+
+  const lines = [header];
+
+  filtered.forEach((r, idx) => {
+    let badge = "⚪";
+    let scheduleStr = "Tanpa jadwal";
+    const targetTimestamp = r.event_at || r.remind_at;
+    const isOverdue = targetTimestamp && targetTimestamp < now.getTime();
+
+    if (isOverdue) {
+      badge = "🔴";
+    } else if (targetTimestamp) {
+      const targetDate = new Date(targetTimestamp);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+
+      if (diffDays <= 0) badge = "🔴";
+      else if (diffDays === 1) badge = "🟠";
+      else if (diffDays <= 3) badge = "🟡";
+      else badge = "🟢";
+
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 1) {
+        scheduleStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else if (diffDays === 0) {
+        scheduleStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else if (diffDays < 0) {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
+    if (isOverdue) {
+      const targetDate = new Date(targetTimestamp);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 0) {
+        scheduleStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
+    const pillTokens = [];
+    if (r.recurrence === "daily") {
+      pillTokens.push("Harian");
+    } else if (r.recurrence === "weekly") {
+      pillTokens.push("Mingguan");
+    } else if (r.recurrence) {
+      pillTokens.push(r.recurrence);
+    } else {
+      pillTokens.push("Sekali");
+    }
+
+    if (isOverdue) {
+      pillTokens.push("[Terlewat]");
+    }
+
+    pillTokens.push("#acara");
+
+    const tagLine = `\`${pillTokens.join(" ")}\``;
+    const titleText = isOverdue ? `*[${idx + 1}] ⚠️ [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
+
+    lines.push(`${badge} ${titleText}`);
+    lines.push(`├── ${scheduleStr}`);
+    lines.push(`└── ${tagLine}\n`);
+  });
+
+  lines.push("_Semangat!_ 💪");
+  return lines.join("\n").trim();
+}
+
+export function formatPengingatList(reminders = [], options = {}) {
+  const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
+  const filtered = (reminders || []).filter((r) => {
+    if (r.task_type === "scheduled_action") return true;
+    const isEvent = Boolean(r.event_at || r.task_type === "event" || EVENT_REGEX.test(r.message || ""));
+    return !isEvent;
+  });
+
+  const dayRange = options?.targetDate ? parseWibDayRange(options.targetDate) : null;
+  const fullDaysId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+  if (!filtered || filtered.length === 0) {
+    if (dayRange) {
+      const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
+      const dayName = fullDaysId[dObj.getUTCDay()];
+      return `*[Daftar Pengingat]*\nTidak ada pengingat untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+    }
+    return "*[Daftar Pengingat]*\nBelum ada pengingat aktif.";
+  }
+
+  const now = new Date();
+  const daysId = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+  function getWibMidnight(date) {
+    const d = new Date(date.getTime() + WIB_OFFSET_MS);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  const nowWib = new Date(now.getTime() + WIB_OFFSET_MS);
+  const hour = nowWib.getUTCHours();
+  let salam = "Selamat pagi";
+  if (hour >= 11 && hour < 15) salam = "Selamat siang";
+  else if (hour >= 15 && hour < 18) salam = "Selamat sore";
+  else if (hour >= 18 || hour < 4) salam = "Selamat malam";
+
+  let header = `⏰ [Daftar Pengingat]\n_${salam}!_\n`;
+  if (dayRange) {
+    const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
+    const dayName = fullDaysId[dObj.getUTCDay()];
+    header = `⏰ [Pengingat Hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}]\n_${salam}!_\n`;
+  }
+
+  const lines = [header];
+
+  filtered.forEach((r, idx) => {
+    let badge = "⚪";
+    let scheduleStr = "Tanpa jadwal";
+    const targetTimestamp = r.event_at || r.remind_at;
+    const isOverdue = targetTimestamp && targetTimestamp < now.getTime();
+
+    if (isOverdue) {
+      badge = "🔴";
+    } else if (targetTimestamp) {
+      const targetDate = new Date(targetTimestamp);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+
+      if (diffDays <= 0) badge = "🔴";
+      else if (diffDays === 1) badge = "🟠";
+      else if (diffDays <= 3) badge = "🟡";
+      else badge = "🟢";
+
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 1) {
+        scheduleStr = `Besok (${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else if (diffDays === 0) {
+        scheduleStr = `Hari ini (${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else if (diffDays < 0) {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `H-${diffDays} (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
+    if (isOverdue) {
+      const targetDate = new Date(targetTimestamp);
+      const diffDays = Math.round((getWibMidnight(targetDate) - getWibMidnight(now)) / (24 * 3600 * 1000));
+      const targetWib = new Date(targetDate.getTime() + WIB_OFFSET_MS);
+      const dayName = daysId[targetWib.getUTCDay()];
+      const dateNum = targetWib.getUTCDate();
+      const monthName = monthsId[targetWib.getUTCMonth()];
+      const year = targetWib.getUTCFullYear();
+      const hours = String(targetWib.getUTCHours()).padStart(2, "0");
+      const minutes = String(targetWib.getUTCMinutes()).padStart(2, "0");
+      const jamStr = `${hours}:${minutes}`;
+
+      if (diffDays === 0) {
+        scheduleStr = `Terlewat (Hari ini, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      } else {
+        scheduleStr = `Terlewat (${dayName}, ${dateNum} ${monthName} ${year} ${jamStr})`;
+      }
+    }
+
+    const pillTokens = [];
+    if (r.recurrence === "daily") {
+      pillTokens.push("Harian");
+    } else if (r.recurrence === "weekly") {
+      pillTokens.push("Mingguan");
+    } else if (r.recurrence) {
+      pillTokens.push(r.recurrence);
+    } else {
+      pillTokens.push("Sekali");
+    }
+
+    if (isOverdue) {
+      pillTokens.push("[Terlewat]");
+    }
+
+    if (r.task_type === "scheduled_action") {
+      pillTokens.push("[Sistem]");
+    } else {
+      pillTokens.push("#pengingat");
+    }
+
+    const tagLine = `\`${pillTokens.join(" ")}\``;
+    const titleText = isOverdue ? `*[${idx + 1}] ⚠️ [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
+
+    lines.push(`${badge} ${titleText}`);
+    lines.push(`├── ${scheduleStr}`);
+    lines.push(`└── ${tagLine}\n`);
+  });
+
+  lines.push("_Jangan sampai lupa!_ ⏰");
   return lines.join("\n").trim();
 }
 
@@ -2611,7 +2952,7 @@ export function getAuditSummary(db, days = 7) {
 
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   const store = new Storage(":memory:");
-  const dl = new Date("2026-09-27T23:59:00+07:00").getTime();
+  const dl = Date.now() + 7 * 24 * 3600 * 1000;
   const id = store.addTodo("user1", "LKP 6 Analisis Algoritme", dl, "#analgor [P2]");
   const todos = store.getTodos("user1");
   assert.strictEqual(todos.length, 1);
@@ -2620,7 +2961,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(formatted.includes("`#analgor [P2]`"));
   assert.ok(formatted.includes("├── "));
   assert.ok(formatted.includes("└── "));
-  assert.ok(formatted.includes("🌄 [Pengingat Tugas]"));
+  assert.ok(formatted.includes("🌄 [To-Do List]"));
   assert.ok(formatted.includes("_Semangat!_ 💪"));
 
   const found = store.findTodo("user1", "LKP 6");
