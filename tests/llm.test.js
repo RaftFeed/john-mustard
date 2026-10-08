@@ -17,6 +17,7 @@ import {
   isVagueCommandWithoutTarget,
   processChat,
   extractCandidateText,
+  stripThoughtBlocks,
   selectModelCascade,
   AUDIO_CASCADE,
   SMART_CASCADE,
@@ -1707,5 +1708,92 @@ test("LLM Engine: multi-mutation (update + delete) formats card and deletion lin
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LLM Engine: stripThoughtBlocks cleanly strips 'Okay, let me break this down' and tool call reasoning", () => {
+  const leaked = `Okay, let me break this down.
+
+Debugging a Data Inconsistency
+
+Alright, this is strange. I just called getTodoDetail with todoId: 1, and it returned nothing. That's a problem. But, I clearly remember earlier, when I was checking listTodos, I got a result! Wait, let me refresh my memory... yes, I saw:
+
+todo: { id: 42, task: "Cek banding email yg dibanned", ... }
+
+...in the output of listTodos. So, it listed something. Now, hold on, why only task 42? That's definitely not what I was expecting. It should have returned a list of todos. Did I mess something up with the filter, maybe?
+
+Okay, I'm going to double-check my logic. I'll approach this by looking at getTodoDetail by taskQuery. I need to figure out how this is happening and see if I have a bug.
+
+🌄 [To-Do List]
+_Selamat malam!_
+
+🔴 [1] Pengajuan Disbursement IEEE Student Branch Rebate 2026
+— Hari ini (8 Okt 2026 23:59)
+   #IEEE
+
+Semangat! 💪`;
+
+  const cleaned = stripThoughtBlocks(leaked);
+  assert.ok(!cleaned.includes("break this down"), "Must not leak break this down");
+  assert.ok(!cleaned.includes("Debugging a Data Inconsistency"), "Must not leak debugging title");
+  assert.ok(!cleaned.includes("getTodoDetail"), "Must not leak internal tool name");
+  assert.ok(!cleaned.includes("task 42"), "Must not leak raw reasoning thoughts");
+  assert.ok(cleaned.startsWith("🌄 [To-Do List]"), "Must preserve trailing user-facing list");
+
+  // Pure thought without clean trailing reply must return empty string
+  const pureThought = `Okay, let me break this down.
+
+Debugging a Data Inconsistency
+
+Alright, this is strange. I just called getTodoDetail with todoId: 1, and it returned nothing.`;
+  assert.strictEqual(stripThoughtBlocks(pureThought), "");
+});
+
+test("LLM Tools: updateTodo with clearDeadline: true removes existing deadline", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "test_clear_deadline";
+  const tId = store.addTodo(chatId, "Task with deadline", Date.now() + 3600_000);
+
+  const initial = store.getTodoByRealId(tId, chatId);
+  assert.ok(initial.deadline > 0, "Initial task must have deadline");
+
+  // Call updateTodo with clearDeadline: true
+  const res = await executeTool("updateTodo", { todoId: tId, clearDeadline: true }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "buat jadi tanpa deadline"
+  });
+
+  assert.strictEqual(res.toolResult.success, true);
+  const updated = store.getTodoByRealId(tId, chatId);
+  assert.strictEqual(updated.deadline, null, "Deadline must be cleared to null");
+  assert.ok(res.formattedList.includes("Tanpa deadline"), "Formatted card must display Tanpa deadline");
+});
+
+test("LLM Tools: getTodoDetail supports pre-resolved visual indexes", async () => {
+  const store = new Storage(":memory:");
+  const chatId = "test_detail_idx";
+  const t1 = store.addTodo(chatId, "Task One", Date.now() + 3600_000);
+  const t2 = store.addTodo(chatId, "Task Two", Date.now() + 7200_000);
+
+  // Snapshot visual index 1 -> t2, 2 -> t1
+  store.rememberTodoList(chatId, [
+    { id: t2, task: "Task Two" },
+    { id: t1, task: "Task One" }
+  ]);
+
+  // When preResolvedIndexes is true, targetId is real ID (t2)
+  const res = await executeTool("getTodoDetail", { todoId: t2 }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    preResolvedIndexes: true,
+    userText: "detail tugas 1"
+  });
+
+  assert.strictEqual(res.toolResult.success, true);
+  assert.strictEqual(res.toolResult.todo.id, t2);
+  assert.strictEqual(res.toolResult.todo.task, "Task Two");
+});
+
 
 

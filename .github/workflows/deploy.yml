@@ -20,11 +20,17 @@ jobs:
           script: |
             set -e
             cd ${{ secrets.WORK_DIR }}
+            PREV_HEAD=$(git rev-parse HEAD)
             git fetch origin
             if ! git pull --rebase origin main; then
               echo "Rebase conflict on VPS! Aborting rebase."
               git rebase --abort
               bash scripts/self-update.sh notify "[ALERT] Deploy GitHub Actions gagal: conflict rebase di VPS saat pull origin/main. Cek repository VPS."
               exit 1
+            fi
+            NEW_HEAD=$(git rev-parse HEAD)
+            if [ "$PREV_HEAD" != "$NEW_HEAD" ] && [ -n "$(git diff --name-only "$PREV_HEAD" "$NEW_HEAD" | grep -E '^(src/|system-prompt|config/)' || true)" ]; then
+              echo "Changes detected in src/ or config! Restarting john-mustard-bot..."
+              docker restart john-mustard-bot
             fi
             SELF_UPDATE_SYNC_RESTART=1 bash scripts/self-update.sh deploy

@@ -1,8 +1,8 @@
-const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let me\b|Let'?s\b|Aha!?\b|Look at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b)/i;
+const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b)/i;
 
 // Hard reasoning fingerprints: leaked tool-result dumps / raw tool-call notation.
 // These never appear in a genuine user-facing reply, so they are never salvageable.
-const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I just tried to|tried calling)\s+\w+(?:Todo|Reminder)\b)/i;
+const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I\s+just\s+called|called|calling|I just tried to|tried calling)\s+\w+(?:Todo|Reminder|Detail)\b|\bwith todoId:\b|\bgetTodoDetail\b|\b(?:in the output of|output of)\s+\w+(?:Todos|Reminders)\b|\btodo:\s*\{[^}]*id:\s*\d+)/i;
 
 // A real reply appended after a reasoning preamble (used to salvage mixed outputs).
 const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
@@ -11,7 +11,7 @@ const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Ha
 const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
 
 // Tool yang menerima nomor urut visual; dipakai untuk pra-resolve per batch.
-const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId" };
+const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId", getTodoDetail: "todoId" };
 const REMINDER_INDEX_ARG_BY_TOOL = { deleteReminder: "reminderId", updateReminder: "reminderId" };
 // Nomor urut untuk batal-selesai diresolusi terhadap daftar yang menyertakan tugas selesai.
 const UNCOMPLETE_INDEX_ARG_BY_TOOL = { uncompleteTodo: "todoId" };

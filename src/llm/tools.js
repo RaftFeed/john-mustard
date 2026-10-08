@@ -129,7 +129,8 @@ export const TOOLS = [
             todoId: { type: "NUMBER", description: "ID tugas yang mau diubah (opsional jika taskQuery diisi)" },
             taskQuery: { type: "STRING", description: "Kata kunci nama tugas jika ID tidak disebutkan" },
             newTask: { type: "STRING", description: "Judul tugas baru" },
-            deadlineIso: { type: "STRING", description: "Deadline baru dalam format ISO 8601 (contoh: 2026-09-25T09:30:00+07:00)" },
+            deadlineIso: { type: "STRING", description: "Deadline baru dalam format ISO 8601 (contoh: 2026-09-25T09:30:00+07:00), atau kosong/null jika dihapus" },
+            clearDeadline: { type: "BOOLEAN", description: "Set true jika pengguna meminta menghapus deadline / mengubah tugas menjadi tanpa deadline" },
             tag: { type: "STRING", description: "Tag baru mata kuliah atau kategori" },
             assignee: { type: "STRING", description: "Ganti nama penanggung jawab tugas" },
             description: { type: "STRING", description: "Deskripsi atau instruksi baru untuk tugas" }
@@ -854,7 +855,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const found = store.findTodo(queryChatId, args.taskQuery);
       if (found) targetId = found.id;
     }
-    const todo = targetId ? store.getTodoById(targetId, queryChatId) : null;
+    const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
+    const todo = targetId ? (useRaw ? store.getTodoByRealId(targetId, queryChatId) : store.getTodoById(targetId, queryChatId)) : null;
     if (!todo) {
       toolResult = { error: `Tugas ${args.todoId || args.taskQuery || ""} tidak ditemukan.` };
     } else {
@@ -976,7 +978,13 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     if (!targetId) {
       toolResult = { error: "Tugas tidak ditemukan untuk diubah." };
     } else {
-      const deadline = args.deadlineIso ? new Date(args.deadlineIso).getTime() : undefined;
+      let deadline;
+      if (args.clearDeadline === true || args.deadlineIso === null || args.deadlineIso === "none" || args.deadlineIso === "null" || args.deadlineIso === "") {
+        deadline = null;
+      } else if (args.deadlineIso) {
+        deadline = new Date(args.deadlineIso).getTime();
+        if (isNaN(deadline)) deadline = undefined;
+      }
       const useRaw = preResolvedIndexes || !Number.isFinite(Number(args.todoId));
       const changes = store.updateTodo(targetId, chatId, {
         task: args.newTask,
