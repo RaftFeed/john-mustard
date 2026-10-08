@@ -802,30 +802,55 @@ export class Storage {
     return this.db.prepare(sql).all(...params);
   }
 
+  _rememberListForScope(chatId, mapInstance, ids) {
+    if (!chatId || !mapInstance || !Array.isArray(ids)) return;
+    mapInstance.set(chatId, ids);
+    const scope = getUserTodoScope(chatId, this);
+    if (!scope.isGroup && scope.chatIds) {
+      for (const cid of scope.chatIds) {
+        mapInstance.set(cid, ids);
+      }
+    }
+  }
+
+  _getAnchoredListFromScope(chatId, mapInstance) {
+    if (!chatId || !mapInstance) return null;
+    const direct = mapInstance.get(chatId);
+    if (direct && direct.length > 0) return direct;
+    const scope = getUserTodoScope(chatId, this);
+    if (!scope.isGroup && scope.chatIds) {
+      for (const cid of scope.chatIds) {
+        const a = mapInstance.get(cid);
+        if (a && a.length > 0) return a;
+      }
+    }
+    return null;
+  }
+
   rememberTodoList(chatId, todos) {
     if (!chatId || !Array.isArray(todos)) return;
-    this.lastTodoOrderByChat.set(chatId, todos.map((t) => t.id));
+    this._rememberListForScope(chatId, this.lastTodoOrderByChat, todos.map((t) => t.id));
   }
 
   rememberReminderList(chatId, reminders) {
     if (!chatId || !Array.isArray(reminders)) return;
-    this.lastReminderOrderByChat.set(chatId, reminders.map((r) => r.id));
+    this._rememberListForScope(chatId, this.lastReminderOrderByChat, reminders.map((r) => r.id));
   }
 
   rememberAcaraList(chatId, events) {
     if (!chatId || !Array.isArray(events)) return;
-    this.lastAcaraOrderByChat.set(chatId, events.map((r) => r.id));
+    this._rememberListForScope(chatId, this.lastAcaraOrderByChat, events.map((r) => r.id));
   }
 
   rememberPengingatList(chatId, pengingat) {
     if (!chatId || !Array.isArray(pengingat)) return;
-    this.lastPengingatOrderByChat.set(chatId, pengingat.map((r) => r.id));
+    this._rememberListForScope(chatId, this.lastPengingatOrderByChat, pengingat.map((r) => r.id));
   }
 
   // Snapshot nomor urut to-do: pakai urutan list terakhir yang ditampilkan ke user;
   // fallback ke semua tugas (termasuk rutin) kalau belum ada list yang ditampilkan.
   getTodoIndexSnapshot(chatId) {
-    const anchored = this.lastTodoOrderByChat.get(chatId);
+    const anchored = this._getAnchoredListFromScope(chatId, this.lastTodoOrderByChat);
     if (anchored && anchored.length > 0) {
       const rows = anchored
         .map((id) => this.db.prepare("SELECT id, task, deadline, tag, category, assignee, done FROM todos WHERE id = ? AND deleted_at IS NULL").get(id))
@@ -836,7 +861,7 @@ export class Storage {
   }
 
   getReminderIndexSnapshot(chatId) {
-    const anchored = this.lastReminderOrderByChat.get(chatId);
+    const anchored = this._getAnchoredListFromScope(chatId, this.lastReminderOrderByChat);
     if (anchored && anchored.length > 0) {
       const rows = anchored
         .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
@@ -847,7 +872,7 @@ export class Storage {
   }
 
   getAcaraIndexSnapshot(chatId) {
-    const anchored = this.lastAcaraOrderByChat.get(chatId);
+    const anchored = this._getAnchoredListFromScope(chatId, this.lastAcaraOrderByChat);
     if (anchored && anchored.length > 0) {
       const rows = anchored
         .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
@@ -858,7 +883,7 @@ export class Storage {
   }
 
   getPengingatIndexSnapshot(chatId) {
-    const anchored = this.lastPengingatOrderByChat.get(chatId);
+    const anchored = this._getAnchoredListFromScope(chatId, this.lastPengingatOrderByChat);
     if (anchored && anchored.length > 0) {
       const rows = anchored
         .map((id) => this.db.prepare("SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE id = ? AND deleted_at IS NULL").get(id))
@@ -882,12 +907,34 @@ export class Storage {
     return this.resolveReminderIdFromSnapshot(num, this.getPengingatIndexSnapshot(chatId));
   }
 
-  resolveTodoId(idOrIndex, chatId) {
+  resolveTodoIdFromQuotedText(num, quotedText, chatId) {
+    if (isNaN(num) || !quotedText || typeof quotedText !== "string") return null;
+    const regex = new RegExp(`(?:\\[|\\*+\\[)${num}(?:\\]|\\]\\*+)\\s+(?:⚠️\\s+)?(?:\\[(?:SELESAI|TERLEWAT)\\]\\s+)?\\*?([^\\r\\n*]+)\\*?`, "i");
+    const match = quotedText.match(regex);
+    if (!match || !match[1]) return null;
+    const taskTitle = match[1].trim();
+    if (!taskTitle) return null;
+
+    const found = this.findTodo ? this.findTodo(chatId, taskTitle) : null;
+    if (found) return found.id;
+
+    const all = this.getTodos(chatId, true, null, true);
+    const cleanQuery = taskTitle.toLowerCase();
+    const matched = all.find((t) => t.task && (t.task.toLowerCase() === cleanQuery || t.task.toLowerCase().includes(cleanQuery)));
+    return matched ? matched.id : null;
+  }
+
+  resolveTodoId(idOrIndex, chatId, { quotedText } = {}) {
     const num = parseInt(idOrIndex, 10);
     if (isNaN(num)) return null;
 
     if (!chatId) {
       return num;
+    }
+
+    if (quotedText) {
+      const fromQuoted = this.resolveTodoIdFromQuotedText(num, quotedText, chatId);
+      if (fromQuoted !== null && fromQuoted !== undefined) return fromQuoted;
     }
 
     return this.resolveTodoIdFromSnapshot(num, this.getTodoIndexSnapshot(chatId));
@@ -911,11 +958,17 @@ export class Storage {
 
   // Resolve banyak nomor urut visual sekaligus terhadap SATU snapshot, supaya
   // urutan tidak bergeser saat beberapa item diubah dalam satu perintah.
-  resolveTodoIndexes(indexes, chatId) {
+  resolveTodoIndexes(indexes, chatId, { quotedText } = {}) {
     const nums = (Array.isArray(indexes) ? indexes : [indexes]).map((n) => parseInt(n, 10));
     if (!chatId) return nums;
     const snapshot = this.getTodoIndexSnapshot(chatId);
-    return nums.map((num) => this.resolveTodoIdFromSnapshot(num, snapshot));
+    return nums.map((num) => {
+      if (quotedText) {
+        const fromQuoted = this.resolveTodoIdFromQuotedText(num, quotedText, chatId);
+        if (fromQuoted !== null && fromQuoted !== undefined) return fromQuoted;
+      }
+      return this.resolveTodoIdFromSnapshot(num, snapshot);
+    });
   }
 
   // Sama seperti resolveTodoIndexes, tapi cocokkan ke list yang menyertakan tugas selesai

@@ -1047,8 +1047,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         const isConfirmed = Boolean(
           args.confirmed === true ||
           (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
-          (userText && /\b(hapus|apus|del|delete)\s+(?:tugas|todo)\s+\d+\b/i.test(userText)) ||
-          (userText && /\b\d+\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+          (userText && /\b(?:hapus|apus|del|delete)\s*(?:nomor|no\.?|#)?\s*\d+\b/i.test(userText)) ||
+          (userText && /\b\d+\s*(?:hapus|apus|del|delete)\b/i.test(userText)) ||
+          (userText && /\b(?:hapus|apus|del|delete)\s+(?:tugas|todo)\b/i.test(userText)) ||
+          (userText && /\b(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
         );
 
         const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
@@ -1073,6 +1075,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
           toolResult = {
             success: changes > 0,
             deletedId: targetTodo.id,
+            deletedTask: targetTodo.task,
             remainingCount: remaining.length,
             formattedList,
             instruction: "Jika menampilkan sisa tugas, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan atau mencantumkan tugas yang sudah dihapus. Informasikan ke pengguna bahwa tugas bisa dipulihkan dengan mengetik #undo."
@@ -1184,8 +1187,10 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       const isConfirmed = Boolean(
         args.confirmed === true ||
         (userText && /\b(ya|iya|yep|yes|lanjut|hapus aja|oke hapus|bener|benar|silakan)\b/i.test(userText)) ||
-        (userText && /\b(hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event|reminder)\s+\d+\b/i.test(userText)) ||
-        (userText && /\b\d+\s+(?:acara|agenda|jadwal|event|reminder)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+        (userText && /\b(?:hapus|apus|del|delete)\s*(?:nomor|no\.?|#)?\s*\d+\b/i.test(userText)) ||
+        (userText && /\b\d+\s*(?:hapus|apus|del|delete)\b/i.test(userText)) ||
+        (userText && /\b(?:hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event|reminder)\b/i.test(userText)) ||
+        (userText && /\b(?:acara|agenda|jadwal|event|reminder)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
       );
 
       const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
@@ -1210,6 +1215,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         toolResult = {
           success: changes > 0,
           deletedCount: changes,
+          deletedTitle: targetReminder?.message || null,
           remainingCount: remaining.length,
           formattedList,
           instruction: "Jika menampilkan sisa pengingat/agenda, WAJIB gunakan persis teks di field 'formattedList'. DILARANG menampilkan agenda yang sudah dihapus. Beritahu pengguna acara bisa dipulihkan dengan #undo.",

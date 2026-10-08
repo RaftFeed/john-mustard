@@ -1611,3 +1611,101 @@ test("LLM Engine: daily digest preserves both reminders list and to-do list", as
   }
 });
 
+test("LLM Guards & Tools: action intents and concise deletion confirmation", async () => {
+  assert.strictEqual(isActionIntent("1 undur jd besok, 4 apus"), true);
+  assert.strictEqual(isActionIntent("mundurin jadwal jam 3"), true);
+  assert.strictEqual(isActionIntent("udah beres tugas 2"), true);
+  assert.strictEqual(isActionIntent("kelar nomor 1"), true);
+
+  const store = new Storage(":memory:");
+  const chatId = "test_del_concise";
+  const tId = store.addTodo(chatId, "Beli telur asin");
+
+  // Concise deletion "4 apus" or "1 apus" auto-confirms without pending_confirmation
+  const res1 = await executeTool("deleteTodo", { todoId: tId }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "1 apus"
+  });
+  assert.strictEqual(res1.toolResult.success, true);
+  assert.strictEqual(res1.toolResult.deletedId, tId);
+  assert.strictEqual(res1.toolResult.deletedTask, "Beli telur asin");
+
+  // Add another task and test "apus 1"
+  const tId2 = store.addTodo(chatId, "Beli kecap");
+  const res2 = await executeTool("deleteTodo", { todoId: tId2 }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "apus 1"
+  });
+  assert.strictEqual(res2.toolResult.success, true);
+  assert.strictEqual(res2.toolResult.deletedTask, "Beli kecap");
+
+  // Add reminder and test concise deletion
+  const remId = store.addReminder(chatId, "Rapat Tim", Date.now() + 3600_000);
+  const res3 = await executeTool("deleteReminder", { reminderId: remId }, {
+    store,
+    chatId,
+    senderNumber: chatId,
+    userText: "1 apus"
+  });
+  assert.strictEqual(res3.toolResult.success, true);
+  assert.strictEqual(res3.toolResult.deletedTitle, "Rapat Tim");
+});
+
+test("LLM Engine: multi-mutation (update + delete) formats card and deletion line without full list", async () => {
+  const originalFetch = globalThis.fetch;
+  const store = new Storage(":memory:");
+  const chatId = "multi_mut_test";
+
+  const t1 = store.addTodo(chatId, "Tugas Presentasi", Date.now() + 3600_000);
+  const t2 = store.addTodo(chatId, "Tugas Kedua", Date.now() + 7200_000);
+  const t3 = store.addTodo(chatId, "Beli Kopi", Date.now() + 10800_000);
+
+  // Snapshot with indices: 1 -> t1, 2 -> t2, 3 -> t3
+  store.rememberTodoList(chatId, [
+    { id: t1, task: "Tugas Presentasi" },
+    { id: t2, task: "Tugas Kedua" },
+    { id: t3, task: "Beli Kopi" }
+  ]);
+
+  const mockRotator = { execute: async (fn) => fn("test-key") };
+
+  // Mock Gemini returning updateTodo (1) and deleteTodo (3) in turn 1
+  globalThis.fetch = async () => {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [
+              { functionCall: { name: "updateTodo", args: { todoId: 1, deadlineIso: "2026-10-09T23:59:00+07:00" } } },
+              { functionCall: { name: "deleteTodo", args: { todoId: 3 } } }
+            ]
+          }
+        }]
+      })
+    };
+  };
+
+  try {
+    const reply = await processChat(mockRotator, "1 undur jd besok, 3 apus", {
+      store,
+      chatId,
+      senderNumber: chatId
+    });
+
+    assert.ok(reply.includes("Beres, Lord!"), "Must contain Lord salute");
+    assert.ok(reply.includes("Tugas Presentasi"), "Must contain updated task card");
+    assert.ok(reply.includes("🗑️ Tugas #"), "Must contain deletion line");
+    assert.ok(reply.includes("Beli Kopi"), "Must mention deleted task title");
+    assert.ok(!reply.includes("[To-Do List"), "Must NOT dump the full active to-do list");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+

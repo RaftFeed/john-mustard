@@ -557,6 +557,9 @@ ${isBotQuoted
     let preResolvedIndexes = false;
     if (store && typeof store.resolveTodoIndexes === "function") {
       const queryChatId = isGroupChat ? chatId : (senderNumber || chatId);
+      const quotedRawText = quoted
+        ? (typeof quoted.content === "string" ? quoted.content : (quoted.content?.text || quoted.text || ""))
+        : "";
       const todoNums = [];
       const remNums = [];
       const uncompleteNums = [];
@@ -570,7 +573,7 @@ ${isBotQuoted
         if (uArg && isNumeric(args[uArg])) uncompleteNums.push(Number(args[uArg]));
       });
       if (todoNums.length > 0) {
-        const resolved = store.resolveTodoIndexes(todoNums, queryChatId);
+        const resolved = store.resolveTodoIndexes(todoNums, queryChatId, { quotedText: quotedRawText });
         let i = 0;
         execArgsList.forEach((args, idx) => {
           const tArg = TODO_INDEX_ARG_BY_TOOL[fnCallParts[idx].functionCall.name];
@@ -679,7 +682,58 @@ ${isBotQuoted
         salute = isGroupChat ? "Udah dicatet ya!" : "Udah dicatet ya, Lord!";
       } else if (onlyUpdate) {
         salute = isGroupChat ? "Udah diupdate ya!" : "Udah diupdate ya, Lord!";
-      } else {
+      }
+
+      const cards = [];
+      const actionLines = [];
+
+      for (const entry of executedTrajectory) {
+        const { name, result } = entry;
+        if (!result) continue;
+
+        if (name === "addTodo" || name === "updateTodo" || name === "addReminder" || name === "updateReminder") {
+          const cardText = result.formatted || null;
+          if (cardText && !FULL_LIST_HEADER_REGEX.test(cardText)) {
+            cards.push(cardText);
+          }
+        } else if (name === "deleteTodo") {
+          if (result.success) {
+            const taskLabel = result.deletedTask ? ` ('${result.deletedTask}')` : "";
+            actionLines.push(`🗑️ Tugas #${result.deletedId}${taskLabel} berhasil dihapus.`);
+          }
+        } else if (name === "deleteReminder") {
+          if (result.success) {
+            const titleLabel = result.deletedTitle ? ` '${result.deletedTitle}'` : (result.messageTitle ? ` '${result.messageTitle}'` : "");
+            actionLines.push(`🗑️ Acara/pengingat${titleLabel} berhasil dihapus.`);
+          }
+        } else if (name === "completeTodo") {
+          if (result.success) {
+            actionLines.push(`✅ Tugas #${result.todoId} ditandai selesai.`);
+          }
+        } else if (name === "uncompleteTodo") {
+          if (result.success) {
+            actionLines.push(`↩️ Tugas #${result.todoId} dikembalikan ke status belum selesai.`);
+          }
+        } else if (name === "clearCompletedTodos") {
+          if (result.success) {
+            actionLines.push(`🗑️ ${result.deletedCount || "Semua"} tugas selesai berhasil dibersihkan.`);
+          }
+        }
+      }
+
+      if (cards.length > 0 || actionLines.length > 0) {
+        const parts = [salute];
+        if (cards.length > 0) parts.push(cards.join("\n\n"));
+        if (actionLines.length > 0) parts.push(actionLines.join("\n"));
+        if (userWantsList) {
+          const fullList = collectedFormattedLists.find((l) => FULL_LIST_HEADER_REGEX.test(l)) ||
+            (FULL_LIST_HEADER_REGEX.test(lastFormattedList) ? lastFormattedList : null);
+          if (fullList) parts.push(fullList);
+        }
+        return parts.join("\n\n");
+      }
+
+      if (!onlyAdd && !onlyUpdate) {
         salute = `${salute} Data berhasil diperbarui di sistem.`;
       }
       const appended = appendableList();

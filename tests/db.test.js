@@ -675,3 +675,66 @@ test("Storage: separate Acara and Pengingat lists and formats", () => {
   store.setDailyDigest(chatId, false);
   assert.strictEqual(store.hasActiveDailyDigest(chatId), false);
 });
+
+test("Storage: cross-scope snapshot lookup between LID and phone JID", () => {
+  const store = new Storage(":memory:");
+  const phoneJid = "6285236467838@s.whatsapp.net";
+  const lid = "228140156772422@lid";
+  const phoneRaw = "6285236467838";
+
+  const t1 = store.addTodo(phoneRaw, "Task 1", Date.now() + 3600_000);
+  const t2 = store.addTodo(phoneRaw, "Task 2", Date.now() + 7200_000);
+  const t3 = store.addTodo(phoneRaw, "Task 3", Date.now() + 10800_000);
+
+  // Fast command snapshot saved with LID
+  store.rememberTodoList(lid, [
+    { id: t2, task: "Task 2" },
+    { id: t1, task: "Task 1" },
+    { id: t3, task: "Task 3" }
+  ]);
+
+  // LLM query comes with phone number: index 1 should resolve to t2, not t1!
+  assert.strictEqual(store.resolveTodoId(1, phoneRaw), t2);
+  assert.strictEqual(store.resolveTodoId(2, phoneRaw), t1);
+  assert.strictEqual(store.resolveTodoId(3, phoneRaw), t3);
+
+  // resolveTodoIndexes batch
+  const resolved = store.resolveTodoIndexes([1, 2, 3], phoneRaw);
+  assert.deepStrictEqual(resolved, [t2, t1, t3]);
+});
+
+test("Storage: resolveTodoIdFromQuotedText extracts todo IDs accurately", () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_quoted";
+
+  const t1 = store.addTodo(chatId, "Revisi Bab 4");
+  const t2 = store.addTodo(chatId, "Beli beras");
+  const t3 = store.addTodo(chatId, "Cek server");
+
+  const quotedText = `🌄 [To-Do List]
+_Selamat pagi!_
+
+🟠 [1] *Revisi Bab 4*
+📅 Deadline: Jum, 09 Okt 2026 23:59 WIB
+
+🟢 [2] *Beli beras*
+📅 Deadline: Tanpa deadline
+
+🟢 [3] *Cek server*
+📅 Deadline: Tanpa deadline`;
+
+  // Resolving with quotedText should look up the task title in DB
+  assert.strictEqual(store.resolveTodoIdFromQuotedText(1, quotedText, chatId), t1);
+  assert.strictEqual(store.resolveTodoIdFromQuotedText(2, quotedText, chatId), t2);
+  assert.strictEqual(store.resolveTodoIdFromQuotedText(3, quotedText, chatId), t3);
+  assert.strictEqual(store.resolveTodoIdFromQuotedText(99, quotedText, chatId), null);
+
+  // resolveTodoId with quotedText option takes precedence over stale snapshot
+  // Suppose snapshot has t3 as index 1
+  store.rememberTodoList(chatId, [{ id: t3, task: "Cek server" }]);
+  // Without quotedText, index 1 resolves to t3
+  assert.strictEqual(store.resolveTodoId(1, chatId), t3);
+  // With quotedText, index 1 resolves to t1 from the quoted message!
+  assert.strictEqual(store.resolveTodoId(1, chatId, { quotedText }), t1);
+});
+
