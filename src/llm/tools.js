@@ -36,6 +36,7 @@ import {
 import { getEmbedding } from "./cascade.js";
 import { fetchUrlContent, isExplicitPrivateRequest } from "./guards.js";
 import { formatRowsToMarkdown } from "./formatters.js";
+import { ingestVaultFile } from "../vault.js";
 
 export const TOOLS = [
   {
@@ -213,6 +214,8 @@ export const TOOLS = [
             newMessage: { type: "STRING", description: "Nama atau pesan agenda yang baru" },
             newEventAtIso: { type: "STRING", description: "Jadwal/jam baru pelaksanaan acara dalam format ISO 8601 (opsional)" },
             newRemindAtIso: { type: "STRING", description: "Jadwal/jam baru waktu pengingat dalam format ISO 8601 (opsional)" },
+            isEvent: { type: "BOOLEAN", description: "Set true jika ingin mengubah/memindahkan item menjadi acara/agenda, atau false jika menjadi pengingat biasa (opsional)" },
+            taskType: { type: "STRING", description: "Tipe tugas baru: 'event' (acara/agenda), 'reminder' (pengingat biasa), atau 'scheduled_action' (opsional)" },
             recurrence: { type: "STRING", description: "Perulangan baru: daily, weekly, atau null jika sekali" }
           }
         }
@@ -283,6 +286,20 @@ export const TOOLS = [
             newCategory: { type: "STRING", description: "Kategori baru: id_cards, receipts, documents, media" },
             newSummary: { type: "STRING", description: "Ringkasan / deskripsi baru untuk file" }
           }
+        }
+      },
+      {
+        name: "createVaultFile",
+        description: "Simpan dokumen teks atau file baru ke Document Vault secara permanen",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            filename: { type: "STRING", description: "Nama file dengan ekstensi (contoh: 'panduan_uts.md', 'rekap.txt')" },
+            content: { type: "STRING", description: "Isi teks file/dokumen yang ingin disimpan" },
+            category: { type: "STRING", description: "Kategori: documents (default), receipts, id_cards, media" },
+            summary: { type: "STRING", description: "Ringkasan isi dokumen (opsional)" }
+          },
+          required: ["filename", "content"]
         }
       },
       {
@@ -703,6 +720,21 @@ export const TOOLS = [
         }
       },
       {
+        name: "updatePerson",
+        description: "Perbarui informasi kontak di direktori (nomor telepon, role, hubungan, atau catatan)",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama kontak yang ingin diperbarui" },
+            phone: { type: "STRING", description: "Nomor telepon WhatsApp baru (opsional)" },
+            role: { type: "STRING", description: "Peran atau jabatan baru (opsional)" },
+            relationship: { type: "STRING", description: "Hubungan baru (opsional)" },
+            notes: { type: "STRING", description: "Catatan khusus atau info tambahan baru (opsional)" }
+          },
+          required: ["name"]
+        }
+      },
+      {
         name: "saveNote",
         description: "Simpan catatan penting, memori personal, atau info permanen pengguna (contoh: nomor rekening, NIM, alamat, preferensi)",
         parameters: {
@@ -814,7 +846,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   const callerId = senderNumber || chatId;
 
   const isGroup = String(chatId).endsWith("@g.us");
-  if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess" || name === "listVaultFiles" || name === "deleteVaultFile" || name === "updateVaultFile")) {
+  if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess" || name === "listVaultFiles" || name === "deleteVaultFile" || name === "updateVaultFile" || name === "createVaultFile")) {
     return {
       toolResult: { error: "Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik." },
       formattedList: null
@@ -1238,12 +1270,17 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       toolResult = { error: "reminderId atau query wajib diisi untuk mengubah agenda/pengingat." };
     } else {
       const remindAt = args.newRemindAtIso ? new Date(args.newRemindAtIso).getTime() : undefined;
-      const eventAt = args.newEventAtIso ? new Date(args.newEventAtIso).getTime() : undefined;
+      let eventAt = args.newEventAtIso ? new Date(args.newEventAtIso).getTime() : undefined;
+      let taskType = args.taskType;
+      if (args.isEvent === true) taskType = "event";
+      else if (args.isEvent === false) taskType = "reminder";
+
       const targetIsNumeric = typeof target === "number" || /^\d+$/.test(String(target).trim());
       const updated = store.updateReminder(queryChatId, target, {
         message: args.newMessage,
         remindAt: isNaN(remindAt) ? undefined : remindAt,
         eventAt: isNaN(eventAt) ? undefined : eventAt,
+        taskType,
         recurrence: args.recurrence
       }, { rawId: preResolvedIndexes && targetIsNumeric });
       if (!updated) {
@@ -1392,6 +1429,35 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       } else {
         toolResult = { error: "Gagal memperbarui file Vault atau akses ditolak." };
       }
+    }
+  } else if (name === "createVaultFile") {
+    try {
+      const filename = String(args.filename || "").trim();
+      const content = String(args.content || "");
+      if (!filename || !content) {
+        toolResult = { error: "filename dan content wajib diisi untuk membuat file Vault." };
+      } else {
+        const buffer = Buffer.from(content, "utf8");
+        const category = args.category || "documents";
+        const result = await ingestVaultFile(store, rotator, {
+          buffer,
+          filename,
+          mimetype: filename.endsWith(".md") ? "text/markdown" : (filename.endsWith(".json") ? "application/json" : "text/plain"),
+          caption: args.summary || "",
+          ownerId: callerId
+        });
+        const remaining = store.listVaultFiles(callerId);
+        if (store.rememberVaultList) store.rememberVaultList(chatId, remaining);
+        toolResult = {
+          success: true,
+          fileId: result.id,
+          filename: result.filename,
+          category: result.category,
+          message: `File '${result.filename}' berhasil disimpan ke Document Vault (ID #${result.id}).`
+        };
+      }
+    } catch (err) {
+      toolResult = { error: `Gagal membuat file di Vault: ${err.message}` };
     }
   } else if (name === "sendVaultFile") {
     const file = store.getVaultFileById(args.fileId);
@@ -2006,6 +2072,22 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       name: args.name,
       message: changes > 0 ? `Kontak '${args.name}' berhasil dihapus dari direktori.` : `Kontak '${args.name}' tidak ditemukan.`
     };
+  } else if (name === "updatePerson") {
+    const updated = store.updatePerson(args.name, {
+      phone: args.phone,
+      role: args.role,
+      relationship: args.relationship,
+      notes: args.notes
+    });
+    if (updated) {
+      toolResult = {
+        success: true,
+        person: updated,
+        message: `Kontak '${args.name}' berhasil diperbarui.`
+      };
+    } else {
+      toolResult = { error: `Kontak '${args.name}' tidak ditemukan di direktori.` };
+    }
   } else if (name === "checkServerHealth") {
     if (!isOwner(chatId, senderNumber)) {
       toolResult = { error: `Fitur checkServerHealth hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };

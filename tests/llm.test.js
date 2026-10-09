@@ -1801,5 +1801,51 @@ test("LLM Tools: getTodoDetail supports pre-resolved visual indexes", async () =
   assert.strictEqual(res.toolResult.todo.task, "Task Two");
 });
 
+test("LLM Tools: createVaultFile, updatePerson, and updateReminder event migration", async () => {
+  const { executeTool } = await import("../src/llm/tools.js");
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+  const ctx = { store, chatId, senderNumber: chatId };
+
+  // 1. Test createVaultFile
+  const vaultRes = await executeTool("createVaultFile", {
+    filename: "catatan_uts.md",
+    content: "# Kisi-kisi UTS\n1. Algoritma\n2. Jaringan",
+    category: "documents",
+    summary: "Kisi-kisi UTS"
+  }, ctx);
+  assert.strictEqual(vaultRes.toolResult.success, true);
+  assert.strictEqual(vaultRes.toolResult.filename, "catatan_uts.md");
+  assert.strictEqual(store.listVaultFiles(chatId).length, 1);
+
+  // 2. Test updatePerson
+  store.addPerson({ name: "Rian", phone: "628111222", role: "Teman" });
+  const personRes = await executeTool("updatePerson", {
+    name: "Rian",
+    role: "Partner Proyek",
+    notes: "Suka ngoding backend"
+  }, ctx);
+  assert.strictEqual(personRes.toolResult.success, true);
+  const updatedPerson = store.getPerson("Rian");
+  assert.strictEqual(updatedPerson.role, "Partner Proyek");
+  assert.strictEqual(updatedPerson.notes, "Suka ngoding backend");
+
+  // 3. Test updateReminder with isEvent: true to promote reminder to event
+  const remId = store.addReminder(chatId, "UTS Kecerdasan Buatan", Date.now() + 86400000, null, "reminder", null);
+  const remBefore = store.getReminderById(remId);
+  assert.strictEqual(remBefore.task_type, "reminder");
+  assert.strictEqual(remBefore.event_at, null);
+
+  const updateRes = await executeTool("updateReminder", {
+    reminderId: remId,
+    isEvent: true
+  }, ctx);
+  assert.strictEqual(updateRes.toolResult.success, true);
+  const remAfter = store.getReminderById(remId);
+  assert.strictEqual(remAfter.task_type, "event");
+  assert.strictEqual(remAfter.event_at, remBefore.remind_at);
+});
+
 
 

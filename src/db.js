@@ -43,6 +43,8 @@ export function detectTaskCategory(title = "") {
   return "work";
 }
 
+export const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji\s*temu|technical\s*meeting|tm|uts|uas|ujian|kuis|sidang|seminar|workshop|pasar\s*malam|konser|wisuda|tanding|pertandingan|pernikahan|kondangan|janji|kencan|hangout|nonton|jalan(?:-jalan)?)\b/i;
+
 const ownerProfile = DEFAULT_CONTACT_PROFILES.find((p) => /owner|master/i.test(p.role || p.relationship));
 export const OWNER_PHONE = normalizePhone(process.env.OWNER_PHONE || process.env.PRIMARY_USER_PHONE || ownerProfile?.phone || "6281234567890");
 
@@ -457,7 +459,6 @@ export class Storage {
   }
 
   migrateExistingEventReminders(now = Date.now()) {
-    const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
     try {
       const rows = this.db.prepare(
         "SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE status = 'pending' AND (event_at > ? OR remind_at > ?)"
@@ -602,7 +603,6 @@ export class Storage {
   isEventRow(row) {
     if (!row) return false;
     if (row.task_type === "scheduled_action") return false;
-    const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
     return Boolean(row.event_at || row.task_type === "event" || EVENT_REGEX.test(row.message || ""));
   }
 
@@ -701,13 +701,16 @@ export class Storage {
     if (!row) return null;
 
     const newMessage = message !== undefined && message !== null ? message : row.message;
-    const newEventAt = eventAt !== undefined ? eventAt : (row.event_at || null);
+    const newTaskType = taskType !== undefined ? taskType : (row.task_type || "reminder");
+    let newEventAt = eventAt !== undefined ? eventAt : (row.event_at || null);
+    if (newTaskType === "event" && !newEventAt && row.remind_at) {
+      newEventAt = row.remind_at;
+    }
     let newRemindAt = remindAt !== undefined && remindAt !== null ? remindAt : row.remind_at;
     if (newEventAt && (remindAt === undefined || newRemindAt >= newEventAt)) {
       newRemindAt = Math.max(Date.now(), newEventAt - 3600_000);
     }
     const newRecurrence = recurrence !== undefined ? recurrence : row.recurrence;
-    const newTaskType = taskType !== undefined ? taskType : (row.task_type || "reminder");
 
     const changes = this.db
       .prepare("UPDATE reminders SET message = ?, remind_at = ?, recurrence = ?, task_type = ?, event_at = ? WHERE id = ?")
@@ -2277,7 +2280,6 @@ export function formatRemindersList(reminders = [], options = {}) {
 }
 
 export function formatAcaraList(events = [], options = {}) {
-  const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
   const filtered = (events || []).filter((r) => {
     if (r.task_type === "scheduled_action") return false;
     return Boolean(r.event_at || r.task_type === "event" || EVENT_REGEX.test(r.message || ""));
@@ -2406,7 +2408,6 @@ export function formatAcaraList(events = [], options = {}) {
 }
 
 export function formatPengingatList(reminders = [], options = {}) {
-  const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
   const filtered = (reminders || []).filter((r) => {
     if (r.task_type === "scheduled_action") return false;
     const isEvent = Boolean(r.event_at || r.task_type === "event" || EVENT_REGEX.test(r.message || ""));
@@ -2423,7 +2424,7 @@ export function formatPengingatList(reminders = [], options = {}) {
       const dayName = fullDaysId[dObj.getUTCDay()];
       return `*[Daftar Pengingat]*\nTidak ada pengingat untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
     }
-    return "*[Daftar Pengingat]*\nBelum ada pengingat aktif.";
+    return "*[Daftar Pengingat]*\nBelum ada pengingat aktif.\n_Pengingat otomatis aktif H-1 jam untuk deadline to-do & jadwal acara, serta rekap harian 07:00 WIB._";
   }
 
   const now = new Date();
