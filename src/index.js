@@ -289,8 +289,8 @@ async function handleIncomingMessage(msg) {
       // 3. Di DM Pribadi: Jika user menyertakan teks pertanyaan/diskusi (atau berasal dari quoted media dan bukan perintah simpan ke vault), proses langsung via LLM
       const isExplicitVaultSave = msg.body && /\b(simpan|save|arsip|#vault|masukkan\s+ke\s+vault|catat\s+ke\s+vault)\b/i.test(msg.body);
       const isConvertRequest = msg.body && (
-        /\b(convert|konversi|ubah|jadikan)\s*(ke|menjadi|to)?\s*(pdf|docx|txt|teks|dokumen)\b/i.test(msg.body) ||
-        /\b(convert|konversi)\s+(pdf|docx|txt)\b/i.test(msg.body)
+        /\b(convert|konversi|ubah|jadikan)\s*(ke|menjadi|to)?\s*(pdf|docx|txt|teks|dokumen|gambar|png|jpg)\b/i.test(msg.body) ||
+        /\b(convert|konversi)\s+(pdf|docx|txt|png|jpg)\b/i.test(msg.body)
       );
       const hasUserCaption = Boolean(msg.body && msg.body.trim());
 
@@ -307,11 +307,18 @@ async function handleIncomingMessage(msg) {
           ownerId: msg.senderNumber || msg.from
         });
 
-        // Fast-path konversi langsung (DOCX/XLSX/TXT ke PDF/TXT)
+        // Fast-path konversi langsung (DOCX/DOC/XLSX/TXT ke PDF/PNG/TXT)
         if (isConvertRequest) {
           console.log(`>> Fast-path konversi dokumen DM terdeteksi untuk file: ${saved.filename}`);
           const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/convert");
-          const targetFormat = /\b(txt|teks)\b/i.test(msg.body) ? "txt" : "pdf";
+          let targetFormat = "pdf";
+          if (/\b(txt|teks)\b/i.test(msg.body)) {
+            targetFormat = "txt";
+          } else if (/\b(png|jpg|jpeg|gambar|image)\b/i.test(msg.body)) {
+            targetFormat = "png";
+          } else if (/\b(docx|word|doc)\b/i.test(msg.body)) {
+            targetFormat = "docx";
+          }
 
           try {
             const resp = await fetch(runnerUrl, {
@@ -321,7 +328,7 @@ async function handleIncomingMessage(msg) {
                 files: [{ filename: saved.filename, data_base64: buffer.toString("base64") }],
                 target_format: targetFormat
               }),
-              signal: AbortSignal.timeout(35000)
+              signal: AbortSignal.timeout(65000)
             });
 
             if (resp.ok) {
@@ -346,7 +353,8 @@ async function handleIncomingMessage(msg) {
                 });
 
                 // Kirim langsung file hasil konversi ke chat WhatsApp
-                await sendFile(msg.from, savedPath, outName, `Hasil konversi dokumen ${outName}`, targetFormat === "pdf");
+                const isDocType = targetFormat === "pdf" || targetFormat === "docx";
+                await sendFile(msg.from, savedPath, outName, `Hasil konversi dokumen ${outName}`, isDocType);
                 const reply = `Beres, Lord. File '${saved.filename}' berhasil diconvert jadi ${targetFormat.toUpperCase()} dan langsung kukirimkan (tersimpan di Vault ID #${convertedFileId}).`;
                 await sendText(msg.from, reply);
                 console.log(`>> Berhasil fast-convert dan kirim file ${outName} ke ${msg.from}`);

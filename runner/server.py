@@ -321,40 +321,102 @@ def convert_document():
     if not b:
         return jsonify({"status": "error", "error": "Konten file tidak ditemukan."}), 400
 
+    # 0. Image <-> PDF conversion via PyMuPDF
+    if fitz:
+        if ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp") and target_format == "pdf":
+            try:
+                img_doc = fitz.open(stream=b, filetype=ext.lstrip("."))
+                pdf_bytes = img_doc.convert_to_pdf()
+                img_doc.close()
+                out_name = os.path.splitext(filename)[0] + ".pdf"
+                return jsonify({
+                    "status": "success",
+                    "engine": "pymupdf_image",
+                    "filename": out_name,
+                    "mimetype": "application/pdf",
+                    "data_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
+                    "text": f"Gambar '{filename}' berhasil dikonversi ke PDF.",
+                    "message": f"Berhasil mengonversi gambar '{filename}' ke PDF."
+                })
+            except Exception as img_err:
+                app.logger.warning(f"Gagal konversi gambar ke PDF via PyMuPDF: {img_err}")
+
+        if ext == ".pdf" and target_format in ("png", "jpg", "jpeg", "image"):
+            try:
+                pdf_doc = fitz.open(stream=b, filetype="pdf")
+                if len(pdf_doc) > 0:
+                    page = pdf_doc[0]
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    pdf_doc.close()
+                    out_name = os.path.splitext(filename)[0] + ".png"
+                    return jsonify({
+                        "status": "success",
+                        "engine": "pymupdf_page_render",
+                        "filename": out_name,
+                        "mimetype": "image/png",
+                        "data_base64": base64.b64encode(img_bytes).decode("utf-8"),
+                        "text": f"Halaman 1 dari PDF '{filename}' berhasil di-render ke gambar PNG.",
+                        "message": f"Berhasil merender PDF '{filename}' ke gambar PNG."
+                    })
+            except Exception as pdf_err:
+                app.logger.warning(f"Gagal render PDF ke gambar: {pdf_err}")
+
+    # 1. High-fidelity conversion via LibreOffice Headless (DOCX, DOC, XLSX, XLS, PPTX, PPT, ODT, RTF -> PDF/TXT)
     import shutil
     soffice_bin = shutil.which("soffice") or shutil.which("libreoffice") or os.environ.get("SOFFICE_PATH")
     if soffice_bin and (os.path.exists(soffice_bin) if os.path.isabs(soffice_bin) else True):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                in_path = os.path.join(tmpdir, filename)
+                safe_name = os.path.basename(filename) or f"document{ext}"
+                in_path = os.path.join(tmpdir, safe_name)
                 with open(in_path, "wb") as fh:
                     fh.write(b)
                 out_fmt = "pdf" if target_format in ("pdf", "document") else "txt"
-                cmd = [soffice_bin, "--headless", "--convert-to", out_fmt, "--outdir", tmpdir, in_path]
-                res = subprocess.run(cmd, capture_output=True, timeout=30)
-                out_name = os.path.splitext(filename)[0] + ("." + out_fmt)
-                out_path = os.path.join(tmpdir, out_name)
-                if os.path.exists(out_path):
+                profile_dir = os.path.join(tmpdir, "lo_profile")
+                os.makedirs(profile_dir, exist_ok=True)
+                cmd = [
+                    soffice_bin,
+                    f"-env:UserInstallation=file://{profile_dir}",
+                    "--headless",
+                    "--convert-to", out_fmt,
+                    "--outdir", tmpdir,
+                    in_path
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                out_candidates = [
+                    f for f in os.listdir(tmpdir)
+                    if f != safe_name and f != "lo_profile" and f.lower().endswith("." + out_fmt)
+                ]
+                if out_candidates:
+                    out_filename = out_candidates[0]
+                    out_path = os.path.join(tmpdir, out_filename)
                     with open(out_path, "rb") as fh:
                         out_b = fh.read()
                     text_content = ""
                     if out_fmt == "pdf" and fitz:
-                        d = fitz.open(stream=out_b, filetype="pdf")
-                        text_content = "\n".join((page.get_text("text") or "").strip() for page in d)
-                        d.close()
+                        try:
+                            d = fitz.open(stream=out_b, filetype="pdf")
+                            text_content = "\n".join((page.get_text("text") or "").strip() for page in d)
+                            d.close()
+                        except Exception:
+                            pass
                     elif out_fmt == "txt":
                         text_content = out_b.decode("utf-8", errors="replace")
+
                     return jsonify({
                         "status": "success",
                         "engine": "libreoffice",
-                        "filename": out_name,
+                        "filename": out_filename,
                         "mimetype": "application/pdf" if out_fmt == "pdf" else "text/plain",
                         "data_base64": base64.b64encode(out_b).decode("utf-8"),
                         "text": text_content[:15000],
-                        "message": f"Berhasil mengonversi '{filename}' ke format {out_fmt.upper()} via LibreOffice."
+                        "message": f"Berhasil mengonversi '{filename}' ke format {out_fmt.upper()} via LibreOffice (100% presisi visual)."
                     })
-        except Exception:
-            pass
+                else:
+                    app.logger.warning(f"LibreOffice returncode {res.returncode}, stdout: {res.stdout}, stderr: {res.stderr}")
+        except Exception as lo_err:
+            app.logger.warning(f"LibreOffice conversion failed: {lo_err}")
 
     # Native Python Fallback
     try:

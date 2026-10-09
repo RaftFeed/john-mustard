@@ -1845,7 +1845,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
               files: [{ filename: fileRec.filename, data_base64: b.toString("base64") }],
               target_format: args.targetFormat || "pdf"
             }),
-            signal: AbortSignal.timeout(30000)
+            signal: AbortSignal.timeout(65000)
           });
           if (!resp.ok) {
             throw new Error(`Runner convert error (${resp.status}): ${await resp.text()}`);
@@ -1855,7 +1855,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
             toolResult = { error: data.error || "Gagal mengonversi dokumen." };
           } else {
             let outName = args.outputFilename || data.filename || `converted_${fileRec.filename}.pdf`;
-            const isPdf = data.mimetype === "application/pdf";
+            const isDocType = data.mimetype === "application/pdf" || outName.endsWith(".pdf") || outName.endsWith(".docx");
             const category = "documents";
             const dir = path.join("vault", category);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -1876,7 +1876,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
             const shouldSendDirectly = args.sendDirectly !== undefined ? Boolean(args.sendDirectly) : true;
             if (shouldSendDirectly) {
               const caption = args.caption || data.message || `Hasil konversi dokumen ${outName}`;
-              await sendFile(chatId, savedPath, outName, caption, isPdf);
+              await sendFile(chatId, savedPath, outName, caption, isDocType);
             }
 
             toolResult = {
