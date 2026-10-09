@@ -340,7 +340,7 @@ export class Storage {
     // Migrate legacy daily digest reminders to include acara & agenda
     try {
       this.db.prepare(
-        "UPDATE reminders SET message = 'Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.' WHERE task_type = 'scheduled_action' AND message LIKE 'Rekap to-do harian%' AND deleted_at IS NULL"
+        "UPDATE reminders SET message = 'Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Agenda hari ini.' WHERE task_type = 'scheduled_action' AND (message LIKE 'Rekap to-do harian%' OR message LIKE 'Rekap harian%') AND deleted_at IS NULL"
       ).run();
     } catch {}
   }
@@ -590,12 +590,12 @@ export class Storage {
     }
     if (scope.isGroup) {
       return this.db
-        .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending' AND deleted_at IS NULL${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+        .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id = ? AND status = 'pending' AND deleted_at IS NULL AND (task_type IS NULL OR task_type != 'scheduled_action')${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
         .all(chatId, ...dateParams);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     return this.db
-      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' AND deleted_at IS NULL${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
+      .prepare(`SELECT id, message, remind_at, recurrence, task_type, event_at FROM reminders WHERE chat_id IN (${cidPlaceholders}) AND status = 'pending' AND deleted_at IS NULL AND (task_type IS NULL OR task_type != 'scheduled_action')${dateFilter} ORDER BY COALESCE(event_at, remind_at) ASC`)
       .all(...scope.chatIds, ...dateParams);
   }
 
@@ -613,7 +613,7 @@ export class Storage {
 
   listPengingat(chatId, targetDate = null) {
     const all = this.listReminders(chatId, targetDate);
-    return all.filter((r) => !this.isEventRow(r) || r.task_type === "scheduled_action");
+    return all.filter((r) => !this.isEventRow(r) && r.task_type !== "scheduled_action");
   }
 
   hasActiveDailyDigest(chatId) {
@@ -1073,7 +1073,7 @@ export class Storage {
     if (exist) {
       this.db.prepare(
         "UPDATE reminders SET message = ? WHERE id = ?"
-      ).run("Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.", exist.id);
+      ).run("Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Agenda hari ini.", exist.id);
       return exist.id;
     }
 
@@ -1085,7 +1085,7 @@ export class Storage {
     }
     return this.addReminder(
       chatId,
-      "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.",
+      "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Agenda hari ini.",
       next7am.getTime(),
       "daily",
       "scheduled_action"
@@ -2153,13 +2153,15 @@ export function formatRemindersList(reminders = [], options = {}) {
   const fullDaysId = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
   const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
-  if (!reminders || reminders.length === 0) {
+  const filtered = (reminders || []).filter((r) => r.task_type !== "scheduled_action");
+
+  if (!filtered || filtered.length === 0) {
     if (dayRange) {
       const dObj = new Date(dayRange.startOfDay + 7 * 3600 * 1000);
       const dayName = fullDaysId[dObj.getUTCDay()];
-      return `*[Daftar Acara & Pengingat]*\nTidak ada jadwal acara atau pengingat untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
+      return `*[Daftar Acara & Agenda]*\nTidak ada jadwal acara atau agenda untuk hari ${dayName}, ${dayRange.d} ${monthsId[dayRange.m - 1]} ${dayRange.y}. Santai dulu!`;
     }
-    return "*[Daftar Acara & Pengingat]*\nBelum ada jadwal acara atau pengingat aktif.";
+    return "*[Daftar Acara & Agenda]*\nBelum ada jadwal acara atau agenda aktif.";
   }
 
   const now = new Date();
@@ -2178,7 +2180,7 @@ export function formatRemindersList(reminders = [], options = {}) {
   else if (hour >= 15 && hour < 18) salam = "Selamat sore";
   else if (hour >= 18 || hour < 4) salam = "Selamat malam";
 
-  let header = `🗓️ [Daftar Acara & Pengingat]\n_${salam}!_\n`;
+  let header = `🗓️ [Daftar Acara & Agenda]\n_${salam}!_\n`;
   if (dayRange) {
     const dObj = new Date(dayRange.startOfDay + WIB_OFFSET_MS);
     const dayName = fullDaysId[dObj.getUTCDay()];
@@ -2187,7 +2189,7 @@ export function formatRemindersList(reminders = [], options = {}) {
 
   const lines = [header];
 
-  reminders.forEach((r, idx) => {
+  filtered.forEach((r, idx) => {
     let badge = "⚪";
     let scheduleStr = "Tanpa jadwal";
     const targetTimestamp = r.event_at || r.remind_at;
@@ -2406,7 +2408,7 @@ export function formatAcaraList(events = [], options = {}) {
 export function formatPengingatList(reminders = [], options = {}) {
   const EVENT_REGEX = /\b(acara|agenda|jadwal|kuliah|kelas|rapat|meeting|latihan|pr|tugas|webinar|janji temu|technical meeting|tm)\b/i;
   const filtered = (reminders || []).filter((r) => {
-    if (r.task_type === "scheduled_action") return true;
+    if (r.task_type === "scheduled_action") return false;
     const isEvent = Boolean(r.event_at || r.task_type === "event" || EVENT_REGEX.test(r.message || ""));
     return !isEvent;
   });
@@ -2519,11 +2521,7 @@ export function formatPengingatList(reminders = [], options = {}) {
       pillTokens.push("[Terlewat]");
     }
 
-    if (r.task_type === "scheduled_action") {
-      pillTokens.push("[Sistem]");
-    } else {
-      pillTokens.push("#pengingat");
-    }
+    pillTokens.push("#pengingat");
 
     const tagLine = `\`${pillTokens.join(" ")}\``;
     const titleText = isOverdue ? `*[${idx + 1}] ⚠️ [TERLEWAT] ${r.message}*` : `*[${idx + 1}] ${r.message}*`;
@@ -3234,9 +3232,17 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/db.js")) {
   assert.ok(formattedRems.includes("Jemput adik di stasiun"));
   assert.ok(formattedRems.includes("Bayar listrik"));
   assert.ok(!formattedRems.includes("[ID:"));
-  assert.ok(formattedRems.includes("🗓️ [Daftar Acara & Pengingat]"));
+  assert.ok(formattedRems.includes("🗓️ [Daftar Acara & Agenda]"));
   assert.ok(formattedRems.includes("├── "));
   assert.ok(formattedRems.includes("└── "));
+
+  // Test scheduled_action exclusion from public lists
+  store.setDailyDigest("rem_user", true);
+  const reksAfterDigest = store.listReminders("rem_user");
+  assert.strictEqual(reksAfterDigest.length, 2, "scheduled_action must not appear in listReminders");
+  assert.strictEqual(store.listPengingat("rem_user").length, 2, "scheduled_action must not appear in listPengingat");
+  const formattedAfterDigest = formatRemindersList(reksAfterDigest);
+  assert.ok(!formattedAfterDigest.includes("Rekap harian"), "Daily digest must not appear in formatRemindersList");
 
   // updateReminder test
   const updRem = store.updateReminder("rem_user", testRemId1, { message: "Jemput adik di terminal" });

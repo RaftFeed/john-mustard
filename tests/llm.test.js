@@ -481,7 +481,7 @@ test("LLM Tools: addReminder and updateReminder return a formatted single remind
   assert.ok(resUpd.formattedList.includes("*TM Valorant Senin (Final)*"));
   assert.ok(resUpd.formattedList.includes("├── "));
   assert.ok(resUpd.formattedList.includes("`Sekali #acara`"));
-  assert.ok(!resUpd.formattedList.includes("[Daftar Acara & Pengingat]"), "Must be a single card, not full list");
+  assert.ok(!resUpd.formattedList.includes("[Daftar Acara & Agenda]"), "Must be a single card, not full list");
 });
 
 test("LLM Tools: listReminders supports category 'acara' and 'pengingat'", async () => {
@@ -507,9 +507,15 @@ test("LLM Tools: listReminders supports category 'acara' and 'pengingat'", async
   assert.strictEqual(resPengingat.toolResult.success, true);
   assert.ok(resPengingat.formattedList.includes("[Daftar Pengingat]"));
   assert.ok(resPengingat.formattedList.includes("Beli galon air"));
-  assert.ok(resPengingat.formattedList.includes("Rekap harian"));
-  assert.ok(resPengingat.formattedList.includes("[Sistem]"));
+  assert.ok(!resPengingat.formattedList.includes("Rekap harian"));
+  assert.ok(!resPengingat.formattedList.includes("[Sistem]"));
   assert.ok(!resPengingat.formattedList.includes("Webinar Cloud Computing"));
+
+  // category: "all" / default (returns Acara & Agenda, hides scheduled_action)
+  const resAll = await executeTool("listReminders", {}, { store, chatId });
+  assert.strictEqual(resAll.toolResult.success, true);
+  assert.ok(resAll.formattedList.includes("[Daftar Acara & Agenda]"));
+  assert.ok(!resAll.formattedList.includes("Rekap harian"));
 });
 
 test("LLM Engine: addTodo short-circuits to a card-style confirmation", async () => {
@@ -598,7 +604,7 @@ test("LLM Engine: addReminder short-circuits to a card-style confirmation", asyn
     assert.ok(reply.includes("*Rapat Pleno*"), "Card title should be present");
     assert.ok(reply.includes("├── "), "Branch line should be present");
     assert.ok(reply.includes("`Sekali #acara`"), "Tag line should be present");
-    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Must not dump full event list");
+    assert.ok(!reply.includes("[Daftar Acara & Agenda]"), "Must not dump full event list");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -678,7 +684,7 @@ test("LLM Engine: mutation reply omits the full remaining list when not requeste
     });
 
     assert.ok(reply.includes("Beres"), "Reply should confirm mutation");
-    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Full event list must not be dumped after a mutation");
+    assert.ok(!reply.includes("[Daftar Acara & Agenda]"), "Full event list must not be dumped after a mutation");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -724,7 +730,7 @@ test("LLM Engine: does not append the full event list when the user did not ask 
     });
 
     assert.ok(reply.includes("rekap harian"), "Model answer must be preserved");
-    assert.ok(!reply.includes("[Daftar Acara & Pengingat]"), "Full event list must NOT be appended unrequested");
+    assert.ok(!reply.includes("[Daftar Acara & Agenda]"), "Full event list must NOT be appended unrequested");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1597,13 +1603,13 @@ test("LLM Engine: daily digest preserves both reminders list and to-do list", as
     store.addTodo("user1", "Selesaikan Slide Presentasi", Date.now() + 7200_000);
     const mockRotator = { execute: async (fn) => fn("test-key") };
 
-    const reply = await processChat(mockRotator, "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.", {
+    const reply = await processChat(mockRotator, "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Agenda hari ini.", {
       store,
       chatId: "user1",
       senderNumber: "user1"
     });
 
-    assert.ok(reply.includes("[Daftar Acara & Pengingat]"), "Must include reminders list");
+    assert.ok(reply.includes("[Daftar Acara & Agenda]"), "Must include reminders list");
     assert.ok(reply.includes("Rapat Koordinasi"));
     assert.ok(reply.includes("[To-Do List]"), "Must include to-do list");
     assert.ok(reply.includes("Selesaikan Slide Presentasi"));

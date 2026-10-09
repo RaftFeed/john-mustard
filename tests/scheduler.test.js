@@ -332,7 +332,7 @@ test("Scheduler: daily digest scheduled_action includes both reminders and todos
     {
       id: 501,
       chat_id: "user_digest",
-      message: "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Pengingat hari ini.",
+      message: "Rekap harian: kirimkan To-Do List hari ini dan Daftar Acara & Agenda hari ini.",
       remind_at: Date.now() - 1000,
       task_type: "scheduled_action",
       status: "pending",
@@ -360,7 +360,7 @@ test("Scheduler: daily digest scheduled_action includes both reminders and todos
   const res = await tickScheduler(mockStore, { textSender: mockSender });
   assert.strictEqual(res.ticked, true);
   assert.strictEqual(sentMessages.length, 1);
-  assert.ok(sentMessages[0].text.includes("Daftar Acara & Pengingat"));
+  assert.ok(sentMessages[0].text.includes("Daftar Acara & Agenda"));
   assert.ok(sentMessages[0].text.includes("To-Do List"));
   assert.ok(sentMessages[0].text.includes("Rapat Proyek"));
   assert.ok(sentMessages[0].text.includes("Selesaikan Laporan"));

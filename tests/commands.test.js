@@ -490,12 +490,12 @@ test("Commands: #acara and #pengingat separate lists, targeted delete, and #dail
   assert.ok(!resAcara.includes("Rekap harian"));
   assert.ok(!resAcara.includes("Beli galon air"));
 
-  // executeFastCommand #pengingat: MUST have Beli galon and Rekap harian with [Sistem], MUST NOT have Webinar
+  // executeFastCommand #pengingat: MUST have Beli galon, MUST NOT have Rekap harian or Webinar
   const resPengingat = await executeFastCommand(parseFastCommand("#pengingat"), ctx);
   assert.ok(resPengingat.includes("[Daftar Pengingat]"));
   assert.ok(resPengingat.includes("Beli galon air"));
-  assert.ok(resPengingat.includes("Rekap harian"));
-  assert.ok(resPengingat.includes("[Sistem]"));
+  assert.ok(!resPengingat.includes("Rekap harian"));
+  assert.ok(!resPengingat.includes("[Sistem]"));
   assert.ok(!resPengingat.includes("Webinar Cloud Computing"));
 
   // executeFastCommand #daily status
@@ -506,7 +506,7 @@ test("Commands: #acara and #pengingat separate lists, targeted delete, and #dail
   const resDelAcara = await executeFastCommand(parseFastCommand("hapus acara 1"), ctx);
   assert.ok(resDelAcara.includes("Acara #1 berhasil dihapus"));
   assert.strictEqual(store.listEvents(chatId).length, 0);
-  assert.strictEqual(store.listPengingat(chatId).length, 2);
+  assert.strictEqual(store.listPengingat(chatId).length, 1);
 
   // Turn off daily digest
   await executeFastCommand(parseFastCommand("#daily 0"), ctx);

@@ -8,7 +8,7 @@ const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\b
 const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
 
 // Header penanda output "daftar penuh" (to-do list / daftar acara). Kartu satuan (add/update) tidak termasuk.
-const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
+const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Agenda\]|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
 
 // Tool yang menerima nomor urut visual; dipakai untuk pra-resolve per batch.
 const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId", getTodoDetail: "todoId" };

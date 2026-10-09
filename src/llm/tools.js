@@ -175,13 +175,13 @@ export const TOOLS = [
       },
       {
         name: "listReminders",
-        description: "Lihat daftar semua pengingat/reminder/acara aktif yang belum terkirim. Gunakan category='acara' jika pengguna menanyakan acara/agenda kegiatan mendatang. Gunakan category='pengingat' jika pengguna menanyakan pengingat/reminder/rekap. Jika kosong/all, tampilkan semua pengingat & acara. HANYA untuk acara kalender spesifik/sekali jalan atau pengingat aktif. BUKAN untuk jadwal kuliah/sekolah/kelas mingguan (jadwal kuliah/kelas mingguan tersimpan di catatan, gunakan getNote 'jadwal_kuliah'). Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
+        description: "Lihat daftar acara/agenda kegiatan atau pengingat aktif yang belum terkirim. Gunakan category='acara' jika pengguna menanyakan acara/agenda kegiatan mendatang. Gunakan category='pengingat' jika pengguna menanyakan pengingat/reminder. Jika kosong/all, tampilkan acara & agenda. HANYA untuk acara kalender spesifik/sekali jalan atau pengingat aktif. BUKAN untuk jadwal kuliah/sekolah/kelas mingguan (jadwal kuliah/kelas mingguan tersimpan di catatan, gunakan getNote 'jadwal_kuliah'). Jika pengguna menanyakan jadwal/acara untuk hari atau tanggal tertentu saja (misal: 'jadwal senin', 'acara besok', 'ada agenda apa hari ini'), WAJIB isi parameter targetDateIso dengan tanggal tersebut (YYYY-MM-DD).",
         parameters: {
           type: "OBJECT",
           properties: {
             category: {
               type: "STRING",
-              description: "Kategori filter: 'acara' (acara & agenda kegiatan mendatang), 'pengingat' (pengingat biasa & rekap harian sistem), atau 'all' (semua pengingat & acara, default)"
+              description: "Kategori filter: 'acara' (acara & agenda kegiatan mendatang), 'pengingat' (pengingat biasa/onetime), atau 'all' (acara & agenda, default)"
             },
             targetDateIso: {
               type: "STRING",
@@ -192,7 +192,7 @@ export const TOOLS = [
       },
       {
         name: "deleteReminder",
-        description: "Hapus/batalkan pengingat/acara dari Daftar Acara & Pengingat. Panggil tool ini HANYA jika yang ingin dihapus adalah agenda/acara/reminder. DILARANG memanggil tool ini jika pengguna merujuk nomor dari To-Do List!",
+        description: "Hapus/batalkan pengingat/acara dari Daftar Acara & Agenda. Panggil tool ini HANYA jika yang ingin dihapus adalah agenda/acara/reminder. DILARANG memanggil tool ini jika pengguna merujuk nomor dari To-Do List!",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -219,7 +219,7 @@ export const TOOLS = [
       },
       {
         name: "setDailyDigest",
-        description: "Aktifkan atau nonaktifkan pengiriman rekap harian otomatis setiap pukul 07:00 WIB (berisi To-Do List hari ini dan Daftar Acara & Pengingat hari ini)",
+        description: "Aktifkan atau nonaktifkan pengiriman rekap harian otomatis setiap pukul 07:00 WIB (berisi To-Do List hari ini dan Daftar Acara & Agenda hari ini)",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1269,7 +1269,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       success: true,
       enabled: enable,
       message: enable
-        ? "Rekap harian (to-do list + daftar acara & pengingat) jam 07:00 WIB berhasil diaktifkan."
+        ? "Rekap harian (to-do list + daftar acara & agenda) jam 07:00 WIB berhasil diaktifkan."
         : "Rekap harian jam 07:00 WIB berhasil dinonaktifkan."
     };
   } else if (name === "searchVault") {

@@ -125,7 +125,7 @@ test("Storage: listReminders and getTodos date filtering with WIB range", () => 
 
   // Format empty day
   const formattedWednesday = formatRemindersList([], { targetDate: "2026-09-30" });
-  assert.ok(formattedWednesday.includes("Tidak ada jadwal acara atau pengingat untuk hari Rabu, 30 Sep 2026"));
+  assert.ok(formattedWednesday.includes("Tidak ada jadwal acara atau agenda untuk hari Rabu, 30 Sep 2026"));
 
   // Add todos: 1 on Monday, 1 on Tuesday
   store.addTodo("user1", "Tugas Senin", monday10Wib, "#tugas");
@@ -375,7 +375,8 @@ test("Storage: setDailyDigest covers to-do list and acara list with legacy compa
 
   // Enabling again is idempotent (no duplicate digest row)
   assert.strictEqual(store.setDailyDigest(chatId, true), remId);
-  assert.strictEqual(store.listReminders(chatId).length, 1);
+  assert.strictEqual(store.listReminders(chatId).length, 0, "scheduled_action must not appear in listReminders");
+  assert.strictEqual(store.hasActiveDailyDigest(chatId), true);
 
   // Legacy digest rows ("Rekap to-do harian...") are updated with new message on enable
   const legacyChat = "user_digest_legacy";
@@ -648,12 +649,15 @@ test("Storage: separate Acara and Pengingat lists and formats", () => {
   assert.strictEqual(events[0].id, evId);
   assert.strictEqual(events[0].message, "UTS Sistem Informasi");
 
-  // Test listPengingat (only regular reminder + scheduled_action, NO Acara)
+  // Test listPengingat (only regular reminder, NO scheduled_action, NO Acara)
   const pengingat = store.listPengingat(chatId);
-  assert.strictEqual(pengingat.length, 2);
-  const ids = pengingat.map((p) => p.id);
-  assert.ok(ids.includes(remId));
-  assert.ok(ids.includes(digestId));
+  assert.strictEqual(pengingat.length, 1);
+  assert.strictEqual(pengingat[0].id, remId);
+
+  // Test listReminders (Acara + regular reminder, NO scheduled_action)
+  const allReminders = store.listReminders(chatId);
+  assert.strictEqual(allReminders.length, 2);
+  assert.ok(!allReminders.some((r) => r.id === digestId));
 
   // Test formatAcaraList
   const formattedAcara = formatAcaraList(events);
@@ -666,8 +670,8 @@ test("Storage: separate Acara and Pengingat lists and formats", () => {
   const formattedPengingat = formatPengingatList(pengingat);
   assert.ok(formattedPengingat.includes("[Daftar Pengingat]"));
   assert.ok(formattedPengingat.includes("Minum vitamin C"));
-  assert.ok(formattedPengingat.includes("Rekap harian"));
-  assert.ok(formattedPengingat.includes("[Sistem]"));
+  assert.ok(!formattedPengingat.includes("Rekap harian"));
+  assert.ok(!formattedPengingat.includes("[Sistem]"));
   assert.ok(!formattedPengingat.includes("UTS Sistem Informasi"));
 
   // Test hasActiveDailyDigest

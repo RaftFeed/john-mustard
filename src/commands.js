@@ -1033,7 +1033,7 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
     case "daily": {
       if (cmd.value === "1" || cmd.value === "on") {
         store.setDailyDigest(chatId, true);
-        return "[OK] Rekap harian jam 07:00 WIB diaktifkan (to-do list + daftar acara & pengingat).";
+        return "[OK] Rekap harian jam 07:00 WIB diaktifkan (to-do list + daftar acara & agenda).";
       } else if (cmd.value === "0" || cmd.value === "off") {
         store.setDailyDigest(chatId, false);
         return "[OK] Rekap harian dimatikan.";
