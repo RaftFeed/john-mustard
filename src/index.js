@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { createServer } from "./server.js";
 import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
@@ -286,21 +288,93 @@ async function handleIncomingMessage(msg) {
 
       // 3. Di DM Pribadi: Jika user menyertakan teks pertanyaan/diskusi (atau berasal dari quoted media dan bukan perintah simpan ke vault), proses langsung via LLM
       const isExplicitVaultSave = msg.body && /\b(simpan|save|arsip|#vault|masukkan\s+ke\s+vault|catat\s+ke\s+vault)\b/i.test(msg.body);
+      const isConvertRequest = msg.body && (
+        /\b(convert|konversi|ubah|jadikan)\s*(ke|menjadi|to)?\s*(pdf|docx|txt|teks|dokumen)\b/i.test(msg.body) ||
+        /\b(convert|konversi)\s+(pdf|docx|txt)\b/i.test(msg.body)
+      );
       const hasUserCaption = Boolean(msg.body && msg.body.trim());
 
       if ((hasUserCaption || msg.isQuotedMedia) && !isExplicitVaultSave) {
-        console.log(`>> Memproses dokumen/media DM untuk analisis langsung: ${msg.filename} (${msg.mimetype})`);
+        console.log(`>> Memproses dokumen/media DM: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
-        const mediaTrajectory = [];
 
-        let promptForAnalysis = msg.body;
+        // Selalu simpan file asli ke Vault terlebih dahulu agar memiliki ID dan track fisik
+        const saved = await ingestVaultFile(store, rotator, {
+          buffer,
+          filename: msg.filename,
+          mimetype: msg.mimetype,
+          caption: msg.body,
+          ownerId: msg.senderNumber || msg.from
+        });
+
+        // Fast-path konversi langsung (DOCX/XLSX/TXT ke PDF/TXT)
+        if (isConvertRequest) {
+          console.log(`>> Fast-path konversi dokumen DM terdeteksi untuk file: ${saved.filename}`);
+          const runnerUrl = (process.env.PYTHON_RUNNER_URL || "http://localhost:8000/run").replace(/\/run$/, "/convert");
+          const targetFormat = /\b(txt|teks)\b/i.test(msg.body) ? "txt" : "pdf";
+
+          try {
+            const resp = await fetch(runnerUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                files: [{ filename: saved.filename, data_base64: buffer.toString("base64") }],
+                target_format: targetFormat
+              }),
+              signal: AbortSignal.timeout(35000)
+            });
+
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data.status === "success" && data.data_base64) {
+                const outName = data.filename || `${path.parse(saved.filename).name}.${targetFormat}`;
+                const category = "documents";
+                const dir = path.join("vault", category);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                const savedPath = path.join(dir, `${Date.now()}_${outName}`);
+                const outBuf = Buffer.from(data.data_base64, "base64");
+                fs.writeFileSync(savedPath, outBuf);
+
+                const convertedFileId = store.saveVaultFile({
+                  ownerId: msg.senderNumber || msg.from,
+                  filename: outName,
+                  category,
+                  filepath: savedPath,
+                  mimetype: data.mimetype || (targetFormat === "pdf" ? "application/pdf" : "text/plain"),
+                  filesize: outBuf.length,
+                  summary: data.text ? data.text.slice(0, 300) : `Hasil konversi dari ${saved.filename}`
+                });
+
+                // Kirim langsung file hasil konversi ke chat WhatsApp
+                await sendFile(msg.from, savedPath, outName, `Hasil konversi dokumen ${outName}`, targetFormat === "pdf");
+                const reply = `Beres, Lord. File '${saved.filename}' berhasil diconvert jadi ${targetFormat.toUpperCase()} dan langsung kukirimkan (tersimpan di Vault ID #${convertedFileId}).`;
+                await sendText(msg.from, reply);
+                console.log(`>> Berhasil fast-convert dan kirim file ${outName} ke ${msg.from}`);
+
+                store.saveChatMessage(msg.from, "user", `${senderLabel}[Media: ${msg.filename}] ${msg.body}`);
+                store.saveChatMessage(msg.from, "model", reply);
+                logInteraction(store.db, {
+                  prompt: `[MEDIA: ${msg.filename}] ${msg.body}`,
+                  tools: ["fastConvertDocument"],
+                  status: "success"
+                });
+                return;
+              }
+            }
+          } catch (fastErr) {
+            console.warn(">> Fast-path konversi gagal, fallback ke LLM:", fastErr.message);
+          }
+        }
+
+        const mediaTrajectory = [];
+        let promptForAnalysis = `[File '${saved.filename}' telah disimpan di Document Vault dengan ID #${saved.id}]. Instruksi pengguna: "${msg.body}".`;
         if (msg.isQuotedMedia) {
           const quotedSender = msg.quoted?.fromMe
             ? "Bot (kamu sendiri)"
             : msg.quoted?.senderName ? `${msg.quoted.senderName}` : (msg.quoted?.senderNumber ? `+${msg.quoted.senderNumber}` : "lawan bicara");
           promptForAnalysis = msg.body
-            ? `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Pertanyaan/Instruksi pengguna: "${msg.body}". Analisa file tersebut dan jawab pertanyaan pengguna secara akurat.`
-            : `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya.`;
+            ? `[Pengguna menunjuk/membalas file '${msg.filename}' (Vault ID #${saved.id}) yang sebelumnya dikirim oleh ${quotedSender}]. Pertanyaan/Instruksi pengguna: "${msg.body}". Analisa file tersebut dan jawab pertanyaan pengguna secara akurat.`
+            : `[Pengguna menunjuk/membalas file '${msg.filename}' (Vault ID #${saved.id}) yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya.`;
         }
 
         const reply = await processChat(rotator, promptForAnalysis, {

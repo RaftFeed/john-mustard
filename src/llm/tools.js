@@ -1873,7 +1873,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
               summary: data.text ? data.text.slice(0, 300) : `Hasil konversi dari ${fileRec.filename}`
             });
 
-            if (args.sendDirectly) {
+            const shouldSendDirectly = args.sendDirectly !== undefined ? Boolean(args.sendDirectly) : true;
+            if (shouldSendDirectly) {
               const caption = args.caption || data.message || `Hasil konversi dokumen ${outName}`;
               await sendFile(chatId, savedPath, outName, caption, isPdf);
             }

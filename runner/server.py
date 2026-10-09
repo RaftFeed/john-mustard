@@ -380,8 +380,20 @@ def convert_document():
             pdf_b64 = None
             if fitz and target_format == "pdf":
                 pdf_doc = fitz.open()
-                page = pdf_doc.new_page()
-                page.insert_textbox(page.rect, full_text[:4000], fontsize=11)
+                rect = fitz.Rect(54, 54, 595.28 - 54, 841.89 - 54)
+                current_text = full_text
+                page_count = 0
+                while current_text and page_count < 100:
+                    page = pdf_doc.new_page(width=595.28, height=841.89)
+                    page_count += 1
+                    tw = fitz.TextWriter(page.rect)
+                    unused = tw.fill_textbox(rect, current_text, fontsize=11)
+                    tw.write_text(page)
+                    page.insert_text(fitz.Point(280, 815), f"- {page_count} -", fontsize=9)
+                    if unused:
+                        current_text = "\n".join(item[0] for item in unused).strip()
+                    else:
+                        break
                 pdf_bytes = pdf_doc.tobytes(deflate=True)
                 pdf_doc.close()
                 pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
