@@ -83,6 +83,7 @@ import {
 } from "../db.js";
 import {
   sendText,
+  sendFile,
   getWhitelistPhones,
   resolveWhitelistRecipient
 } from "../waha.js";
@@ -488,6 +489,7 @@ ${isBotQuoted
   const executedTrajectory = [];
   let currentCandidate = null;
   let lastFormattedList = null;
+  let stagedMedia = null;
   const collectedFormattedLists = [];
   const userWantsList = isListRequest(userText);
   // Daftar penuh (to-do/acara) hanya ditempel kalau user minta; kartu satuan (add/update) selalu tampil.
@@ -630,6 +632,12 @@ ${isBotQuoted
       } else {
         try {
           resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText, preResolvedIndexes });
+          if (resultObj.stagedMedia) {
+            if (stagedMedia?.tempPath && stagedMedia.tempPath !== resultObj.stagedMedia.tempPath) {
+              try { fs.unlinkSync(stagedMedia.tempPath); } catch {}
+            }
+            stagedMedia = resultObj.stagedMedia;
+          }
         } catch (toolErr) {
           resultObj = { toolResult: { error: toolErr.message } };
         }
@@ -804,6 +812,23 @@ ${isBotQuoted
       finalReply = `🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀\n\n${finalReply}`;
     } else if (!finalReply.includes("🤠") && !finalReply.includes("🥀")) {
       finalReply = finalReply.replace(/MY NAME IS JOHN MUSTARDDD DEW DEW DEW/i, "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀");
+    }
+  }
+
+  if (stagedMedia) {
+    try {
+      let mediaCaption = finalReply;
+      if (!mediaCaption || mediaCaption === "[NO_REPLY]") {
+        mediaCaption = stagedMedia.initialCaption || `📷 *${stagedMedia.query}*`;
+      }
+      await sendFile(chatId, stagedMedia.tempPath, stagedMedia.tempFilename, mediaCaption, false);
+      if (store?.saveChatMessage) {
+        store.saveChatMessage(chatId, "model", `[Foto: ${stagedMedia.query}] ${mediaCaption}`);
+      }
+      finalReply = "[NO_REPLY]";
+    } finally {
+      try { fs.unlinkSync(stagedMedia.tempPath); } catch {}
+      stagedMedia = null;
     }
   }
 

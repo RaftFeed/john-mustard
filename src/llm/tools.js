@@ -20,7 +20,7 @@ import {
   isOwner,
   DEFAULT_CONTACT_PROFILES
 } from "../db.js";
-import { sendFile, sendText, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
+import { sendFile, sendText, searchAndStageWebImage, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
 import { scheduleNearHorizonReminder } from "../scheduler.js";
 import { formatServerHealth } from "../commands.js";
 import {
@@ -425,12 +425,12 @@ export const CORE_FUNCTION_DECLARATIONS = [
       },
       {
         name: "searchAndSendImage",
-        description: "Cari foto atau gambar di internet (Google/Bing/Wikimedia) dan kirimkan langsung ke chat WhatsApp pengguna",
+        description: "Cari foto atau gambar di internet (Google/Bing/Wikimedia) dan kirimkan langsung ke chat WhatsApp pengguna. Seluruh respon/komentar teksmu setelah tool ini otomatis dijadikan satu sebagai caption foto (tanpa chat terpisah).",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "Kata kunci foto/gambar yang ingin dicari (contoh: 'kucing anggora', 'gedung sate', 'resep nastar')" },
-            caption: { type: "STRING", description: "Keterangan/caption singkat untuk menyertai gambar (opsional)" }
+            query: { type: "STRING", description: "Kata kunci foto/gambar yang ingin dicari (contoh: 'kucing anggora', 'gedung sate', 'resep nastar', 'Dian Sastro')" },
+            caption: { type: "STRING", description: "Keterangan/caption awal foto (opsional)" }
           },
           required: ["query"]
         }
@@ -844,6 +844,7 @@ export const TOOLS = [
 export async function executeTool(name, args, { store, chatId, senderNumber = "", rotator = null, userText = "", preResolvedIndexes = false }) {
   let toolResult = {};
   let formattedList = null;
+  let stagedMedia = null;
   const callerId = senderNumber || chatId;
 
   const isGroup = String(chatId).endsWith("@g.us");
@@ -1606,13 +1607,19 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     };
   } else if (name === "searchAndSendImage") {
     try {
-      const res = await searchAndSendWebImage(chatId, args.query, args.caption);
+      const res = await searchAndStageWebImage(args.query);
       if (res.success) {
+        stagedMedia = {
+          tempPath: res.tempPath,
+          tempFilename: res.tempFilename,
+          query: args.query,
+          initialCaption: args.caption || null
+        };
         toolResult = {
           success: true,
           query: args.query,
           caption: args.caption || null,
-          message: `Gambar untuk "${args.query}" berhasil dikirimkan ke chat pengguna.`
+          message: `Gambar untuk "${args.query}" berhasil ditemukan dan disiapkan. Tuliskan jawaban atau komentar lengkap untuk pengguna sekarang. Pesan jawabanmu otomatis dijadikan satu sebagai caption foto (tanpa chat terpisah).`
         };
       } else {
         toolResult = {
@@ -1621,7 +1628,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         };
       }
     } catch (err) {
-      toolResult = { error: `Gagal mengirim gambar: ${err.message}` };
+      toolResult = { error: `Gagal mencari gambar: ${err.message}` };
     }
   } else if (name === "readUrl") {
     try {
@@ -2178,5 +2185,5 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
     }
   }
 
-  return { toolResult, formattedList };
+  return { toolResult, formattedList, stagedMedia };
 }

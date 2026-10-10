@@ -699,7 +699,7 @@ export async function downloadWebImage(imageUrl, maxBytes = 10 * 1024 * 1024) {
   return { tempPath, tempFilename, ext, size: buffer.length };
 }
 
-export async function searchAndSendWebImage(chatId, query, caption = "") {
+export async function searchAndStageWebImage(query) {
   const candidates = await searchWebImages(query);
   if (!candidates || candidates.length === 0) {
     return { success: false, error: `Tidak ditemukan gambar untuk "${query}".` };
@@ -708,20 +708,29 @@ export async function searchAndSendWebImage(chatId, query, caption = "") {
   let lastError = null;
   for (const url of candidates) {
     try {
-      const { tempPath, tempFilename } = await downloadWebImage(url);
-      try {
-        const finalCaption = caption || `📷 *${query}*`;
-        await sendFile(chatId, tempPath, tempFilename, finalCaption, false);
-        return { success: true, url, query };
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
-      }
+      const { tempPath, tempFilename, ext, size } = await downloadWebImage(url);
+      return { success: true, url, query, tempPath, tempFilename, ext, size };
     } catch (err) {
       lastError = err.message;
     }
   }
 
   return { success: false, error: `Gagal mengunduh gambar untuk "${query}": ${lastError || "semua tautan gagal"}` };
+}
+
+export async function searchAndSendWebImage(chatId, query, caption = "") {
+  const staged = await searchAndStageWebImage(query);
+  if (!staged.success) {
+    return staged;
+  }
+
+  try {
+    const finalCaption = caption || `📷 *${query}*`;
+    await sendFile(chatId, staged.tempPath, staged.tempFilename, finalCaption, false);
+    return { success: true, url: staged.url, query };
+  } finally {
+    try { fs.unlinkSync(staged.tempPath); } catch {}
+  }
 }
 
 export async function downloadMedia(mediaUrl) {

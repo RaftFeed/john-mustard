@@ -1273,7 +1273,7 @@ export async function executeFastCommand(cmd, ctx = {}) {
       }
       const res = await searchAndSendWebImage(chatId, cmd.query);
       if (res.success) {
-        return `[OK] Gambar untuk "${cmd.query}" berhasil dikirimkan.`;
+        return null;
       }
       return `[!] ${res.error || "Gagal mencari gambar."}`;
     }

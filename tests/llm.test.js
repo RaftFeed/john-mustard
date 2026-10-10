@@ -1908,6 +1908,97 @@ test("LLM Tools: searchAndSendImage tool execution and intent detection", async 
     assert.strictEqual(res.toolResult.success, true);
     assert.strictEqual(res.toolResult.query, "kucing lucu");
     assert.strictEqual(res.toolResult.caption, "Foto kucing lucu");
+    if (res.stagedMedia?.tempPath) {
+      try { (await import("node:fs")).unlinkSync(res.stagedMedia.tempPath); } catch {}
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM Engine: searchAndSendImage merges reply text into single photo message caption", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+
+  const originalFetch = globalThis.fetch;
+  let sentMediaPayload = null;
+  let turn = 0;
+
+  try {
+    globalThis.fetch = async (url, opts) => {
+      const urlStr = String(url);
+      if (urlStr.includes("bing.com")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '<html>murl&quot;:&quot;https://upload.wikimedia.org/dian.jpg&quot;</html>'
+        };
+      }
+      if (urlStr.includes("dian.jpg")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "image/jpeg" }),
+          arrayBuffer: async () => new Uint8Array(2048).buffer
+        };
+      }
+      if (urlStr.includes("/api/sendFile") || urlStr.includes("/api/sendImage")) {
+        sentMediaPayload = opts;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "msg_media_456" })
+        };
+      }
+      // Gemini API calls
+      turn++;
+      if (turn === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{ functionCall: { name: "searchAndSendImage", args: { query: "Dian Sastro" } } }]
+              }
+            }]
+          })
+        };
+      }
+      // Turn 2 text response
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [{ text: "Ini foto Dian Sastro ya, Mami. Memang mirip banget cantiknya sama Mami!" }]
+            }
+          }]
+        })
+      };
+    };
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    const reply = await processChat(mockRotator, "mana foto Dian Sastro", {
+      store,
+      chatId,
+      senderNumber: chatId
+    });
+
+    // 1. processChat returns [NO_REPLY] so no extra text bubble is sent
+    assert.strictEqual(reply, "[NO_REPLY]");
+
+    // 2. sendFile was called to send the staged image
+    assert.ok(sentMediaPayload, "sendFile must be called to send the staged image");
+
+    // 3. Stored chat message in DB captures both photo and commentary
+    const history = store.getRecentChatHistory(chatId);
+    assert.strictEqual(history.length, 1);
+    assert.ok(history[0].content.includes("[Foto: Dian Sastro]"));
+    assert.ok(history[0].content.includes("Ini foto Dian Sastro ya, Mami"));
   } finally {
     globalThis.fetch = originalFetch;
   }

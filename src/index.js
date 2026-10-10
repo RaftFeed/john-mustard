@@ -552,6 +552,9 @@ async function handleIncomingMessage(msg) {
       });
     } else {
       console.log(`>> Suppressed reply [NO_REPLY] for ${msg.from}`);
+      if (store?.saveChatMessage) {
+        store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
+      }
     }
 
     logInteraction(store.db, {
