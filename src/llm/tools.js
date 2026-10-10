@@ -22,9 +22,11 @@ import {
 } from "../db.js";
 import { sendFile, sendText, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
 import { scheduleNearHorizonReminder } from "../scheduler.js";
-import { getMinecraftStatus, formatMinecraftStatus } from "../minecraft.js";
-import { queryHermesAgent, formatHermesResponse } from "../hermes.js";
 import { formatServerHealth } from "../commands.js";
+import {
+  getExtensionDeclarations,
+  executeExtensionTool
+} from "../extensions/index.js";
 import {
   proposeSkill,
   approveSkillProposal,
@@ -38,9 +40,7 @@ import { fetchUrlContent, isExplicitPrivateRequest } from "./guards.js";
 import { formatRowsToMarkdown } from "./formatters.js";
 import { ingestVaultFile } from "../vault.js";
 
-export const TOOLS = [
-  {
-    functionDeclarations: [
+export const CORE_FUNCTION_DECLARATIONS = [
       {
         name: "addTodo",
         description: "Tambahkan tugas ke To-Do List dengan deadline, tag matkul/kategori, penanggung jawab, dan deskripsi/prompt rincian tugas",
@@ -809,28 +809,6 @@ export const TOOLS = [
         }
       },
       {
-        name: "checkMinecraftServer",
-        description: "Cek status server Minecraft / menkrep / mc mabar (Java & Bedrock port 25565/19132), MOTD, versi, dan daftar player yang sedang online. Panggil saat user tanya server Minecraft, mc, menkrep, mabar, atau player online. Khusus owner.",
-        parameters: {
-          type: "OBJECT",
-          properties: {}
-        }
-      },
-      {
-        name: "manageRemoteServer",
-        description: "Jalankan perintah administrasi atau diagnosa server VPS / Minecraft via Hermes Agent (cek log docker, restart container, cek disk/load). Khusus owner. WAJIB dan HANYA panggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps'.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            instruction: {
-              type: "STRING",
-              description: "Instruksi teknis yang ingin didelegasikan ke Hermes Agent di VPS (contoh: 'cek docker logs mc-paper-geyser --tail 50' atau 'cek free -m')"
-            }
-          },
-          required: ["instruction"]
-        }
-      },
-      {
         name: "sendDirectMessage",
         description: "Kirim pesan teks pribadi (PC / DM / japri) atau tautan/link secara langsung ke nomor WhatsApp pengguna yang terdaftar di whitelist. CATATAN PENTING: DILARANG gunakan tool ini di obrolan grup jika hanya relay santai seperti 'bilangin si X' atau 'kasih tau si X'—cukup mention/tag orangnya (@Nama) langsung di balasan grup. TETAPI jika user meminta lewat jalur pribadi (seperti 'pc', 'japri', 'japriii', 'dm', 'wa rafid', 'saluran pribadi', 'jangan di grup'), WAJIB panggil tool ini. Target penerima WAJIB terdaftar di whitelist bot.",
         parameters: {
@@ -848,7 +826,18 @@ export const TOOLS = [
           required: ["recipient", "message"]
         }
       }
-    ]
+    ];
+
+let customDeclarations = null;
+export const TOOLS = [
+  {
+    get functionDeclarations() {
+      if (customDeclarations) return customDeclarations;
+      return [...CORE_FUNCTION_DECLARATIONS, ...getExtensionDeclarations()];
+    },
+    set functionDeclarations(val) {
+      customDeclarations = val;
+    }
   }
 ];
 
@@ -2128,31 +2117,7 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       formattedList = report;
       toolResult = { success: true, formatted: report };
     }
-  } else if (name === "checkMinecraftServer") {
-    if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: `Fitur checkMinecraftServer hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
-    } else {
-      const status = await getMinecraftStatus();
-      const formatted = formatMinecraftStatus(status);
-      formattedList = formatted;
-      toolResult = { success: true, status, formatted };
-    }
-  } else if (name === "manageRemoteServer") {
-    if (!isOwner(chatId, senderNumber)) {
-      toolResult = { error: `Fitur manageRemoteServer hanya khusus untuk nomor owner (+${OWNER_PHONE}).` };
-    } else if (userText && !/\b(?:hermes|vps)\b/i.test(userText)) {
-      toolResult = {
-        error: "Tool manageRemoteServer HANYA boleh dipanggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps' dalam pesan. Untuk server biasa, gunakan checkServerHealth atau checkMinecraftServer."
-      };
-    } else {
-      const res = await queryHermesAgent(args.instruction);
-      if (!res.success) {
-        toolResult = { success: false, error: res.error };
-      } else {
-        toolResult = { success: true, output: res.reply };
-        formattedList = `*[HERMES VPS]*\n${res.reply}`;
-      }
-    }
+
   } else if (name === "sendDirectMessage") {
     if (isGroup && !isExplicitPrivateRequest(userText)) {
       toolResult = {
@@ -2195,7 +2160,22 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
       message: `Pesan berhasil dikirimkan ke ${res.recipientDisplayName} (+${res.targetPhone}) via chat pribadi (PC).`
     };
   } else {
-    toolResult = { error: "Unknown function" };
+    const extExecution = await executeExtensionTool(name, args, {
+      store,
+      chatId,
+      senderNumber,
+      userText,
+      isOwner,
+      OWNER_PHONE
+    });
+    if (extExecution !== undefined) {
+      toolResult = extExecution.toolResult;
+      if (extExecution.formattedList !== undefined) {
+        formattedList = extExecution.formattedList;
+      }
+    } else {
+      toolResult = { error: "Unknown function" };
+    }
   }
 
   return { toolResult, formattedList };

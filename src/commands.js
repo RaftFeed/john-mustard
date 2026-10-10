@@ -2,32 +2,13 @@ import os from "node:os";
 import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatAcaraList, formatPengingatList, formatVaultList, formatNotesList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
 import { sendText, sendFile, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
-import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
-import { queryHermesAgent, formatHermesResponse } from "./hermes.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
-
-const SELF_UPDATE_REPO = "/home/ubuntu/john-mustard";
-
-export function buildSelfUpdatePrompt(instruction) {
-  return [
-    "Kamu mengerjakan repo John Mustard di VPS ini, path " + SELF_UPDATE_REPO + ".",
-    "",
-    "TUGAS: " + instruction,
-    "",
-    "ATURAN KERAS:",
-    "0. SYNC SEBELUM KERJA: Sebelum membaca/mengedit kode atau membuat commit, WAJIB jalankan:",
-    "   cd " + SELF_UPDATE_REPO + " && git fetch origin && git pull --rebase origin main",
-    "   Jika terjadi conflict saat rebase, WAJIB langsung jalankan `git rebase --abort` untuk menjaga repo tetap bersih, JANGAN dipaksa (no force push), dan laporkan conflict tersebut.",
-    "1. Baca dulu kode terkait sebelum mengubah apa pun.",
-    "2. Edit HANYA file di dalam: src/, tests/, scripts/, skills/, config/, atau system-prompt.md.",
-    "3. DILARANG menyentuh: .env, docker-compose.yml, key-oracle/, 9router-data/, oauth_session_vps.json, dan semua file *.bak-*.",
-    "4. Setelah selesai, WAJIB jalankan test gate ini dan tempel hasilnya:",
-    "   cd " + SELF_UPDATE_REPO + " && docker run --rm -v $PWD:/app -w /app node:24-slim sh -c 'node --test tests/*.test.js'",
-    "5. JIKA MEMBUAT COMMIT: Pastikan test gate lulus, lalu push ke remote: `git push origin main`.",
-    "6. JANGAN restart container apa pun. Deploy dilakukan terpisah lewat script deploy.",
-    "7. Laporan akhir (ringkas, bahasa Indonesia): daftar file yang diubah, ringkasan diff, status push git, dan hasil test (lulus/gagal + jumlah test)."
-  ].join("\n");
-}
+import {
+  matchExtensionFastCommand,
+  executeExtensionFastCommand,
+  getExtensionHelpSections
+} from "./extensions/index.js";
+export { buildSelfUpdatePrompt } from "./extensions/hermes.js";
 
 function formatUptime(seconds) {
   const d = Math.floor(seconds / (3600 * 24));
@@ -257,16 +238,6 @@ export function parseFastCommand(text = "") {
     return { type: "daily", value: val };
   }
 
-  const selfUpdateMatch = trimmed.match(/^#selfupdate\s+([\s\S]+)$/i);
-  if (selfUpdateMatch) {
-    return { type: "selfupdate", instruction: selfUpdateMatch[1].trim() };
-  }
-
-  const deployMatch = trimmed.match(/^#deploy(\s+status)?$/i);
-  if (deployMatch) {
-    return { type: "deploy", status: Boolean(deployMatch[1]) };
-  }
-
   if (/^#(dew|mustard)\b/i.test(trimmed)) {
     return { type: "dew" };
   }
@@ -427,15 +398,6 @@ export function parseFastCommand(text = "") {
     return { type: "health" };
   }
 
-    if (/^#(vps|hermes)\b/i.test(trimmed)) {
-    const instruction = trimmed.replace(/^#(vps|hermes)\s*/i, "").trim();
-    return { type: "hermes", instruction };
-  }
-
-  if (/^#(mc|minecraft)\b/i.test(trimmed)) {
-    return { type: "minecraft" };
-  }
-
   if (
     trimmed === "?help" ||
     trimmed === "/help" ||
@@ -445,6 +407,11 @@ export function parseFastCommand(text = "") {
     /^#(help|menu)\b/i.test(trimmed)
   ) {
     return { type: "help" };
+  }
+
+  const extCmd = matchExtensionFastCommand(trimmed);
+  if (extCmd) {
+    return extCmd;
   }
 
   return null;
@@ -545,8 +512,9 @@ export function resolveItemScope(target = "auto", { store, chatId, quoted } = {}
   return "ambiguous";
 }
 
-export async function executeFastCommand(cmd, { store, chatId, isOwner = false, senderName = "", senderNumber = "", quoted = null } = {}) {
+export async function executeFastCommand(cmd, ctx = {}) {
   if (!cmd) return null;
+  const { store, chatId, isOwner = false, senderName = "", senderNumber = "", quoted = null } = ctx;
 
   // Catat urutan list terakhir yang ditampilkan supaya nomor urut yang dirujuk user
   // selalu merujuk ke item yang mereka lihat.
@@ -1049,21 +1017,11 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return `*[Rekap Harian]*\nStatus: ${statusStr}\n\nFormat: \`#daily 1\` (aktifkan jam 07:00 WIB) atau \`#daily 0\` (matikan).`;
     }
 
-    case "selfupdate": {
-      if (!isOwner) return `[!] Fitur #selfupdate khusus owner (+${OWNER_PHONE}).`;
-      if (!cmd.instruction) {
-        return "*[Self-Update]*\nFormat: `#selfupdate <instruksi>` (mis. `#selfupdate tambahin perintah #joke`).\nSetelah review, jalankan `#deploy`.";
-      }
-      const res = await queryHermesAgent(buildSelfUpdatePrompt(cmd.instruction));
-      return formatHermesResponse(res);
-    }
-
+    case "selfupdate":
     case "deploy": {
-      if (!isOwner) return `[!] Fitur #deploy khusus owner (+${OWNER_PHONE}).`;
-      const scriptPath = `${SELF_UPDATE_REPO}/scripts/self-update.sh`;
-      const action = cmd.status ? "status" : "deploy";
-      const res = await queryHermesAgent(`Jalankan perintah ini di VPS dan laporkan output-nya apa adanya (tanpa menambah komentar): bash ${scriptPath} ${action}`);
-      return formatHermesResponse(res);
+      const extRes = await executeExtensionFastCommand(cmd, ctx);
+      if (extRes !== undefined) return extRes;
+      return `[!] Fitur #${cmd.type} sedang dinonaktifkan atau ekstensi tidak aktif.`;
     }
 
     case "skills": {
@@ -1302,24 +1260,11 @@ export async function executeFastCommand(cmd, { store, chatId, isOwner = false, 
       return formatServerHealth(store);
     }
 
-    case "hermes": {
-      if (!isOwner) return `[!] Fitur #vps / #hermes khusus owner (+${OWNER_PHONE}).`;
-      if (!cmd.instruction) {
-        return `*Format Perintah Hermes VPS:*
-- #vps <instruksi>
-Contoh:
-- #vps cek status docker
-- #vps restart container mc-paper-geyser
-- #vps cek pemakaian ram dan disk`;
-      }
-      const res = await queryHermesAgent(cmd.instruction);
-      return formatHermesResponse(res);
-    }
-
+    case "hermes":
     case "minecraft": {
-      if (!isOwner) return `[!] Fitur #mc khusus owner (+${OWNER_PHONE}).`;
-      const status = await getMinecraftStatus();
-      return formatMinecraftStatus(status);
+      const extRes = await executeExtensionFastCommand(cmd, ctx);
+      if (extRes !== undefined) return extRes;
+      return `[!] Fitur #${cmd.type} sedang dinonaktifkan atau ekstensi tidak aktif.`;
     }
 
     case "searchImage": {
@@ -1334,6 +1279,9 @@ Contoh:
     }
 
     case "help": {
+      const extHelp = getExtensionHelpSections(isOwner);
+      const extLines = extHelp.length > 0 ? `\n\n*Ekstensi Aktif (Server & Ops):*\n${extHelp.join("\n")}` : "";
+
       return `*[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀]*
 _Autonomous WhatsApp AI & Fast Command Engine_
 
@@ -1371,8 +1319,6 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #foto <kata kunci> — Cari gambar di internet & kirim ke chat (alias: #gambar)
 - #request <ide> — Kirim ide/request fitur ke master bot
 - #daily <1/0> — Aktifkan/matikan rekap harian jam 07:00 WIB (to-do list + daftar acara)
-- #selfupdate <instruksi> — Minta Hermes ngedit kode bot (owner). Review dulu, baru #deploy
-- #deploy — Deploy perubahan (test gate + restart + auto-rollback); #deploy status buat cek hasil
 - #skills — Lihat daftar skill & macro otomatis
 - #proposals — Cek antrean proposal skill
 - #rollback <skill> [v] — Kembalikan versi skill
@@ -1384,15 +1330,13 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 
 *Perintah Owner / Admin:*
 - #health / #server — Cek kesehatan server, CPU, RAM, disk & DB
-- #mc / #minecraft — Cek status server Minecraft & player aktif
-- #vps / #hermes <instruksi> — Delegasi task atau diagnosa VPS via Hermes Agent
 - #requests — Lihat daftar request fitur dari pengguna
 - #request done <id> — Tandai request selesai
 - #request del <id> — Hapus request fitur
 - #backlog <ide> — Catat ide fitur/perbaikan
 - #backlog list — Lihat daftar backlog ide
 - #backlog done <id> — Tandai backlog selesai
-- #backlog del <id> — Hapus ide backlog
+- #backlog del <id> — Hapus ide backlog${extLines}
 
 *Fitur Otomatis (Langsung Chat / VN):*
 - Voice Note: Kirim rekaman suara apa pun, langsung diproses sat-set.

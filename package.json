@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env src/index.js",
-    "test": "node --test tests/*.test.js && node src/waha.js && node src/minecraft.js && node src/hermes.js && node src/skills_sync.js && node src/crystallize.js && node src/server.js && python scripts/test_runner.py",
+    "test": "node --test tests/*.test.js && node src/extensions/index.js && node src/waha.js && node src/minecraft.js && node src/hermes.js && node src/skills_sync.js && node src/crystallize.js && node src/server.js && python scripts/test_runner.py",
     "audit": "node scripts/audit.js"
   },
   "description": "Personal AI Assistant WhatsApp Bot"
