@@ -20,7 +20,7 @@ import {
   isOwner,
   DEFAULT_CONTACT_PROFILES
 } from "../db.js";
-import { sendFile, sendText, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
+import { sendFile, sendText, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "../waha.js";
 import { scheduleNearHorizonReminder } from "../scheduler.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "../minecraft.js";
 import { queryHermesAgent, formatHermesResponse } from "../hermes.js";
@@ -419,6 +419,18 @@ export const TOOLS = [
           type: "OBJECT",
           properties: {
             query: { type: "STRING", description: "Kata kunci pencarian yang spesifik dan efektif" }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "searchAndSendImage",
+        description: "Cari foto atau gambar di internet (Google/Bing/Wikimedia) dan kirimkan langsung ke chat WhatsApp pengguna",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Kata kunci foto/gambar yang ingin dicari (contoh: 'kucing anggora', 'gedung sate', 'resep nastar')" },
+            caption: { type: "STRING", description: "Keterangan/caption singkat untuk menyertai gambar (opsional)" }
           },
           required: ["query"]
         }
@@ -1603,6 +1615,25 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
         content: r.content
       }))
     };
+  } else if (name === "searchAndSendImage") {
+    try {
+      const res = await searchAndSendWebImage(chatId, args.query, args.caption);
+      if (res.success) {
+        toolResult = {
+          success: true,
+          query: args.query,
+          caption: args.caption || null,
+          message: `Gambar untuk "${args.query}" berhasil dikirimkan ke chat pengguna.`
+        };
+      } else {
+        toolResult = {
+          success: false,
+          error: res.error || "Gagal mencari atau mengunduh gambar."
+        };
+      }
+    } catch (err) {
+      toolResult = { error: `Gagal mengirim gambar: ${err.message}` };
+    }
   } else if (name === "readUrl") {
     try {
       const content = await fetchUrlContent(args.url);

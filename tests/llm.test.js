@@ -1847,5 +1847,65 @@ test("LLM Tools: createVaultFile, updatePerson, and updateReminder event migrati
   assert.strictEqual(remAfter.event_at, remBefore.remind_at);
 });
 
+test("LLM Tools: searchAndSendImage tool execution and intent detection", async () => {
+  const { executeTool, TOOLS } = await import("../src/llm/tools.js");
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  const chatId = "6285236467838";
+  const ctx = { store, chatId, senderNumber: chatId };
+
+  // 1. Tool is declared
+  const decls = TOOLS[0]?.functionDeclarations || [];
+  const imgTool = decls.find((t) => t.name === "searchAndSendImage");
+  assert.ok(imgTool, "searchAndSendImage must be declared in TOOLS");
+  assert.strictEqual(imgTool.parameters.required[0], "query");
+
+  // 2. Intent detection
+  assert.strictEqual(isActionIntent("cariin foto kucing anggora"), true);
+  assert.strictEqual(isActionIntent("kirim gambar pemandangan"), true);
+
+  // 3. Tool execution (mock fetch returning mock bing page)
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes("bing.com")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '<html>murl&quot;:&quot;https://upload.wikimedia.org/cat.jpg&quot;</html>'
+        };
+      }
+      if (urlStr.includes("cat.jpg")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "image/jpeg" }),
+          arrayBuffer: async () => new Uint8Array(2048).buffer
+        };
+      }
+      if (urlStr.includes("/api/sendImage") || urlStr.includes("/api/sendFile")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "msg_img_123" })
+        };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    const res = await executeTool("searchAndSendImage", {
+      query: "kucing lucu",
+      caption: "Foto kucing lucu"
+    }, ctx);
+
+    assert.strictEqual(res.toolResult.success, true);
+    assert.strictEqual(res.toolResult.query, "kucing lucu");
+    assert.strictEqual(res.toolResult.caption, "Foto kucing lucu");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 

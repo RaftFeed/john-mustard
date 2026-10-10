@@ -742,3 +742,35 @@ _Selamat pagi!_
   assert.strictEqual(store.resolveTodoId(1, chatId, { quotedText }), t1);
 });
 
+test("Storage: getRecentChatHistory returns rolling 1-hour history and excludes expired turns", () => {
+  const store = new Storage(":memory:");
+  const chatId = "user_rolling";
+  const now = Date.now();
+
+  // Insert message from 2 hours ago (older than 1h)
+  store.db.prepare("INSERT INTO chat_history (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)").run(
+    chatId, "user", "pesan lama", now - 7200_000
+  );
+
+  // Insert message from 30 minutes ago
+  store.db.prepare("INSERT INTO chat_history (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)").run(
+    chatId, "user", "rencana liburan", now - 1800_000
+  );
+  store.db.prepare("INSERT INTO chat_history (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)").run(
+    chatId, "model", "ke pantai atau gunung?", now - 1790_000
+  );
+
+  // Insert message from 1 minute ago
+  store.db.prepare("INSERT INTO chat_history (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)").run(
+    chatId, "user", "pantai aja", now - 60_000
+  );
+
+  const history = store.getRecentChatHistory(chatId, 25);
+  assert.strictEqual(history.length, 3);
+  assert.strictEqual(history[0].content, "rencana liburan");
+  assert.strictEqual(history[1].content, "ke pantai atau gunung?");
+  assert.strictEqual(history[2].content, "pantai aja");
+  assert.ok(!history.some((h) => h.content === "pesan lama"));
+});
+
+

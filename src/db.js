@@ -382,23 +382,29 @@ export class Storage {
     ).run(chatId, role, content, Date.now());
   }
 
-  getRecentChatHistory(chatId, limit = 8, maxIdleMs = 3600_000) {
+  // ponytail: rolling 1-hour context window, capped at limit messages
+  getRecentChatHistory(chatId, limit = 25, maxIdleMs = 3600_000) {
     const scope = getUserTodoScope(chatId, this);
     const chatIds = (scope.chatIds && scope.chatIds.length > 0) ? scope.chatIds : [chatId];
     const placeholders = chatIds.map(() => "?").join(", ");
+
+    if (maxIdleMs <= 0) {
+      return [];
+    }
 
     const latest = this.db.prepare(
       `SELECT created_at FROM chat_history WHERE chat_id IN (${placeholders}) ORDER BY id DESC LIMIT 1`
     ).get(...chatIds);
 
-    // Jeda lebih dari 1 jam -> sesi lama expired, dianggap sesi baru (empty history)
+    // Jeda lebih dari 1 jam sejak chat terakhir -> sesi lama expired
     if (!latest || (Date.now() - latest.created_at) > maxIdleMs) {
       return [];
     }
 
+    const cutoff = Date.now() - maxIdleMs;
     const rows = this.db.prepare(
-      `SELECT role, content FROM chat_history WHERE chat_id IN (${placeholders}) ORDER BY id DESC LIMIT ?`
-    ).all(...chatIds, limit);
+      `SELECT role, content FROM chat_history WHERE chat_id IN (${placeholders}) AND created_at >= ? ORDER BY id DESC LIMIT ?`
+    ).all(...chatIds, cutoff, limit);
     return rows.reverse();
   }
 

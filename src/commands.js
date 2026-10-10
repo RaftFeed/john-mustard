@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import { formatTodoList, formatBacklogList, formatFeatureRequestsList, formatSkillList, formatPersonList, formatRemindersList, formatAcaraList, formatPengingatList, formatVaultList, formatNotesList, formatWibDateTime, formatTodoDetail, normalizePhone, OWNER_PHONE } from "./db.js";
-import { sendText, sendFile, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
+import { sendText, sendFile, searchAndSendWebImage, getWhitelistPhones, resolveWhitelistRecipient, formatSenderDisplay } from "./waha.js";
 import { getMinecraftStatus, formatMinecraftStatus } from "./minecraft.js";
 import { queryHermesAgent, formatHermesResponse } from "./hermes.js";
 import { listSkillProposals, rollbackSkill } from "./skills_sync.js";
@@ -406,6 +406,12 @@ export function parseFastCommand(text = "") {
 
   if (/^#whitelist\b/i.test(trimmed)) {
     return { type: "whitelist" };
+  }
+
+  const imgMatch = trimmed.match(/^#(foto|gambar|img|image)(\s+(.*))?$/is);
+  if (imgMatch) {
+    const q = (imgMatch[3] || "").trim();
+    return { type: "searchImage", query: q };
   }
 
   const pcMatch = trimmed.match(/^#(pc|japri|dm|pm)\s+(\S+)\s+(.+)$/is);
@@ -1316,6 +1322,17 @@ Contoh:
       return formatMinecraftStatus(status);
     }
 
+    case "searchImage": {
+      if (!cmd.query) {
+        return "[!] Format: #foto <kata kunci> (contoh: #foto kucing anggora)";
+      }
+      const res = await searchAndSendWebImage(chatId, cmd.query);
+      if (res.success) {
+        return `[OK] Gambar untuk "${cmd.query}" berhasil dikirimkan.`;
+      }
+      return `[!] ${res.error || "Gagal mencari gambar."}`;
+    }
+
     case "help": {
       return `*[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀]*
 _Autonomous WhatsApp AI & Fast Command Engine_
@@ -1351,6 +1368,7 @@ _Autonomous WhatsApp AI & Fast Command Engine_
 - #note del <key> — Hapus catatan
 
 *Perintah Otomasi & Pengaturan:*
+- #foto <kata kunci> — Cari gambar di internet & kirim ke chat (alias: #gambar)
 - #request <ide> — Kirim ide/request fitur ke master bot
 - #daily <1/0> — Aktifkan/matikan rekap harian jam 07:00 WIB (to-do list + daftar acara)
 - #selfupdate <instruksi> — Minta Hermes ngedit kode bot (owner). Review dulu, baru #deploy

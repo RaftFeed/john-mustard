@@ -514,4 +514,18 @@ test("Commands: #acara and #pengingat separate lists, targeted delete, and #dail
   assert.ok(resDailyStatusOff.includes("Status: Nonaktif"));
 });
 
+test("Commands: #foto and #gambar image search fast commands parse and execute", async () => {
+  assert.strictEqual(parseFastCommand("#foto kucing anggora").type, "searchImage");
+  assert.strictEqual(parseFastCommand("#foto kucing anggora").query, "kucing anggora");
+  assert.strictEqual(parseFastCommand("#gambar pemandangan alam").type, "searchImage");
+  assert.strictEqual(parseFastCommand("#gambar pemandangan alam").query, "pemandangan alam");
+  assert.strictEqual(parseFastCommand("#img robot").type, "searchImage");
+  assert.strictEqual(parseFastCommand("#img robot").query, "robot");
+
+  const store = new Storage(":memory:");
+  const ctx = { store, chatId: "user_img", isOwner: true };
+  const noQueryRes = await executeFastCommand(parseFastCommand("#foto"), ctx);
+  assert.ok(noQueryRes.includes("Format: #foto <kata kunci>"));
+});
+
 

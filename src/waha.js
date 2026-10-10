@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
 let currentBotNumber = (process.env.BOT_PHONE || "").replace(/\D/g, "") || null;
 let currentBotLid = null;
@@ -597,6 +598,130 @@ export async function sendFile(chatId, filepath, filename, caption = "", asDocum
 
 export async function sendImage(chatId, filepath, filename, caption = "") {
   return sendFile(chatId, filepath, filename, caption, false);
+}
+
+// ponytail: zero-dependency web image search via Bing Images with Wikimedia Commons fallback
+export async function searchBingImages(query, limit = 5) {
+  try {
+    const url = "https://www.bing.com/images/search?q=" + encodeURIComponent(query) + "&form=HDRSC2&first=1";
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const urls = [];
+    const regex = /murl&quot;:&quot;(https?:[^&"]+)&quot;/g;
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+      const u = match[1];
+      if (u && !urls.includes(u)) {
+        urls.push(u);
+        if (urls.length >= limit) break;
+      }
+    }
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
+export async function searchWikimediaImages(query, limit = 5) {
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${limit}&prop=imageinfo&iiprop=url|mime&format=json`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "JohnMustardBot/1.0 (contact: admin@johnmustard.local)" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const pages = data.query?.pages || {};
+    const urls = [];
+    for (const p of Object.values(pages)) {
+      const info = p.imageinfo?.[0];
+      if (info?.url && info.mime?.startsWith("image/")) {
+        urls.push(info.url);
+      }
+    }
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
+export async function searchWebImages(query, limit = 5) {
+  const bingUrls = await searchBingImages(query, limit);
+  if (bingUrls.length > 0) return bingUrls;
+  return searchWikimediaImages(query, limit);
+}
+
+export async function downloadWebImage(imageUrl, maxBytes = 10 * 1024 * 1024) {
+  const { isSafeUrl } = await import("./llm/guards.js");
+  if (!(await isSafeUrl(imageUrl))) {
+    throw new Error("URL gambar tidak aman (SSRF Protection)");
+  }
+
+  const res = await fetch(imageUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "image/*,*/*;q=0.8"
+    },
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  let ext = "jpg";
+  if (contentType.includes("png")) ext = "png";
+  else if (contentType.includes("webp")) ext = "webp";
+  else if (contentType.includes("gif")) ext = "gif";
+  else if (!contentType.startsWith("image/") && !contentType.includes("octet-stream")) {
+    throw new Error(`Bukan file gambar (Content-Type: ${contentType})`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > maxBytes) {
+    throw new Error(`Ukuran gambar terlalu besar (${Math.round(buffer.length / 1024)} KB)`);
+  }
+  if (buffer.length < 500) {
+    throw new Error("File gambar terlalu kecil atau korup");
+  }
+
+  const tempFilename = `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  const tempPath = path.join(os.tmpdir(), tempFilename);
+  fs.writeFileSync(tempPath, buffer);
+  return { tempPath, tempFilename, ext, size: buffer.length };
+}
+
+export async function searchAndSendWebImage(chatId, query, caption = "") {
+  const candidates = await searchWebImages(query);
+  if (!candidates || candidates.length === 0) {
+    return { success: false, error: `Tidak ditemukan gambar untuk "${query}".` };
+  }
+
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const { tempPath, tempFilename } = await downloadWebImage(url);
+      try {
+        const finalCaption = caption || `📷 *${query}*`;
+        await sendFile(chatId, tempPath, tempFilename, finalCaption, false);
+        return { success: true, url, query };
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+
+  return { success: false, error: `Gagal mengunduh gambar untuk "${query}": ${lastError || "semua tautan gagal"}` };
 }
 
 export async function downloadMedia(mediaUrl) {

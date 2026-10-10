@@ -185,10 +185,11 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
       `\nATURAN RESPON WHITELIST: Jika pengguna menanyakan siapa saja yang masuk whitelist atau siapa saja yang memiliki izin akses bot, sebutkan secara lengkap dan jelas ${whitelistPhones.length} nomor di atas (beserta nama/labelnya jika ada). JANGAN mengatakan hanya nomor master/owner yang di-whitelist.`
     : "";
 
-  // Multi-turn context: muat riwayat pesan terakhir
+  // Multi-turn context: muat riwayat pesan terakhir (rolling 1 jam)
   const isGroupChat = String(chatId).endsWith("@g.us");
   const isGreeting = isGreetingIntent(userText) && !isGroupChat;
-  const historyDepth = (isGreeting || (isActionIntent(userText) && !isListRequest(userText))) ? 3 : 6;
+  // ponytail: greetings keep history brief (2 turns); normal & action turns carry full 1-hour rolling window
+  const historyDepth = isGreeting ? 2 : 25;
   const history = store?.getRecentChatHistory ? store.getRecentChatHistory(chatId, historyDepth) : [];
   const greetingInstruction = isGreeting
     ? `\n\n[INSTRUKSI AWAL CHAT]: Ini adalah awal obrolan atau sapaan. Kamu WAJIB mengawali balasan persis dengan: "🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🥀" sebelum lanjut ke kalimat berikutnya. DILARANG menggunakan emoji selain 🤠 dan 🥀 pada catchphrase tersebut.`
