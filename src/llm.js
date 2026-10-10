@@ -58,7 +58,8 @@ export {
   injectMailboxSteering,
   processChat,
   extractCandidateText,
-  stripThoughtBlocks
+  stripThoughtBlocks,
+  isInternalThoughtText
 } from "./llm/engine.js";
 
 // Self-test block for standalone invocation

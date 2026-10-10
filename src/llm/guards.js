@@ -342,7 +342,7 @@ export function isAmbiguousScheduleStatement(text = "") {
 export function isVagueCommandWithoutTarget(text = "") {
   if (!text) return false;
   const t = text.trim().toLowerCase();
-  return /^(?:tolong\s+)?(?:hapus|apus|del|delete|done|selesai|kelar|beres|batalin|cancel|undo)$/i.test(t);
+  return /^(?:tolong\s+)?(?:hapus|apus|del|delete|done|selesai|kelar|beres|batalin|cancel|undo|(?:convert|konversi|export|ubah|jadikan|jadiin)(?:\s+(?:file|dokumen)(?:\s+ini)?)?(?:\s+format)?(?:\s+(?:ke|to)?\s*(?:pdf|docx|txt|png|jpg))?)$/i.test(t);
 }
 
 const LIST_TOPIC_REGEX = /\b(tugas|todo|to-?dos?|to\s*do\s*list|todolist|pengingat|reminder|reminders|acara|agenda|jadwal|events?|deadline|backlog)\b/i;

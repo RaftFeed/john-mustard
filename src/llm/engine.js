@@ -1,14 +1,14 @@
-const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b)/i;
+const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Looking at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b|User (?:wants|asked|is asking)\b|The user\b|Checking (?:the|vault|database|notes)\b)/i;
 
 // Hard reasoning fingerprints: leaked tool-result dumps / raw tool-call notation.
 // These never appear in a genuine user-facing reply, so they are never salvageable.
-const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s re-?read\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I\s+just\s+called|called|calling|I just tried to|tried calling)\s+\w+(?:Todo|Reminder|Detail)\b|\bwith todoId:\b|\bgetTodoDetail\b|\b(?:in the output of|output of)\s+\w+(?:Todos|Reminders)\b|\btodo:\s*\{[^}]*id:\s*\d+)/i;
+const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s (?:re-?read|see|check)\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I\s+just\s+called|called|calling|I just tried to|tried calling)\s+\w+(?:Todo|Reminder|Detail|Vault|File)\b|\bwith todoId:\b|\bgetTodoDetail\b|\b(?:in the output of|output of)\s+\w+(?:Todos|Reminders|Files|Vault)\b|\btodo:\s*\{[^}]*id:\s*\d+|\bLooking at the vault\b|\bChecking the vault\b|\bUser wants to\b)/i;
 
 // A real reply appended after a reasoning preamble (used to salvage mixed outputs).
-const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
+const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Mau\b|File\b|Format\b|Bisa\b|Kamu\b|Lu\b|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
 
-// Header penanda output "daftar penuh" (to-do list / daftar acara). Kartu satuan (add/update) tidak termasuk.
-const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar Acara & Agenda\]|\[Daftar Acara & Pengingat\]|\[Jadwal Hari |Tidak ada tugas pending/i;
+// Header penanda output "daftar penuh" (to-do list / daftar acara / vault / catatan / kontak / dsb). Kartu satuan (add/update) tidak termasuk.
+const FULL_LIST_HEADER_REGEX = /\[To-Do List|\[Daftar|\[Document Vault|\*\[Document Vault|📁 \[Document Vault|\[Catatan Pribadi|\[Direktori Kontak|👥 \[Direktori Kontak|Tidak ada (?:tugas|acara|pengingat|catatan|file)|Belum ada (?:jadwal|agenda|pengingat|catatan|skill|ide|request|file|tugas)|Direktori kontak masih kosong|\*\[HERMES|\*\[SERVER HEALTH/i;
 
 // Tool yang menerima nomor urut visual; dipakai untuk pra-resolve per batch.
 const TODO_INDEX_ARG_BY_TOOL = { completeTodo: "todoId", deleteTodo: "todoId", updateTodo: "todoId", getTodoDetail: "todoId" };
@@ -471,7 +471,7 @@ ${isBotQuoted
   // LLM Autonomy: mode AUTO default, NONE jika ambigu/media santai, ANY jika niat aksi jelas
   const isAmbiguousSchedule = isAmbiguousScheduleStatement(userText);
   const isAmbiguousEvent = isAmbiguousEventReply(userText, quoted);
-  const isVagueCommand = isVagueCommandWithoutTarget(userText) && !quoted;
+  const isVagueCommand = isVagueCommandWithoutTarget(userText) && !quoted && !media;
   const isMediaWithoutAction = Boolean(media && !isActionIntent(userText));
   const hasActionIntent = isActionIntent(userText) && !isAmbiguousSchedule && !isAmbiguousEvent && !isVagueCommand;
   let toolConfig;
@@ -772,7 +772,7 @@ ${isBotQuoted
       finalReply = text;
     }
   } else {
-    finalReply = effectiveList || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Gagal memproses aksi nih. Coba sebutkan lagi perintahnya." : "Gagal memproses aksi nih, Lord. Coba sebutkan lagi perintahnya."));
+    finalReply = (userWantsList ? effectiveList : null) || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Mau memproses apa nih? Coba sebutkan detail perintah atau nama filenya." : "Mau memproses apa nih, Lord? Coba sebutkan detail perintah atau nama filenya."));
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);

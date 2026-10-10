@@ -70,9 +70,15 @@ test("LLM Guards: isVagueCommandWithoutTarget identifies vague commands needing 
   assert.strictEqual(isVagueCommandWithoutTarget("selesai"), true);
   assert.strictEqual(isVagueCommandWithoutTarget("tolong hapus"), true);
   assert.strictEqual(isVagueCommandWithoutTarget("batalin"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("convert ke pdf"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("export ke pdf"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("jadikan pdf"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("tolong convert"), true);
+  assert.strictEqual(isVagueCommandWithoutTarget("convert file ini ke pdf"), true);
   assert.strictEqual(isVagueCommandWithoutTarget("hapus 1"), false);
   assert.strictEqual(isVagueCommandWithoutTarget("done tugas 2"), false);
   assert.strictEqual(isVagueCommandWithoutTarget("selesaikan laporan"), false);
+  assert.strictEqual(isVagueCommandWithoutTarget("convert dokumen LKP 6 ke pdf"), false);
 });
 
 test("LLM Engine: tool disambiguation steering guides model for event vs todo keywords", async () => {
@@ -1906,6 +1912,83 @@ test("LLM Tools: searchAndSendImage tool execution and intent detection", async 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LLM Engine: filters leaked thinking and prevents unrequested vault/list dumps", async () => {
+  const { isInternalThoughtText, stripThoughtBlocks, processChat } = await import("../src/llm.js");
+  const { Storage, formatVaultList } = await import("../src/db.js");
+
+  // 1. Expanded thought checks
+  assert.strictEqual(isInternalThoughtText("Looking at the vault, there are 3 files."), true);
+  assert.strictEqual(isInternalThoughtText("User wants to convert to pdf"), true);
+  assert.strictEqual(isInternalThoughtText("Checking vault files first"), true);
+
+  const leakedThought = `Looking at the vault to see what file to convert...
+
+Mau convert file yang mana nih ke PDF?`;
+  const cleaned = stripThoughtBlocks(leakedThought);
+  assert.strictEqual(cleaned, "Mau convert file yang mana nih ke PDF?");
+
+  // 2. ProcessChat does NOT append vault list when user did not request a list
+  const store = new Storage(":memory:");
+  store.saveVaultFile({
+    ownerId: "6285236467838",
+    filename: "LKP_6.docx",
+    category: "documents",
+    filepath: "/tmp/fake.docx",
+    mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    filesize: 1024,
+    summary: "Dokumen LKP 6"
+  });
+
+  const mockRotator = { execute: async (fn) => fn("test-key") };
+  const originalFetch = globalThis.fetch;
+  let call = 0;
+
+  try {
+    globalThis.fetch = async () => {
+      call++;
+      if (call === 1) {
+        // Model called searchVaultFiles
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{ functionCall: { name: "searchVaultFiles", args: { query: "LKP" } } }]
+              }
+            }]
+          })
+        };
+      }
+      // Turn 2: Model returns message asking confirmation
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [{ text: "Mau convert file LKP_6.docx ke PDF?" }]
+            }
+          }]
+        })
+      };
+    };
+
+    const reply = await processChat(mockRotator, "convert ke pdf", {
+      store,
+      chatId: "6285236467838",
+      senderNumber: "6285236467838"
+    });
+
+    assert.ok(reply.includes("Mau convert file"), "Must include conversational reply");
+    assert.ok(!reply.includes("[Document Vault"), "Must NOT dump document vault list");
+    assert.ok(!reply.includes("File Tersimpan"), "Must NOT dump vault footer/count");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 
 
