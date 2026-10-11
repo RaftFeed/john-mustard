@@ -2134,6 +2134,110 @@ test("LLM Engine: prioritizes current user turn and does not merge unreplied use
   }
 });
 
+test("LLM Engine: filters leaked meta developer monologue and uses clean fallback", async () => {
+  const { isInternalThoughtText, stripThoughtBlocks, processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+
+  const leakedMonologue = `Here's the summary, assuming I'm an expert developer reviewing some code:
+
+Debugging the addTodo Function
+
+Okay, so addTodo has run, but I'm getting an empty string or some kind of success message. Before I jump to conclusions, I need to confirm what actually happened. Did the todo get added successfully, or is the return value misleading? The best way to verify this is to bypass the return value entirely. I will check the underlying data structure to confirm the todo's presence. I'll call listTodos to see if the item is present and, more importantly, to observe the formatted output. This direct inspection will give me the ground truth and pinpoint whether the issue is with the addition itself, the formatting of the result, or something else entirely.`;
+
+  assert.strictEqual(isInternalThoughtText(leakedMonologue), true);
+  assert.strictEqual(stripThoughtBlocks(leakedMonologue), "");
+
+  // Fallback test: when turn 2 yields leaked monologue, but addTodo was executed
+  const store = new Storage(":memory:");
+  const mockRotator = { execute: async (fn) => fn("test-key") };
+  const originalFetch = globalThis.fetch;
+  let call = 0;
+
+  try {
+    globalThis.fetch = async () => {
+      call++;
+      if (call === 1) {
+        // Turn 1: model calls addTodo
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{
+              content: {
+                role: "model",
+                parts: [{
+                  functionCall: {
+                    name: "addTodo",
+                    args: { task: "isi SOTM" }
+                  }
+                }]
+              }
+            }]
+          })
+        };
+      }
+      // Turn 2: model returns leaked monologue
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              role: "model",
+              parts: [{
+                text: leakedMonologue
+              }]
+            }
+          }]
+        })
+      };
+    };
+
+    const reply = await processChat(mockRotator, "@John Mustard jangan lupa isi SOTM", {
+      store,
+      chatId: "120363029582992016@g.us",
+      senderNumber: "6281234567890",
+      senderName: "Fattah Amir"
+    });
+
+    // Leaked monologue must NOT be present
+    assert.strictEqual(reply.includes("Debugging the addTodo"), false);
+    assert.strictEqual(reply.includes("expert developer"), false);
+    // Must contain clean confirmation and card
+    assert.ok(reply.includes("Udah dicatet ya") || reply.includes("Beres"));
+    assert.ok(reply.includes("isi SOTM"));
+
+    // Case 2: When no mutation occurred and text is leaked thinking -> friendly error
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            role: "model",
+            parts: [{
+              text: leakedMonologue
+            }]
+          }
+        }]
+      })
+    });
+
+    const errorReply = await processChat(mockRotator, "@John Mustard tolong jelaskan", {
+      store,
+      chatId: "120363029582992016@g.us",
+      senderNumber: "6281234567890",
+      senderName: "Fattah Amir"
+    });
+
+    assert.strictEqual(errorReply.includes("Debugging"), false);
+    assert.strictEqual(errorReply, "Waduh, belum bisa diproses nih. Coba sebutkan lagi perintahnya.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
 
 
 

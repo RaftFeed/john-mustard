@@ -1,8 +1,8 @@
-const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Looking at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b|User (?:wants|asked|is asking)\b|The user\b|Checking (?:the|vault|database|notes)\b)/i;
+const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down|so\s+\w+\s+has run)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Looking at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b|User (?:wants|asked|is asking)\b|The user\b|Checking (?:the|vault|database|notes)\b|Here'?s (?:the|a) summary\b|Assuming I'm\b|As an? (?:expert|developer)\b|Expert developer\b)/i;
 
 // Hard reasoning fingerprints: leaked tool-result dumps / raw tool-call notation.
 // These never appear in a genuine user-facing reply, so they are never salvageable.
-const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s (?:re-?read|see|check)\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I\s+just\s+called|called|calling|I just tried to|tried calling)\s+\w+(?:Todo|Reminder|Detail|Vault|File)\b|\bwith todoId:\b|\bgetTodoDetail\b|\b(?:in the output of|output of)\s+\w+(?:Todos|Reminders|Files|Vault)\b|\btodo:\s*\{[^}]*id:\s*\d+|\bLooking at the vault\b|\bChecking the vault\b|\bUser wants to\b)/i;
+const THOUGHT_FINGERPRINT_REGEX = /(?:\bdefault_api:\s*\w|\bLet'?s (?:re-?read|see|check)\b|\bre-?read the (?:first|previous)\b|\btool (?:output|result|call)s?\b|"(?:deletedId|formattedList|remainingCount|toolResult|todoId|success)"|\btool_calls\b|\bchain[- ]of[- ]thought\b|\b(?:I\s+just\s+called|called|calling|I just tried to|tried calling)\s+\w+(?:Todo|Reminder|Detail|Vault|File)\b|\bwith todoId:\b|\bgetTodoDetail\b|\b(?:in the output of|output of)\s+\w+(?:Todos|Reminders|Files|Vault)\b|\btodo:\s*\{[^}]*id:\s*\d+|\bLooking at the vault\b|\bChecking the vault\b|\bUser wants to\b|\bassuming I'm an? (?:expert|developer|reviewer)\b|\bexpert developer\b|\bDebugging the \w+(?:Function|Method|Tool)?\b|\b\w+\s+has run\b|\bDid the \w+\s+get added\b|\bbypass the return value\b|\bcheck the underlying data structure\b|\bground truth\b|\bBefore I jump to conclusions\b|\bI'll call \w+\b|\bcall \w+\s+to see if\b)/i;
 
 // A real reply appended after a reasoning preamble (used to salvage mixed outputs).
 const THOUGHT_TRAILING_REPLY_REGEX = /\n\n(?=(?:🤠|🌄|🌅|⏰|Siap|Beres|Halo|Woles|Waduh|Oke|Baik|Yuk|Untuk|Berikut|Daftar|Maaf|Tentu|Mau\b|File\b|Format\b|Bisa\b|Kamu\b|Lu\b|Ada\b|Saya\b|Aku\b|Gue\b|Gw\b|Lord\b|Mami\b|Papi\b|\[(?:To-Do|Pengingat|\d+)[^\]]*\]|\*[A-Z])[^\n]*)/i;
@@ -19,7 +19,20 @@ const UNCOMPLETE_INDEX_ARG_BY_TOOL = { uncompleteTodo: "todoId" };
 export function isInternalThoughtText(text) {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().replace(/^[\s#*_~`>]+/, "");
-  return THOUGHT_OPENER_REGEX.test(t) || THOUGHT_FINGERPRINT_REGEX.test(t);
+  if (THOUGHT_OPENER_REGEX.test(t) || THOUGHT_FINGERPRINT_REGEX.test(t)) return true;
+
+  const lines = t.split("\n").map((l) => l.trim().replace(/^[\s#*_~`>]+/, "")).filter(Boolean);
+  if (lines.length > 0) {
+    if (THOUGHT_OPENER_REGEX.test(lines[0]) || (lines[1] && THOUGHT_OPENER_REGEX.test(lines[1]))) {
+      return true;
+    }
+    for (const line of lines.slice(0, 5)) {
+      if (/^(?:Debugging the\b|Here'?s (?:the|a) summary\b|Okay,\s*so\s*\w+\s*has run\b)/i.test(line)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function stripThoughtBlocks(text) {
@@ -788,7 +801,46 @@ ${isBotQuoted
       finalReply = text;
     }
   } else {
-    finalReply = (userWantsList ? effectiveList : null) || (successfulMutations.length > 0 ? (isGroupChat ? "Beres." : "Beres, Lord.") : (isGroupChat ? "Mau memproses apa nih? Coba sebutkan detail perintah atau nama filenya." : "Mau memproses apa nih, Lord? Coba sebutkan detail perintah atau nama filenya."));
+    if (userWantsList && effectiveList) {
+      finalReply = effectiveList;
+    } else if (successfulMutations.length > 0) {
+      const cards = [];
+      const actionLines = [];
+      for (const entry of executedTrajectory) {
+        const { name, result } = entry;
+        if (!result) continue;
+        if (name === "addTodo" || name === "updateTodo" || name === "addReminder" || name === "updateReminder") {
+          const cardText = result.formatted || null;
+          if (cardText && !FULL_LIST_HEADER_REGEX.test(cardText)) {
+            cards.push(cardText);
+          }
+        } else if (name === "deleteTodo" && result.success) {
+          const taskLabel = result.deletedTask ? ` ('${result.deletedTask}')` : "";
+          actionLines.push(`🗑️ Tugas #${result.deletedId}${taskLabel} berhasil dihapus.`);
+        } else if (name === "completeTodo" && result.success) {
+          actionLines.push(`✅ Tugas #${result.todoId} ditandai selesai.`);
+        } else if (name === "uncompleteTodo" && result.success) {
+          actionLines.push(`↩️ Tugas #${result.todoId} dikembalikan ke status belum selesai.`);
+        } else if (name === "clearCompletedTodos" && result.success) {
+          actionLines.push(`🗑️ ${result.deletedCount || "Semua"} tugas selesai berhasil dibersihkan.`);
+        }
+      }
+
+      const onlyAdd = successfulMutations.every((m) => m === "addTodo" || m === "addReminder");
+      const onlyUpdate = successfulMutations.every((m) => m === "updateTodo" || m === "updateReminder");
+      let salute = isGroupChat ? "Beres." : "Beres, Lord.";
+      if (onlyAdd) salute = isGroupChat ? "Udah dicatet ya!" : "Udah dicatet ya, Lord!";
+      else if (onlyUpdate) salute = isGroupChat ? "Udah diupdate ya!" : "Udah diupdate ya, Lord!";
+
+      const parts = [salute];
+      if (cards.length > 0) parts.push(cards.join("\n\n"));
+      if (actionLines.length > 0) parts.push(actionLines.join("\n"));
+      finalReply = parts.join("\n\n");
+    } else {
+      finalReply = isGroupChat
+        ? "Waduh, belum bisa diproses nih. Coba sebutkan lagi perintahnya."
+        : "Waduh, belum bisa diproses nih, Lord. Coba sebutkan lagi perintahnya.";
+    }
   }
 
   finalReply = stripHallucinatedToolChips(finalReply);
