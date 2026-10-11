@@ -39,7 +39,7 @@ export function buildSelfUpdatePrompt(instruction) {
 export async function queryHermesAgent(instruction, options = {}) {
   const baseUrl = options.baseUrl !== undefined ? options.baseUrl : (process.env.HERMES_API_URL || "");
   const apiKey = options.apiKey || process.env.HERMES_API_KEY || "";
-  const timeoutMs = options.timeoutMs || parseInt(process.env.HERMES_TIMEOUT_MS || "120000", 10);
+  const timeoutMs = options.timeoutMs || parseInt(process.env.HERMES_TIMEOUT_MS || "180000", 10);
 
   if (!baseUrl) {
     return { success: false, error: "HERMES_API_URL belum dikonfigurasi di .env" };

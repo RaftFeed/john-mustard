@@ -77,7 +77,7 @@ services:
       - PYTHON_RUNNER_URL=http://runner:8000/run
       - HERMES_API_URL=${HERMES_API_URL:-http://host.docker.internal:8642/v1}
       - HERMES_API_KEY=${HERMES_API_KEY}
-      - HERMES_TIMEOUT_MS=${HERMES_TIMEOUT_MS:-120000}
+      - HERMES_TIMEOUT_MS=${HERMES_TIMEOUT_MS:-180000}
       - NINEROUTER_URL=${NINEROUTER_URL:-http://john-mustard-9router:20128}
       - NINEROUTER_KEY=${NINEROUTER_KEY}
     volumes:

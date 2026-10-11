@@ -112,6 +112,30 @@ test("Hermes: queryHermesAgent handles abort/timeout", async () => {
   }
 });
 
+test("Hermes: queryHermesAgent defaults to 180s timeout when HERMES_TIMEOUT_MS is not set", async () => {
+  const prevEnv = process.env.HERMES_TIMEOUT_MS;
+  delete process.env.HERMES_TIMEOUT_MS;
+
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const err = new Error("The operation was aborted due to timeout");
+      err.name = "TimeoutError";
+      throw err;
+    };
+
+    const result = await queryHermesAgent("test default timeout", {
+      baseUrl: "http://127.0.0.1:9999/v1"
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, "Hermes timeout (180s) saat menjalankan task.");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (prevEnv !== undefined) process.env.HERMES_TIMEOUT_MS = prevEnv;
+  }
+});
+
 test("Hermes: manageRemoteServer tool requires owner", async () => {
   const toolDef = TOOLS[0].functionDeclarations.find(f => f.name === "manageRemoteServer");
   assert.ok(toolDef, "manageRemoteServer declaration should exist");
