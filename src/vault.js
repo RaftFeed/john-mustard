@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getEmbedding } from "./llm.js";
+import { cleanVaultSummary } from "./db.js";
 
 export function detectCategory(filename = "", mime = "") {
   const lower = (filename + " " + mime).toLowerCase();
@@ -14,10 +15,11 @@ export async function analyzeWithVision(rotator, buffer, mimetype, caption = "")
   const base64Data = buffer.toString("base64");
   const prompt = `Analisis file/dokumen ini.
 Caption dari pengguna: "${caption}".
-Berikan:
-1. Ringkasan singkat dokumen ini (1-3 kalimat)
-2. Informasi penting (angka, tanggal, nama instansi, nomor invoice/dokumen jika ada).
-Gunakan bahasa Indonesia yang ringkas.`;
+ATURAN KERAS:
+- DILARANG KERAS menggunakan kalimat pembuka seperti "Berikut adalah analisis...", "Berikut ringkasan...", atau header markdown seperti "### 1. Ringkasan".
+- LANGSUNG mulai kalimat pertama dengan subjek dan intisari isi dokumen (1-2 kalimat padat).
+- Tambahkan informasi penting (angka, tanggal, nama instansi, nomor invoice/dokumen jika ada).
+- Gunakan bahasa Indonesia yang ringkas, informatif, dan to the point.`;
 
   try {
     const data = await rotator.execute(async (key) => {
@@ -54,7 +56,8 @@ Gunakan bahasa Indonesia yang ringkas.`;
       return res.json();
     });
 
-    return data.choices?.[0]?.message?.content || "Dokumen tersimpan.";
+    const raw = data.choices?.[0]?.message?.content || "Dokumen tersimpan.";
+    return cleanVaultSummary(raw);
   } catch (err) {
     console.warn("Vision analysis skipped / error:", err.message);
     return caption ? `Deskripsi: ${caption}` : "Dokumen berhasil disimpan di vault.";

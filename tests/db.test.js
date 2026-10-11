@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert";
-import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, formatAcaraList, formatPengingatList, formatVaultList, parseWibDayRange, isSimilarReminder } from "../src/db.js";
+import { Storage, formatTodoList, formatTodoDetail, formatPersonList, formatFeatureRequestsList, formatRemindersList, formatAcaraList, formatPengingatList, formatVaultList, cleanVaultSummary, parseWibDayRange, isSimilarReminder } from "../src/db.js";
 
 test("Storage: in-memory DB operations (todos, contacts, dedup, cooldown)", () => {
   const store = new Storage(":memory:");
@@ -544,6 +544,20 @@ test("Storage: Document Vault CRUD, .trash move, #undo restore, and visual index
   assert.ok(formatted.includes("[1]"));
   assert.ok(formatted.includes("Promo Diskon Game Steam"));
   assert.ok(formatted.includes("#vault get"));
+
+  // cleanVaultSummary removes AI preamble slop
+  const rawPreamble1 = "Berikut adalah analisis dari dokumen tersebut:\n\n### 1. Ringkasan Dokumen\nDokumen pembayaran SPP bulan Mei.";
+  assert.strictEqual(cleanVaultSummary(rawPreamble1), "Dokumen pembayaran SPP bulan Mei.");
+  const rawPreamble2 = "Berikut analisis dari dokumen pada gambar:\n\n**1. Ringkasan Singkat**\nBukti transfer BCA senilai Rp 500.000.";
+  assert.strictEqual(cleanVaultSummary(rawPreamble2), "Bukti transfer BCA senilai Rp 500.000.");
+
+  const listWithSlop = [
+    { filename: "foto_struk.jpg", filesize: 10240, category: "media", summary: rawPreamble1 }
+  ];
+  const formattedSlop = formatVaultList(listWithSlop);
+  assert.ok(formattedSlop.includes("Dokumen pembayaran SPP bulan Mei."));
+  assert.strictEqual(formattedSlop.includes("Berikut adalah analisis"), false);
+  assert.strictEqual(formattedSlop.includes("### 1. Ringkasan"), false);
 
   // 3. Update vault file
   const updateRes = store.updateVaultFile(id1, userA, {

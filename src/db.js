@@ -2594,6 +2594,19 @@ export function formatFeatureRequestsList(requests) {
   return lines.join("\n").trim();
 }
 
+export function cleanVaultSummary(text = "") {
+  if (!text || typeof text !== "string") return "";
+  let clean = text
+    .replace(/^(?:Berikut (?:adalah )?(?:analisis|ringkasan|rangkuman|uraian)[^\n:]*[:\n]+)+/i, "")
+    .replace(/^(?:Berdasarkan (?:gambar|tangkapan layar|dokumen|file|foto)[^\n:]*(?:\([^)]*\))?[:\n]+)+/i, "")
+    .replace(/^(?:#{1,6}\s*(?:\d+\.\s*)?(?:Ringkasan|Analisis|Informasi|Dokumen)[^\n]*\n+)+/i, "")
+    .replace(/^(?:\*{1,2}(?:\d+\.\s*)?(?:Ringkasan|Analisis|Informasi|Dokumen)[^\n*]*\*{1,2}[:\n]+)+/i, "")
+    .replace(/^(?:#{1,6}\s*(?:\d+\.\s*)?(?:Ringkasan|Analisis|Informasi|Dokumen)[^\n]*\n+)+/i, "")
+    .replace(/^\s*[-•*]\s*/, "")
+    .trim();
+  return clean || text.trim();
+}
+
 export function formatVaultList(files = []) {
   if (!files || files.length === 0) {
     return "*[Document Vault]*\nBelum ada file tersimpan di Vault.";
@@ -2606,7 +2619,8 @@ export function formatVaultList(files = []) {
     const meta = [cat, sizeKb].filter(Boolean).join(" ");
     lines.push(`• *[${num}]* ${f.filename} ${meta ? `_(${meta})_` : ""}`);
     if (f.summary) {
-      lines.push(`   📝 ${f.summary.length > 80 ? f.summary.slice(0, 77) + "..." : f.summary}`);
+      const cleanSummary = cleanVaultSummary(f.summary).replace(/\s+/g, " ");
+      lines.push(`   📝 ${cleanSummary.length > 80 ? cleanSummary.slice(0, 77) + "..." : cleanSummary}`);
     }
   });
   lines.push("\n_Aksi: #vault get <no>, #vault del <no>, #vault cari <kata>_");
