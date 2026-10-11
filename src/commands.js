@@ -23,7 +23,7 @@ function formatUptime(seconds) {
   return parts.join(" ");
 }
 
-export function parseFastCommand(text = "") {
+function parseSingleFastCommand(text = "") {
   const trimmed = text.trim();
 
   // Keyword langsung tanpa tanda # atau ?
@@ -57,36 +57,36 @@ export function parseFastCommand(text = "") {
 
   // Explicit Acara Delete (hapus acara 1, 1 acara apus, del agenda 2, etc.)
   const acaraDelMatch =
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
-    trimmed.match(/^(?:acara|agenda|jadwal|event)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:acara|agenda|jadwal|event)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:acara|agenda|jadwal|event)$/i);
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:acara|agenda|jadwal|event)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)$/i) ||
+    trimmed.match(/^(?:acara|agenda|jadwal|event)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:acara|agenda|jadwal|event)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:acara|agenda|jadwal|event)$/i);
   if (acaraDelMatch) {
-    const ids = acaraDelMatch[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const ids = acaraDelMatch[1].replace(/\b(?:dan|&)\b/gi, ",").split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
     if (ids.length === 1) return { type: "delete", id: ids[0], target: "reminder", category: "acara" };
     if (ids.length > 1) return { type: "deleteMultiple", ids, target: "reminder", category: "acara" };
   }
 
   // Explicit Pengingat Delete (hapus reminder 1, 1 pengingat apus, del reminder 2, etc.)
   const pengingatDelMatch =
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:reminder|pengingat)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
-    trimmed.match(/^(?:reminder|pengingat)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:reminder|pengingat)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:reminder|pengingat)$/i);
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:reminder|pengingat)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)$/i) ||
+    trimmed.match(/^(?:reminder|pengingat)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:reminder|pengingat)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:reminder|pengingat)$/i);
   if (pengingatDelMatch) {
-    const ids = pengingatDelMatch[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const ids = pengingatDelMatch[1].replace(/\b(?:dan|&)\b/gi, ",").split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
     if (ids.length === 1) return { type: "delete", id: ids[0], target: "reminder", category: "pengingat" };
     if (ids.length > 1) return { type: "deleteMultiple", ids, target: "reminder", category: "pengingat" };
   }
 
   // Explicit Todo Delete (hapus tugas 1, 1 tugas apus, del todo 2, etc.)
   const todoDelMatch =
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:tugas|todo)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
-    trimmed.match(/^(?:tugas|todo)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)$/i) ||
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:tugas|todo)$/i);
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:tugas|todo)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)$/i) ||
+    trimmed.match(/^(?:tugas|todo)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:tugas|todo)\s+(?:hapus|apus|del|delete)$/i) ||
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:tugas|todo)$/i);
   if (todoDelMatch) {
-    const ids = todoDelMatch[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const ids = todoDelMatch[1].replace(/\b(?:dan|&)\b/gi, ",").split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
     if (ids.length === 1) return { type: "delete", id: ids[0], target: "todo" };
     if (ids.length > 1) return { type: "deleteMultiple", ids, target: "todo" };
   }
@@ -128,10 +128,10 @@ export function parseFastCommand(text = "") {
 
   // Natural Commands (Bypass LLM for instant <10ms execution)
   const naturalDone =
-    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s*(?:udh|udah|sdh|sudah)?\s*(?:kelar|beres|selesai|done)$/i) ||
-    trimmed.match(/^(?:kelar|beres|selesai|done)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i);
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s*(?:udh|udah|sdh|sudah)?\s*(?:kelar|beres|selesai|done)$/i) ||
+    trimmed.match(/^(?:kelar|beres|selesai|done)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)$/i);
   if (naturalDone) {
-    const ids = naturalDone[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const ids = naturalDone[1].replace(/\b(?:dan|&)\b/gi, ",").split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
     if (ids.length === 1) return { type: "done", id: ids[0], target: "auto" };
     if (ids.length > 1) return { type: "doneMultiple", ids, target: "auto" };
   }
@@ -146,10 +146,10 @@ export function parseFastCommand(text = "") {
   }
 
   const naturalDel =
-    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+)$/i) ||
-    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+)\s+(?:hapus|apus|del|delete)$/i);
+    trimmed.match(/^(?:hapus|apus|del|delete)\s+(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)$/i) ||
+    trimmed.match(/^(?:no(?:mor)?\s*)?([\d,\s]+(?:\s*(?:dan|&)\s*\d+)*)\s+(?:hapus|apus|del|delete)$/i);
   if (naturalDel) {
-    const ids = naturalDel[1].split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const ids = naturalDel[1].replace(/\b(?:dan|&)\b/gi, ",").split(/[\s,]+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
     if (ids.length === 1) return { type: "delete", id: ids[0], target: "auto" };
     if (ids.length > 1) return { type: "deleteMultiple", ids, target: "auto" };
   }
@@ -417,6 +417,52 @@ export function parseFastCommand(text = "") {
   return null;
 }
 
+const CHAIN_SEPARATOR_REGEX = /(?:\s+(?:dan|terus|lalu|kemudian|sekalian|langsung|&)\s+|\r?\n+|;\s*)/i;
+
+function parseCompoundFastCommand(text = "") {
+  const segments = text
+    .split(CHAIN_SEPARATOR_REGEX)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (segments.length < 2) return null;
+
+  const commands = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    let cmd = parseSingleFastCommand(seg);
+
+    // Contextual sub-command: "apus" / "hapus" without ID following a "done" command
+    if (!cmd && i > 0) {
+      const prevCmd = commands[i - 1];
+      const isPrevDone = prevCmd && (prevCmd.type === "done" || prevCmd.type === "doneMultiple");
+      if (isPrevDone) {
+        if (
+          /^(?:(?:sekalian|langsung|tolong)?\s*)?(?:hapus|apus|del|delete|clear|bersihkan|bersihin|sapu\s+bersih)(?:\s+(?:aja|dong|ya|dah|deh|lah|wok|bray))?$/i.test(seg) ||
+          /^(?:(?:sekalian|langsung|tolong)?\s*)?(?:hapus|apus|del|delete|clear|bersihkan|bersihin)\s+(?:semua\s+)?(?:tugas\s+|todo\s+|item\s+|list\s+)?(?:yang\s+|yg\s+)?(?:sudah\s+|udh\s+|sdh\s+)?(?:done|selesai|beres|kelar)(?:\s+(?:aja|dong|ya|dah|deh|lah|wok|bray))?$/i.test(seg)
+        ) {
+          cmd = { type: "clearDone" };
+        }
+      }
+    }
+
+    if (!cmd) return null;
+    commands.push(cmd);
+  }
+
+  return commands.length >= 2 ? { type: "compound", commands } : null;
+}
+
+export function parseFastCommand(text = "") {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const single = parseSingleFastCommand(trimmed);
+  if (single) return single;
+
+  return parseCompoundFastCommand(trimmed);
+}
+
 export function formatServerHealth(store) {
   const uptimeSec = os.uptime();
   const nodeUptime = process.uptime();
@@ -534,6 +580,39 @@ export async function executeFastCommand(cmd, ctx = {}) {
   };
 
   switch (cmd.type) {
+    case "compound": {
+      const replies = [];
+      const snapshot = store && typeof store.getTodoIndexSnapshot === "function"
+        ? store.getTodoIndexSnapshot(chatId)
+        : null;
+
+      for (const sub of cmd.commands) {
+        const subCmd = { ...sub };
+        if (snapshot && typeof subCmd.id === "number" && !subCmd.rawId) {
+          const resolvedRealId = store.resolveTodoIdFromSnapshot ? store.resolveTodoIdFromSnapshot(subCmd.id, snapshot) : subCmd.id;
+          if (resolvedRealId !== null && resolvedRealId !== undefined) {
+            subCmd.displayId = subCmd.id;
+            subCmd.id = resolvedRealId;
+            subCmd.rawId = true;
+          }
+        }
+        if (snapshot && Array.isArray(subCmd.ids) && !subCmd.rawId) {
+          subCmd.displayIds = [...subCmd.ids];
+          subCmd.ids = subCmd.ids.map((id) =>
+            store.resolveTodoIdFromSnapshot ? store.resolveTodoIdFromSnapshot(id, snapshot) : id
+          );
+          subCmd.rawId = true;
+        }
+
+        const subReply = await executeFastCommand(subCmd, ctx);
+        if (subReply && typeof subReply === "string") {
+          replies.push(subReply.trim());
+        }
+      }
+
+      return replies.join("\n\n");
+    }
+
     case "ping": {
       const uptime = formatUptime(process.uptime());
       const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
@@ -578,10 +657,10 @@ export async function executeFastCommand(cmd, ctx = {}) {
             const remaining = store.listEvents ? store.listEvents(chatId) : [];
             rememberAcara(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatAcaraList(remaining)}` : "";
-            return `[OK] Acara #${cmd.id} selesai & dihapus dari agenda.${formatted}`;
+            return `[OK] Acara #${cmd.displayId || cmd.id} selesai & dihapus dari agenda.${formatted}`;
           }
         }
-        return `[!] Acara #${cmd.id} gak ketemu atau udah selesai.`;
+        return `[!] Acara #${cmd.displayId || cmd.id} gak ketemu atau udah selesai.`;
       }
       if (scope === "pengingat") {
         if (store.deleteReminder) {
@@ -591,10 +670,10 @@ export async function executeFastCommand(cmd, ctx = {}) {
             const remaining = store.listPengingat ? store.listPengingat(chatId) : [];
             rememberPengingat(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatPengingatList(remaining)}` : "";
-            return `[OK] Pengingat #${cmd.id} selesai & dihapus.${formatted}`;
+            return `[OK] Pengingat #${cmd.displayId || cmd.id} selesai & dihapus.${formatted}`;
           }
         }
-        return `[!] Pengingat #${cmd.id} gak ketemu atau udah selesai.`;
+        return `[!] Pengingat #${cmd.displayId || cmd.id} gak ketemu atau udah selesai.`;
       }
       if (scope === "reminder") {
         if (store.deleteReminder) {
@@ -603,34 +682,43 @@ export async function executeFastCommand(cmd, ctx = {}) {
             const remaining = store.listReminders ? store.listReminders(chatId) : [];
             rememberRems(remaining);
             const formatted = remaining.length > 0 ? `\n\n${formatRemindersList(remaining)}` : "";
-            return `[OK] Acara/pengingat #${cmd.id} selesai & dihapus dari agenda.${formatted}`;
+            return `[OK] Acara/pengingat #${cmd.displayId || cmd.id} selesai & dihapus dari agenda.${formatted}`;
           }
         }
-        return `[!] Acara/pengingat #${cmd.id} gak ketemu atau udah selesai.`;
+        return `[!] Acara/pengingat #${cmd.displayId || cmd.id} gak ketemu atau udah selesai.`;
       }
       if (scope === "todo") {
-        const targetTodo = store.getTodoById ? store.getTodoById(cmd.id, chatId) : null;
-        const changed = store.completeTodo(cmd.id, chatId);
+        const targetTodo = cmd.rawId
+          ? (store.getTodoByRealId ? store.getTodoByRealId(cmd.id, chatId) : null)
+          : (store.getTodoById ? store.getTodoById(cmd.id, chatId) : null);
+        const changed = cmd.rawId
+          ? store.completeTodo(cmd.id, chatId, { rawId: true })
+          : store.completeTodo(cmd.id, chatId);
         if (changed > 0) {
           const isOverdue = Boolean(targetTodo && targetTodo.deadline && targetTodo.deadline <= Date.now());
           if (isOverdue && store.deleteTodo) {
             store.deleteTodo(targetTodo.id, chatId, { rawId: true });
             rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
-            return `[OK] Tugas #${cmd.id} selesai & otomatis dihapus karena sudah lewat deadline. (Ketik #undo kalau mau batalin)`;
+            return `[OK] Tugas #${cmd.displayId || cmd.id} selesai & otomatis dihapus karena sudah lewat deadline. (Ketik #undo kalau mau batalin)`;
           }
           rememberTodos(store.getTodos ? store.getTodos(chatId, false) : []);
-          return `[OK] Tugas #${cmd.id} selesai. (Ketik #undo atau "batalin tugas ${cmd.id}" kalau mau batalin)`;
+          return `[OK] Tugas #${cmd.displayId || cmd.id} selesai. (Ketik #undo atau "batalin tugas ${cmd.displayId || cmd.id}" kalau mau batalin)`;
         }
-        return `[!] Tugas #${cmd.id} gak ketemu atau udah selesai.`;
+        return `[!] Tugas #${cmd.displayId || cmd.id} gak ketemu atau udah selesai.`;
       }
-      return `Mau tandai selesai nomor #${cmd.id} untuk Tugas, Acara, atau Pengingat? Ketik "#done ${cmd.id}", "acara ${cmd.id} selesai", atau "pengingat ${cmd.id} selesai".`;
+      return `Mau tandai selesai nomor #${cmd.displayId || cmd.id} untuk Tugas, Acara, atau Pengingat? Ketik "#done ${cmd.displayId || cmd.id}", "acara ${cmd.displayId || cmd.id} selesai", atau "pengingat ${cmd.displayId || cmd.id} selesai".`;
     }
 
     case "doneMultiple": {
       const scope = resolveItemScope(cmd.category || cmd.target || "auto", { store, chatId, quoted });
       let completed = 0;
       let autoArchived = 0;
-      for (const id of cmd.ids) {
+      const targetIds = scope === "todo" && !cmd.rawId && store.resolveTodoIndexes
+        ? store.resolveTodoIndexes(cmd.ids, chatId)
+        : cmd.ids;
+      const isRawTodo = Boolean(cmd.rawId || (scope === "todo" && store.resolveTodoIndexes));
+
+      for (const id of targetIds) {
         if (scope === "acara" && store.deleteReminder) {
           const targetId = store.resolveAcaraId ? store.resolveAcaraId(id, chatId) : id;
           const changed = store.deleteReminder(chatId, targetId, { rawId: true });
@@ -643,8 +731,12 @@ export async function executeFastCommand(cmd, ctx = {}) {
           const changed = store.deleteReminder(chatId, id);
           if (changed > 0) completed++;
         } else {
-          const targetTodo = store.getTodoById ? store.getTodoById(id, chatId) : null;
-          const changed = store.completeTodo(id, chatId);
+          const targetTodo = isRawTodo
+            ? (store.getTodoByRealId ? store.getTodoByRealId(id, chatId) : null)
+            : (store.getTodoById ? store.getTodoById(id, chatId) : null);
+          const changed = isRawTodo
+            ? store.completeTodo(id, chatId, { rawId: true })
+            : store.completeTodo(id, chatId);
           if (changed > 0) {
             completed++;
             if (targetTodo && targetTodo.deadline && targetTodo.deadline <= Date.now() && store.deleteTodo) {
@@ -762,16 +854,18 @@ export async function executeFastCommand(cmd, ctx = {}) {
         return `[!] Acara/pengingat #${cmd.id} gak ketemu.`;
       }
       if (scope === "todo") {
-        const changed = store.deleteTodo(cmd.id, chatId);
+        const changed = cmd.rawId
+          ? store.deleteTodo(cmd.id, chatId, { rawId: true })
+          : store.deleteTodo(cmd.id, chatId);
         if (changed > 0) {
           const remaining = store.getTodos ? store.getTodos(chatId) : [];
           rememberTodos(remaining);
           const formatted = remaining.length > 0 ? `\n\n${formatTodoList(remaining, isGroup)}` : "";
-          return `[OK] Tugas #${cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
+          return `[OK] Tugas #${cmd.displayId || cmd.id} berhasil dihapus (Ketik #undo untuk memulihkan).${formatted}`;
         }
-        return `[!] Tugas #${cmd.id} gak ketemu atau udah dihapus.`;
+        return `[!] Tugas #${cmd.displayId || cmd.id} gak ketemu atau udah dihapus.`;
       }
-      return `Mau hapus nomor #${cmd.id} dari To-Do List atau dari Daftar Acara? Ketik "hapus tugas ${cmd.id}", "hapus acara ${cmd.id}", atau "hapus pengingat ${cmd.id}".`;
+      return `Mau hapus nomor #${cmd.displayId || cmd.id} dari To-Do List atau dari Daftar Acara? Ketik "hapus tugas ${cmd.displayId || cmd.id}", "hapus acara ${cmd.displayId || cmd.id}", atau "hapus pengingat ${cmd.displayId || cmd.id}".`;
     }
 
     case "deleteMultiple": {
@@ -806,7 +900,9 @@ export async function executeFastCommand(cmd, ctx = {}) {
           }
         }
       } else if (scope === "todo") {
-        const realIds = store.resolveTodoIndexes ? store.resolveTodoIndexes(cmd.ids, chatId) : cmd.ids;
+        const realIds = cmd.rawId
+          ? cmd.ids
+          : (store.resolveTodoIndexes ? store.resolveTodoIndexes(cmd.ids, chatId) : cmd.ids);
         for (const realId of realIds) {
           if (store.deleteTodo(realId, chatId, { rawId: true }) > 0) {
             deletedTodos.push(realId);

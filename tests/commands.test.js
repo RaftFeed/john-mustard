@@ -528,4 +528,74 @@ test("Commands: #foto and #gambar image search fast commands parse and execute",
   assert.ok(noQueryRes.includes("Format: #foto <kata kunci>"));
 });
 
+test("Commands: multi-command chaining and fast done + apus", async () => {
+  // 1. Parsing tests
+  const cmdChain = parseFastCommand("4 done dan apus");
+  assert.strictEqual(cmdChain.type, "compound");
+  assert.strictEqual(cmdChain.commands.length, 2);
+  assert.strictEqual(cmdChain.commands[0].type, "done");
+  assert.strictEqual(cmdChain.commands[0].id, 4);
+  assert.strictEqual(cmdChain.commands[1].type, "clearDone");
+
+  const cmdChain2 = parseFastCommand("1 done dan 2 hapus");
+  assert.strictEqual(cmdChain2.type, "compound");
+  assert.strictEqual(cmdChain2.commands.length, 2);
+  assert.strictEqual(cmdChain2.commands[0].type, "done");
+  assert.strictEqual(cmdChain2.commands[0].id, 1);
+  assert.strictEqual(cmdChain2.commands[1].type, "delete");
+  assert.strictEqual(cmdChain2.commands[1].id, 2);
+
+  const cmdMultiDone = parseFastCommand("1 dan 2 done");
+  assert.strictEqual(cmdMultiDone.type, "doneMultiple");
+  assert.deepStrictEqual(cmdMultiDone.ids, [1, 2]);
+
+  const cmdMultiDel = parseFastCommand("hapus 1 dan 2");
+  assert.strictEqual(cmdMultiDel.type, "deleteMultiple");
+  assert.deepStrictEqual(cmdMultiDel.ids, [1, 2]);
+
+  const cmdMultiDelAcara = parseFastCommand("hapus acara 1 dan 2");
+  assert.strictEqual(cmdMultiDelAcara.type, "deleteMultiple");
+  assert.strictEqual(cmdMultiDelAcara.category, "acara");
+  assert.deepStrictEqual(cmdMultiDelAcara.ids, [1, 2]);
+
+  // Ensure #add with 'dan' in title is NOT broken into compound
+  const cmdAdd = parseFastCommand("#add Beli telur dan susu");
+  assert.strictEqual(cmdAdd.type, "add");
+  assert.strictEqual(cmdAdd.raw, "Beli telur dan susu");
+
+  const cmdTwoLists = parseFastCommand("#todo dan #acara");
+  assert.strictEqual(cmdTwoLists.type, "compound");
+  assert.strictEqual(cmdTwoLists.commands[0].type, "listTodos");
+  assert.strictEqual(cmdTwoLists.commands[1].type, "reminders");
+
+  // 2. Execution tests
+  const store = new Storage(":memory:");
+  const chatId = "user_chaining";
+  const ctx = { store, chatId, isOwner: true, senderNumber: chatId, senderName: "Lord" };
+
+  store.addTodo(chatId, "Tugas 1");
+  store.addTodo(chatId, "Tugas 2");
+  store.addTodo(chatId, "Tugas 3");
+  store.addTodo(chatId, "Tugas 4");
+  store.addTodo(chatId, "Tugas 5");
+
+  // Initial active todos
+  assert.strictEqual(store.getTodos(chatId, true).length, 5);
+
+  // Execute "4 done dan apus"
+  const res = await executeFastCommand(parseFastCommand("4 done dan apus"), ctx);
+  assert.ok(res.includes("Tugas #4 selesai"));
+  assert.ok(res.includes("Berhasil menghapus 1 tugas yang sudah selesai"));
+
+  // Check database: 4 active todos remain (Task 4 deleted)
+  const remainingTodos = store.getTodos(chatId, false);
+  assert.strictEqual(remainingTodos.length, 4);
+  assert.ok(!remainingTodos.some((t) => t.task === "Tugas 4"));
+
+  // Undo works for the cleared task
+  const undoRes = await executeFastCommand(parseFastCommand("#undo"), ctx);
+  assert.ok(/memulihkan|dipulihkan/i.test(undoRes));
+  assert.strictEqual(store.getTodos(chatId, false, null, true).length, 5);
+});
+
 

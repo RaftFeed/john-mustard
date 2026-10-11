@@ -1092,7 +1092,8 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
           (userText && /\b(?:hapus|apus|del|delete)\s*(?:nomor|no\.?|#)?\s*\d+\b/i.test(userText)) ||
           (userText && /\b\d+\s*(?:hapus|apus|del|delete)\b/i.test(userText)) ||
           (userText && /\b(?:hapus|apus|del|delete)\s+(?:tugas|todo)\b/i.test(userText)) ||
-          (userText && /\b(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText))
+          (userText && /\b(?:tugas|todo)\s+(?:hapus|apus|del|delete)\b/i.test(userText)) ||
+          (userText && /\b(?:done|selesai|kelar|beres)\s*(?:dan|terus|lalu|kemudian|sekalian|langsung|&)?\s*(?:hapus|apus|del|delete)\b/i.test(userText))
         );
 
         const pending = store.getPendingDeletion ? store.getPendingDeletion(queryChatId) : null;
