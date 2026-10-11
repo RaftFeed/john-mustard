@@ -199,6 +199,7 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
   const groupContext = isGroupChat
     ? `\n\n[OBROLAN GRUP KELUARGA]:
 - IDENTIFIKASI PENGIRIM (SANGAT PENTING): Di obrolan grup ini, setiap pesan masuk berasal dari anggota keluarga yang berbeda. Selalu periksa tag [Pengirim: ...] atau informasi ACTIVE SPEAKER di bawah! JANGAN PERNAH menyamakan atau mengira pengirim sekarang adalah orang yang sama dengan pesan sebelumnya. Jika pengirim adalah Mami, respon secara khusus ke Mami dan panggil "Mami". DILARANG KERAS memanggil nama anggota lain (seperti Razita/Rafid) jika pesan dikirim oleh Mami!
+- TANGGAPAN CANDAN & SENGGOLAN KELUARGA: Di grup keluarga, anggota sering me-mention atau men-tag bot untuk menanggapi candaan, senggolan, kelakuan anggota lain, atau stiker lucu (contoh: Mami senggol Papi yang kabur ditagih uang kontrakan oleh Rafid). Jawab dengan celetukan santai, ramah, hangat, dan mengalir natural sesuai konteks interaksi tersebut. JANGAN kaku, dan DILARANG mengaitkan ke catatan atau tugas lama dari riwayat chat yang tidak relevan!
 - TONE & BAHASA: Kamu saat ini berbicara di obrolan grup keluarga. Gunakan gaya bahasa yang sopan, ramah, hangat, dan santun (pakai kata 'aku/kamu' atau netral santun). DILARANG KERAS menggunakan kata 'gw/gua', 'lu/lo', atau slang kasar di grup ini.
 - TANPA CATCHPHRASE MEME: JANGAN PERNAH menyertakan catchphrase meme koboi ("MY NAME IS JOHN MUSTARDDD...") di grup keluarga.
 - STRAIGHTFORWARD & NO-YAPPING: Jawab langsung pada intinya (1-2 kalimat). Jangan berpanjang lebar atau mendikte di obrolan grup; jika butuh elaborasi, biarkan user reply.
@@ -353,11 +354,16 @@ PERINGATAN: Preferensi kustom ini WAJIB MENG-OVERRIDE aturan panggilan dan tone 
 - Pesan ini merupakan balasan (reply/quote) langsung ke pesan dari: ${qSender}.${snippetContext}
 ${isBotQuoted
   ? "- PENGGUNA ME-REPLY PESAN BOT: Sambungkan jawabanmu langsung dengan apa yang kamu sampaikan sebelumnya (pertanyaan, konfirmasi, atau daftar to-do/acara). Jika user menyebut nomor urut (contoh: 'nomor 2', 'yang ketiga') atau memberi jawaban singkat (contoh: 'jam 8 aja', 'udah beres'), rujuk ke konteks pesan bot tersebut!"
-  : `- Pengguna me-reply pesan dari ${qSender}. Jadikan isi pesan yang di-reply sebagai dasar/rujukan tindakanmu.`}
+  : `- Pengguna me-reply pesan dari ${qSender}. Pahami isi pesan yang di-reply sebagai konteks interaksi saat ini (baik untuk obrolan/candaan santai maupun tindakan tugas).`}
 - DILARANG mengabaikan isi pesan yang di-reply atau menganggapnya topik baru tanpa konteks!${eventQuotedRule}${taskQuotedRule}`;
   }
 
-  const finalSystemPrompt = systemPrompt + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
+  const sessionPriorityDirective = `\n\n[HIERARKI PRIORITAS OBROLAN (SESSION CHAT PRIORITY)]:
+- PRIORITAS UTAMA (PRIMARY FOCUS): Pesan pengguna saat ini (turn terakhir / pesan yang men-tag bot) adalah INSTRUKSI UTAMA yang WAJIB dijawab secara langsung sesuai isi chat atau hal yang di-tag.
+- RIWAYAT CHAT SEBAGAI KONTEKS LATAR (BACKGROUND CONTEXT ONLY): Riwayat percakapan sebelumnya HANYA berfungsi sebagai referensi latar belakang (seperti session chat ChatGPT/Claude). Rujuk riwayat HANYA jika pesan saat ini secara eksplisit meminta kelanjutan/rujukan topik sebelumnya.
+- DILARANG MEMBAJAK TOPIK (NO TOPIC HIJACKING): DILARANG KERAS mengulang konfirmasi lama, membajak topik, atau mengaitkan pesan santai/baru dengan catatan atau tugas lama dari riwayat percakapan!`;
+
+  const finalSystemPrompt = systemPrompt + sessionPriorityDirective + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
 
   const userParts = [];
   if (audio) {
@@ -463,11 +469,13 @@ ${isBotQuoted
     contents.shift();
   }
 
+  // Jika riwayat berakhir di 'user' (belum dijawab model), hapus giliran lama tersebut
+  // agar pesan pengguna saat ini berdiri sendiri sebagai turn terpisah dan tidak tercampur
   if (contents.length > 0 && contents[contents.length - 1].role === "user") {
-    contents[contents.length - 1].parts.push(...userParts);
-  } else {
-    contents.push({ role: "user", parts: userParts });
+    contents.pop();
   }
+
+  contents.push({ role: "user", parts: userParts });
 
   // LLM Autonomy: mode AUTO default, NONE jika ambigu/media santai, ANY jika niat aksi jelas
   const isAmbiguousSchedule = isAmbiguousScheduleStatement(userText);

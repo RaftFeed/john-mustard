@@ -235,14 +235,29 @@ async function handleIncomingMessage(msg) {
 
         let effectiveMediaPrompt = cleanCaption;
         const mime = (msg.mimetype || "").toLowerCase();
+        const isQuotedSticker = Boolean(
+          msg.isQuotedMedia && (
+            mime.includes("webp") ||
+            (msg.filename && msg.filename.endsWith(".webp")) ||
+            msg.quoted?.type === "sticker" ||
+            msg.quoted?._data?.type === "sticker" ||
+            msg.quoted?.media?.mimetype?.includes("webp")
+          )
+        );
 
         if (msg.isQuotedMedia) {
           const quotedSender = msg.quoted?.fromMe
             ? "Bot (kamu sendiri)"
             : msg.quoted?.senderName ? `${msg.quoted.senderName} (+${msg.quoted.senderNumber})` : (msg.quoted?.senderNumber ? `+${msg.quoted.senderNumber}` : "seseorang di grup");
-          effectiveMediaPrompt = cleanCaption
-            ? `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Pesan/pertanyaan pengirim: "${cleanCaption}". Analisa file tersebut dan jawab pertanyaan pengirim secara tepat dan relevan untuk obrolan grup keluarga.`
-            : `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya yang mudah dipahami.`;
+          if (isQuotedSticker) {
+            effectiveMediaPrompt = cleanCaption
+              ? `[Pengguna menanggapi stiker yang dikirim oleh ${quotedSender}]. Pesan pengirim: "${cleanCaption}". Perhatikan situasi stiker dan pesan pengirim. Berikan tanggapan akrab, santai, celetukan lucu, atau ledekan hangat yang nyambung untuk obrolan keluarga (1-2 kalimat). JANGAN mengaitkan ke catatan atau tugas lama dari riwayat chat!`
+              : `[Pengguna menanggapi stiker yang dikirim oleh ${quotedSender}]. Berikan komentar santai, ramah, atau celetukan lucu yang nyambung untuk obrolan grup keluarga (1-2 kalimat).`;
+          } else {
+            effectiveMediaPrompt = cleanCaption
+              ? `[Pengguna menunjuk/membalas media '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Pesan/pertanyaan pengirim: "${cleanCaption}". Tanggapi pesan pengirim secara tepat dan relevan untuk obrolan grup keluarga.`
+              : `[Pengguna menunjuk/membalas file '${msg.filename}' yang sebelumnya dikirim oleh ${quotedSender}]. Analisa file tersebut dan berikan ringkasan singkat serta poin-poin pentingnya yang mudah dipahami.`;
+          }
         } else if (mime.startsWith("video/")) {
           effectiveMediaPrompt = cleanCaption
             ? `[Video WhatsApp diterima]. Instruksi pengirim: "${cleanCaption}". Perhatikan video ini (visual, teks di layar, suara). Berikan tanggapan akrab, santai, atau celetukan lucu yang nyambung untuk obrolan keluarga.`

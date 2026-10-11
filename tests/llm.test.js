@@ -2080,6 +2080,60 @@ Mau convert file yang mana nih ke PDF?`;
   }
 });
 
+test("LLM Engine: prioritizes current user turn and does not merge unreplied user history", async () => {
+  const { processChat } = await import("../src/llm.js");
+  const { Storage } = await import("../src/db.js");
+  const originalFetch = globalThis.fetch;
+  let capturedPayload = null;
+
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.body) capturedPayload = JSON.parse(opts.body);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: "Wkwk kabur beneran papinya!" }] } }]
+      })
+    };
+  };
+
+  try {
+    const store = new Storage(":memory:");
+    // Setup chat history with:
+    // 1. user: "Catatan laporanLELE simpan rapi"
+    // 2. model: "Catatan laporanLELE tersimpan rapi"
+    // 3. user: "halo halo" (an unreplied trailing user message)
+    store.saveChatMessage("120363029582992016@g.us", "user", "Catatan laporanLELE simpan rapi");
+    store.saveChatMessage("120363029582992016@g.us", "model", "Catatan laporanLELE tersimpan rapi");
+    store.saveChatMessage("120363029582992016@g.us", "user", "halo halo");
+
+    const mockRotator = { execute: async (fn) => fn("test-key") };
+    await processChat(mockRotator, "coba iniii...", {
+      store,
+      chatId: "120363029582992016@g.us",
+      senderNumber: "6282297432850",
+      senderName: "Mami"
+    });
+
+    assert.ok(capturedPayload, "Payload should be captured");
+    const sysPrompt = capturedPayload.systemInstruction.parts[0].text;
+    assert.ok(sysPrompt.includes("HIERARKI PRIORITAS OBROLAN"));
+    assert.ok(sysPrompt.includes("DILARANG MEMBAJAK TOPIK"));
+    assert.ok(sysPrompt.includes("TANGGAPAN CANDAN & SENGGOLAN KELUARGA"));
+
+    // Verify contents structure: trailing unreplied user turn was popped,
+    // and current message is strictly its own turn!
+    const contents = capturedPayload.contents;
+    const lastTurn = contents[contents.length - 1];
+    assert.strictEqual(lastTurn.role, "user");
+    const lastTurnText = lastTurn.parts.map((p) => p.text).join(" ");
+    assert.ok(lastTurnText.includes("coba iniii..."));
+    assert.ok(!lastTurnText.includes("halo halo"), "Current turn must NOT be merged with unreplied history");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 
 
