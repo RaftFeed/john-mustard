@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { parseFastCommand, executeFastCommand, buildSelfUpdatePrompt } from "../src/commands.js";
+import { parseFastCommand, executeFastCommand, buildSelfUpdatePrompt, stripReplyContext } from "../src/commands.js";
 import { Storage } from "../src/db.js";
 
 test("Commands: parseFastCommand parses keywords and prefix commands", () => {
@@ -597,5 +597,39 @@ test("Commands: multi-command chaining and fast done + apus", async () => {
   assert.ok(/memulihkan|dipulihkan/i.test(undoRes));
   assert.strictEqual(store.getTodos(chatId, false, null, true).length, 5);
 });
+
+test("Commands: parseFastCommand strips reply context and prevents quote ingestion", () => {
+  const replyTrailer = `\n\n[REPLY KE PESAN DARI +6281223287188]:\n[MEMBALAS PESAN]: "[🤠 MY NAME IS JOHN MUSTARDDD DEW DEW DEW 🔊]... Catatan: Perintah dengan awalan # dieksekusi instan tanpa LLM (cepat, akurat, anti-halu)."`;
+
+  // stripReplyContext helper unit test
+  assert.strictEqual(stripReplyContext(`#note${replyTrailer}`), "#note");
+  assert.strictEqual(stripReplyContext(`#ping${replyTrailer}`), "#ping");
+
+  // #note when replying to help message should be noteList, not noteGet with quoted text
+  const noteCmd = parseFastCommand(`#note${replyTrailer}`);
+  assert.strictEqual(noteCmd.type, "noteList");
+
+  const notesCmd = parseFastCommand(`#notes${replyTrailer}`);
+  assert.strictEqual(notesCmd.type, "noteList");
+
+  const noteGetCmd = parseFastCommand(`#note get wifi${replyTrailer}`);
+  assert.strictEqual(noteGetCmd.type, "noteGet");
+  assert.strictEqual(noteGetCmd.key, "wifi");
+
+  const todoCmd = parseFastCommand(`#todo${replyTrailer}`);
+  assert.strictEqual(todoCmd.type, "listTodos");
+
+  const doneCmd = parseFastCommand(`#done 2${replyTrailer}`);
+  assert.strictEqual(doneCmd.type, "done");
+  assert.strictEqual(doneCmd.id, 2);
+
+  const fotoCmd = parseFastCommand(`#foto ikan fih${replyTrailer}`);
+  assert.strictEqual(fotoCmd.type, "searchImage");
+  assert.strictEqual(fotoCmd.query, "ikan fih");
+
+  // Pure reply with no command returns null
+  assert.strictEqual(parseFastCommand(`[REPLY KE PESAN DARI +6281223287188]:\n[MEMBALAS PESAN]: "Halo"`), null);
+});
+
 
 

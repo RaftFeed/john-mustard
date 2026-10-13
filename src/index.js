@@ -526,13 +526,19 @@ async function handleIncomingMessage(msg) {
         console.log(`>> Sent fast command reply to ${msg.from}: ${cmdReply.slice(0, 60).replace(/\n/g, " ")}`);
         store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
         store.saveChatMessage(msg.from, "model", cmdReply);
-        logInteraction(store.db, {
-          prompt: trimmed,
-          tools: [`fastCommand:${fastCmd.type}`],
-          status: "success"
-        });
-        return;
+      } else {
+        store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
+        const record = fastCmd.type === "searchImage"
+          ? `[Foto: ${fastCmd.query}] 📷 *${fastCmd.query}*`
+          : `[FastCommand: ${fastCmd.type}]`;
+        store.saveChatMessage(msg.from, "model", record);
       }
+      logInteraction(store.db, {
+        prompt: trimmed,
+        tools: [`fastCommand:${fastCmd.type}`],
+        status: "success"
+      });
+      return;
     }
 
     const textTrajectory = [];

@@ -293,6 +293,9 @@ function parseSingleFastCommand(text = "") {
     if (delMatch) {
       return { type: "noteDel", key: delMatch[1] };
     }
+    if (sub.includes("\n") || sub.startsWith("[")) {
+      return null;
+    }
     return { type: "noteGet", key: sub };
   }
   if (/^#delnote\s+(\S+)$/i.test(trimmed)) {
@@ -453,8 +456,15 @@ function parseCompoundFastCommand(text = "") {
   return commands.length >= 2 ? { type: "compound", commands } : null;
 }
 
+export function stripReplyContext(text = "") {
+  return String(text || "")
+    .replace(/(?:\r?\n)*\[REPLY KE (?:PESAN|MEDIA)[\s\S]*$/, "")
+    .trim();
+}
+
 export function parseFastCommand(text = "") {
-  const trimmed = text.trim();
+  const cleaned = stripReplyContext(text);
+  const trimmed = cleaned.trim();
   if (!trimmed) return null;
 
   const single = parseSingleFastCommand(trimmed);
