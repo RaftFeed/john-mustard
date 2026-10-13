@@ -1138,11 +1138,17 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "contacts": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Direktori kontak pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const list = store.listPersons ? store.listPersons() : [];
       return formatPersonList(list);
     }
 
     case "whitelist": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Daftar whitelist hanya dapat diakses di obrolan pribadi (PC).";
+      }
       const phones = getWhitelistPhones();
       if (phones.length === 0) return "*[Whitelist Bot]*\nBelum ada nomor yang didaftarkan.";
       const contacts = store?.listPersons ? store.listPersons() : [];
@@ -1275,18 +1281,27 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "vaultList": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const files = store.listVaultFiles ? store.listVaultFiles(chatId) : [];
       if (store.rememberVaultList) store.rememberVaultList(chatId, files);
       return formatVaultList(files);
     }
 
     case "vaultSearch": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const files = store.searchVaultFiles ? store.searchVaultFiles(cmd.query, null, chatId) : [];
       if (store.rememberVaultList) store.rememberVaultList(chatId, files);
       return formatVaultList(files);
     }
 
     case "vaultGet": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
       const file = store.getVaultFileById ? store.getVaultFileById(realId) : null;
       if (!file) return `[!] File #${cmd.id} tidak ditemukan di Document Vault.`;
@@ -1296,6 +1311,9 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "vaultDel": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
       const file = store.getVaultFileById ? store.getVaultFileById(realId) : null;
       if (!file) return `[!] File #${cmd.id} tidak ditemukan di Document Vault.`;
@@ -1307,6 +1325,9 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "vaultRename": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const realId = store.resolveVaultFileId ? store.resolveVaultFileId(cmd.id, chatId) : cmd.id;
       const changed = store.updateVaultFile ? store.updateVaultFile(realId, chatId, { filename: cmd.name }) : 0;
       if (changed > 0) return `[OK] File #${cmd.id} berhasil diupdate menjadi '${cmd.name}'.`;
@@ -1336,6 +1357,9 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "contactAdd": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Pengelolaan kontak pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const p = store.addPerson ? store.addPerson({
         name: cmd.name,
         phone: cmd.phone,
@@ -1346,6 +1370,9 @@ export async function executeFastCommand(cmd, ctx = {}) {
     }
 
     case "contactDel": {
+      if (String(chatId).endsWith("@g.us")) {
+        return "[!] Pengelolaan kontak pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik.";
+      }
       const changed = store.deletePerson ? store.deletePerson(cmd.name) : 0;
       if (changed > 0) return `[OK] Kontak '${cmd.name}' berhasil dihapus.`;
       return `[!] Kontak '${cmd.name}' tidak ditemukan.`;

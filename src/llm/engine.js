@@ -167,6 +167,7 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
   const timeStr = `${now.toISOString()} (${now.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB)`;
   const systemPrompt = basePrompt.replace("{{CURRENT_TIME}}", timeStr);
 
+  const isGroupChat = String(chatId).endsWith("@g.us");
   const customSkills = store?.getSkills ? store.getSkills() : [];
   const skillsContext = customSkills.length > 0
     ? `\n\nCUSTOM SKILLS TERDAFTAR (Panggil tool loadSkill untuk memuat SOP lengkap jika relevan):\n` +
@@ -174,13 +175,13 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
     : "";
 
   const contactsList = store?.listPersons ? store.listPersons() : [];
-  const coupleContext = contactsList.length > 0
+  const coupleContext = (!isGroupChat && contactsList.length > 0)
     ? `\n\nDIREKTORI KOORDINASI PASANGAN & KONTAK KELUARGA:\n` +
       contactsList.map((p) => `- ${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.role ? ` [${p.role}]` : ""}${p.notes ? `: ${p.notes}` : ""}`).join("\n")
     : "";
 
   const whitelistPhones = getWhitelistPhones();
-  const whitelistContext = whitelistPhones.length > 0
+  const whitelistContext = (!isGroupChat && whitelistPhones.length > 0)
     ? `\n\n[DAFTAR WHITELIST AKSES BOT]:
 Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memiliki izin akses (whitelist):
 ` +
@@ -200,7 +201,6 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
     : "";
 
   // Multi-turn context: muat riwayat pesan terakhir (rolling 1 jam)
-  const isGroupChat = String(chatId).endsWith("@g.us");
   const isGreeting = isGreetingIntent(userText) && !isGroupChat;
   // ponytail: greetings keep history brief (2 turns); normal & action turns carry full 1-hour rolling window
   const historyDepth = isGreeting ? 2 : 25;
@@ -211,6 +211,7 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 
   const groupContext = isGroupChat
     ? `\n\n[OBROLAN GRUP KELUARGA]:
+- ISOLASI DATA & KNOWLEDGE GRUP: To-do list, catatan/notes, dan data knowledge di obrolan ini TERISOLASI KHUSUS untuk grup ini saja. DILARANG KERAS mencari, menyebutkan, atau membocorkan to-do list pribadi, catatan pribadi, nomor rekening pribadi, atau kontak pribadi siapa pun ke obrolan grup. Jika ada anggota grup yang menanyakan catatan/tugas pribadi, arahkan santun untuk bertanya melalui chat pribadi (PC / DM).
 - IDENTIFIKASI PENGIRIM (SANGAT PENTING): Di obrolan grup ini, setiap pesan masuk berasal dari anggota keluarga yang berbeda. Selalu periksa tag [Pengirim: ...] atau informasi ACTIVE SPEAKER di bawah! JANGAN PERNAH menyamakan atau mengira pengirim sekarang adalah orang yang sama dengan pesan sebelumnya. Jika pengirim adalah Mami, respon secara khusus ke Mami dan panggil "Mami". DILARANG KERAS memanggil nama anggota lain (seperti Razita/Rafid) jika pesan dikirim oleh Mami!
 - TANGGAPAN CANDAN & SENGGOLAN KELUARGA: Di grup keluarga, anggota sering me-mention atau men-tag bot untuk menanggapi candaan, senggolan, kelakuan anggota lain, atau stiker lucu (contoh: Mami senggol Papi yang kabur ditagih uang kontrakan oleh Rafid). Jawab dengan celetukan santai, ramah, hangat, dan mengalir natural sesuai konteks interaksi tersebut. JANGAN kaku, dan DILARANG mengaitkan ke catatan atau tugas lama dari riwayat chat yang tidak relevan!
 - TONE & BAHASA: Kamu saat ini berbicara di obrolan grup keluarga. Gunakan gaya bahasa yang sopan, ramah, hangat, dan santun (pakai kata 'aku/kamu' atau netral santun). DILARANG KERAS menggunakan kata 'gw/gua', 'lu/lo', atau slang kasar di grup ini.
@@ -219,7 +220,7 @@ Bot ini dikonfigurasi dengan ${whitelistPhones.length} nomor WhatsApp yang memil
 - TUGAS BERSAMA & PENANGGUNG JAWAB: To-do list di obrolan ini adalah daftar tugas bersama keluarga. Jika ada nama penanggung jawab yang disebut (contoh: "Mas", "Mama", "Kakak", "Ayah"), WAJIB sertakan pada parameter 'assignee' di tool addTodo/updateTodo.
 - PENGINGAT (REMINDER): Setiap pengingat/reminder yang dibuat di grup ini akan dikirimkan langsung ke obrolan grup saat jatuh tempo.
 - DOKUMEN & PDF: Jika menerima dokumen/file, berikan jawaban atau ringkasan 3-5 poin penting yang jelas dan mudah dipahami seluruh keluarga.
-- PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik di obrolan grup.
+- PRIVASI & KEAMANAN: DILARANG membuka, mencari, atau menyebutkan file brankas/vault pribadi pemilik atau direktori kontak pribadi di obrolan grup.
 - DILARANG MENGARANG JAM / TUGAS (ANTI-ASUMSI WAKTU & TUGAS): Jika ada anggota keluarga yang memberi kabar, mengeluh, atau berkomentar waktu (contoh: "Jam 17 blom pulang", "masih di jalan", "belum kelar"), DILARANG KERAS mengarang jam baru (seperti menebak jam 19.00) dan DILARANG langsung memanggil updateTodo/updateReminder! WAJIB tanyakan konfirmasi singkat (1 kalimat): "Mau diundur ke jam berapa jadwalnya?".
 - RELAY PESAN DI GRUP ("BILANGIN X" / "KASIH TAU X" / "TANYAIN X"):
   • TARGET KONTAK WHITELIST: HANYA berlaku untuk kontak yang terdaftar di whitelist keluarga (Rafid, Karimah, Razita, Papi, Mami).

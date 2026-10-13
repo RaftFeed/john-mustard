@@ -765,11 +765,32 @@ export class Storage {
 
     const isExplicitAll = assignee && /^(all|semua|keluarga|household)$/i.test(assignee.trim());
 
-    if (isExplicitAll && isOwner(chatId)) {
+    if (scope.isGroup) {
+      sql += " AND chat_id = ?";
+      params.push(chatId);
+      if (assignee && !isExplicitAll) {
+        const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
+        if (targetPerson && targetPerson.name) {
+          const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
+          if (targetScope.names.length > 0) {
+            const namePlaceholders = targetScope.names.map(() => "?").join(", ");
+            sql += ` AND (LOWER(assignee) = LOWER(?) OR LOWER(assignee) IN (${namePlaceholders}))`;
+            params.push(assignee.trim(), ...targetScope.names);
+          } else {
+            sql += " AND LOWER(assignee) = LOWER(?)";
+            params.push(assignee.trim());
+          }
+        } else {
+          sql += " AND LOWER(assignee) = LOWER(?)";
+          params.push(assignee.trim());
+        }
+      }
+    } else if (isExplicitAll && isOwner(chatId)) {
       // Owner explicitly requested household overview: show all household tasks
     } else if (assignee && !isExplicitAll) {
+      const isOwnerUser = isOwner(chatId);
       const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
-      if (targetPerson) {
+      if (targetPerson && isOwnerUser) {
         const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
         const cidPlaceholders = targetScope.chatIds.map(() => "?").join(", ");
         sql += ` AND (LOWER(assignee) = LOWER(?) OR chat_id IN (${cidPlaceholders}))`;
@@ -778,9 +799,6 @@ export class Storage {
         sql += " AND LOWER(assignee) = LOWER(?)";
         params.push(assignee.trim());
       }
-    } else if (scope.isGroup) {
-      sql += " AND chat_id = ?";
-      params.push(chatId);
     } else {
       const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
       const namePlaceholders = scope.names.map(() => "?").join(", ");
@@ -997,13 +1015,13 @@ export class Storage {
   }
 
   getTodoByRealId(realId, chatId) {
-    if (!realId) return null;
+    if (!realId) return undefined;
+    const scope = chatId ? getUserTodoScope(chatId, this) : null;
+    if (scope && scope.isGroup) {
+      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ? AND deleted_at IS NULL").get(realId, chatId);
+    }
     if (!chatId || isOwner(chatId)) {
       return this.db.prepare("SELECT * FROM todos WHERE id = ? AND deleted_at IS NULL").get(realId);
-    }
-    const scope = getUserTodoScope(chatId, this);
-    if (scope.isGroup) {
-      return this.db.prepare("SELECT * FROM todos WHERE id = ? AND chat_id = ? AND deleted_at IS NULL").get(realId, chatId);
     }
     const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
     const namePlaceholders = scope.names.map(() => "?").join(", ");
@@ -1030,9 +1048,30 @@ export class Storage {
     `;
     const params = [targetEnd];
 
-    if (assignee) {
+    if (scope.isGroup) {
+      sql += " AND chat_id = ?";
+      params.push(chatId);
+      if (assignee) {
+        const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
+        if (targetPerson && targetPerson.name) {
+          const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
+          if (targetScope.names.length > 0) {
+            const namePlaceholders = targetScope.names.map(() => "?").join(", ");
+            sql += ` AND (LOWER(assignee) = LOWER(?) OR LOWER(assignee) IN (${namePlaceholders}))`;
+            params.push(assignee.trim(), ...targetScope.names);
+          } else {
+            sql += " AND LOWER(assignee) = LOWER(?)";
+            params.push(assignee.trim());
+          }
+        } else {
+          sql += " AND LOWER(assignee) = LOWER(?)";
+          params.push(assignee.trim());
+        }
+      }
+    } else if (assignee) {
+      const isOwnerUser = isOwner(chatId);
       const targetPerson = this.getPerson ? this.getPerson(assignee) : null;
-      if (targetPerson) {
+      if (targetPerson && isOwnerUser) {
         const targetScope = getUserTodoScope(targetPerson.phone || targetPerson.name, this);
         const cidPlaceholders = targetScope.chatIds.map(() => "?").join(", ");
         sql += ` AND (LOWER(assignee) = LOWER(?) OR chat_id IN (${cidPlaceholders}))`;
@@ -1041,9 +1080,6 @@ export class Storage {
         sql += " AND LOWER(assignee) = LOWER(?)";
         params.push(assignee.trim());
       }
-    } else if (scope.isGroup) {
-      sql += " AND chat_id = ?";
-      params.push(chatId);
     } else {
       const cidPlaceholders = scope.chatIds.map(() => "?").join(", ");
       const namePlaceholders = scope.names.map(() => "?").join(", ");
@@ -1875,6 +1911,16 @@ export class Storage {
   getNote(chatId, key) {
     const cleanKey = String(key || "").trim().toLowerCase();
     const clean = String(chatId || "").trim();
+    if (!cleanKey || !clean) return null;
+
+    const isGroup = clean.endsWith("@g.us");
+    if (isGroup) {
+      let row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND key = ?").get(clean, cleanKey);
+      if (row) return row;
+      row = this.db.prepare("SELECT * FROM notes WHERE chat_id = ? AND (key LIKE ? OR content LIKE ?) LIMIT 1").get(clean, `%${cleanKey}%`, `%${cleanKey}%`);
+      return row || null;
+    }
+
     const norm = normalizePhone(clean);
     const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
 
@@ -1887,15 +1933,16 @@ export class Storage {
       if (row) return row;
     }
 
-    // Global / shared fallback: periksa catatan keluarga jika tidak ditemukan di DM
-    const globalRow = this.db.prepare("SELECT * FROM notes WHERE key = ? OR key LIKE ? OR content LIKE ? LIMIT 1").get(cleanKey, `%${cleanKey}%`, `%${cleanKey}%`);
-    if (globalRow) return globalRow;
-
     return null;
   }
 
   listNotes(chatId) {
     const clean = String(chatId || "").trim();
+    if (!clean) return [];
+    const isGroup = clean.endsWith("@g.us");
+    if (isGroup) {
+      return this.db.prepare("SELECT key, content, updated_at FROM notes WHERE chat_id = ? ORDER BY key ASC").all(clean);
+    }
     const norm = normalizePhone(clean);
     const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
     const placeholders = candidates.map(() => "?").join(", ");
@@ -1905,6 +1952,11 @@ export class Storage {
   deleteNote(chatId, key) {
     const cleanKey = String(key || "").trim().toLowerCase();
     const clean = String(chatId || "").trim();
+    if (!clean || !cleanKey) return 0;
+    const isGroup = clean.endsWith("@g.us");
+    if (isGroup) {
+      return this.db.prepare("DELETE FROM notes WHERE chat_id = ? AND (key = ? OR key LIKE ?)").run(clean, cleanKey, `%${cleanKey}%`).changes;
+    }
     const norm = normalizePhone(clean);
     const candidates = Array.from(new Set([clean, norm].filter(Boolean)));
     const placeholders = candidates.map(() => "?").join(", ");

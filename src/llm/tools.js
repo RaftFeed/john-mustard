@@ -846,11 +846,17 @@ export async function executeTool(name, args, { store, chatId, senderNumber = ""
   let formattedList = null;
   let stagedMedia = null;
   const callerId = senderNumber || chatId;
-
   const isGroup = String(chatId).endsWith("@g.us");
   if (isGroup && (name === "searchVault" || name === "sendVaultFile" || name === "requestFileAccess" || name === "grantFileAccess" || name === "listVaultFiles" || name === "deleteVaultFile" || name === "updateVaultFile" || name === "createVaultFile")) {
     return {
       toolResult: { error: "Fitur vault dokumen pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik." },
+      formattedList: null
+    };
+  }
+
+  if (isGroup && (name === "listPersons" || name === "getPerson" || name === "addPerson" || name === "deletePerson" || name === "updatePerson")) {
+    return {
+      toolResult: { error: "Direktori kontak pribadi dinonaktifkan di obrolan grup demi menjaga privasi data pemilik." },
       formattedList: null
     };
   }
