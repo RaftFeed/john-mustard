@@ -1,3 +1,4 @@
+import { MUTATION_TOOLS } from "./guards.js";
 const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down|so\s+\w+\s+has run)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Looking at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b|User (?:wants|asked|is asking)\b|The user\b|Checking (?:the|vault|database|notes)\b|Here'?s (?:the|a) summary\b|Assuming I'm\b|As an? (?:expert|developer)\b|Expert developer\b)/i;
 
 // Hard reasoning fingerprints: leaked tool-result dumps / raw tool-call notation.
@@ -632,6 +633,7 @@ ${isBotQuoted
       toolsCalled.push(name);
       if (onToolCall) onToolCall(name);
 
+      const toolStartedAt = Date.now();
       let resultObj = {};
       const isQuotedEvent = isQuotedEventReminder(quoted);
       const isReschedulingWithoutExplicitIntent = isQuotedEvent &&
@@ -665,13 +667,15 @@ ${isBotQuoted
         }
       }
 
+      console.log(`[Tool] ${name} durationMs=${Date.now() - toolStartedAt} outcome=${resultObj.toolResult?.error || resultObj.toolResult?.success === false ? "error" : "ok"}${Array.isArray(resultObj.toolResult?.results) ? ` results=${resultObj.toolResult.results.length}` : ""}`);
+
       executedTrajectory.push({
         name,
         args,
         result: resultObj.toolResult
       });
 
-      if (resultObj.toolResult && !resultObj.toolResult.error) {
+      if (MUTATION_TOOLS.has(name) && resultObj.toolResult && !resultObj.toolResult.error && resultObj.toolResult.success !== false) {
         successfulMutations.push(name);
       }
 
@@ -701,7 +705,7 @@ ${isBotQuoted
       "addBacklog", "completeBacklog"
     ]);
     const isPureMutation = fnCallParts.every((p) => SHORT_CIRCUIT_TOOLS.has(p.functionCall.name));
-    const allSucceeded = successfulMutations.length >= fnCallParts.length;
+    const allSucceeded = executedTrajectory.slice(-fnCallParts.length).every(({ result }) => result && !result.error && result.success !== false);
     const isPureAction = isActionIntent(userText) && !userText.includes("?") && !/\b(kenapa|gimana|bagaimana|apakah|menurut|saran|rekomendasi)\b/i.test(userText);
 
     if (turns === 1 && isPureMutation && allSucceeded && isPureAction && lastFormattedList) {
@@ -802,8 +806,17 @@ ${isBotQuoted
       finalReply = text;
     }
   } else {
+    console.warn(`[LLM] Empty usable answer; fallback tools=${toolsCalled.join(",") || "none"} steps=${turns}`);
     if (userWantsList && effectiveList) {
       finalReply = effectiveList;
+    } else if (executedTrajectory.some((entry) => entry.name === "searchWeb")) {
+      const searches = executedTrajectory.filter((entry) => entry.name === "searchWeb");
+      const results = searches.flatMap((entry) => entry.result?.results || []).slice(0, 5);
+      finalReply = results.length
+        ? "Hasil pencarian (belum dirangkum):\n\n" + results.map((r) => `${r.title}\n${r.url}\n${r.content || ""}`).join("\n\n")
+        : searches.some((entry) => entry.result?.error)
+          ? "Pencarian web gagal. Belum ada hasil yang bisa disampaikan."
+          : "Pencarian selesai, tetapi belum menemukan hasil yang relevan.";
     } else if (successfulMutations.length > 0) {
       const cards = [];
       const actionLines = [];
@@ -837,6 +850,8 @@ ${isBotQuoted
       if (cards.length > 0) parts.push(cards.join("\n\n"));
       if (actionLines.length > 0) parts.push(actionLines.join("\n"));
       finalReply = parts.join("\n\n");
+    } else if (effectiveList) {
+      finalReply = effectiveList;
     } else {
       finalReply = isGroupChat
         ? "Waduh, belum bisa diproses nih. Coba sebutkan lagi perintahnya."

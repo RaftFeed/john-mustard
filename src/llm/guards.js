@@ -299,7 +299,7 @@ export async function fetchUrlContent(rawUrl) {
   return clean.slice(0, 8000);
 }
 
-const MUTATION_TOOLS = new Set([
+export const MUTATION_TOOLS = new Set([
   "addTodo", "completeTodo", "uncompleteTodo", "updateTodo", "deleteTodo", "clearCompletedTodos", "undoLastTodo",
   "addReminder", "deleteReminder", "updateReminder", "setDailyDigest", "grantFileAccess", "addBacklog", "completeBacklog",
   "submitFeatureRequest",

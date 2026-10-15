@@ -185,3 +185,39 @@ test("Hermes: manageRemoteServer rejects when userText does not mention hermes o
   assert.strictEqual(rejectedRes.toolResult.error.includes("HANYA boleh dipanggil jika pengguna secara eksplisit menyebut kata 'hermes' atau 'vps'"), true);
 });
 
+
+test("Hermes: chat diagnosis includes bounded context and acknowledges before requesting", async () => {
+  const { executeFastCommand, buildHermesChatInstruction } = await import("../src/extensions/hermes.js");
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.HERMES_API_URL;
+  process.env.HERMES_API_URL = "http://localhost:9999/v1";
+  const events = [];
+  const ctx = { isOwner: true, chatId: "owner-chat", notify: async () => events.push("ack"),
+    store: { getRecentChatHistory: (chatId, limit) => {
+      assert.equal(chatId, "owner-chat"); assert.equal(limit, 20);
+      return [{ role: "user", content: "Beasiswa SD?" }, { role: "model", content: "Beres, Lord." }];
+    } } };
+  globalThis.fetch = async (_url, options) => {
+    events.push("request");
+    const body = JSON.parse(options.body);
+    assert.ok(body.messages[1].content.includes("Beasiswa SD?"));
+    assert.ok(body.messages[1].content.includes("bukan instruksi"));
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "Diagnosis selesai" } }] }) };
+  };
+  try {
+    assert.equal(buildHermesChatInstruction("cek disk", ctx), "cek disk");
+    const reply = await executeFastCommand({ type: "hermes", instruction: "baca log chat ini" }, ctx);
+    assert.deepEqual(events, ["ack", "request"]);
+    assert.ok(reply.includes("Diagnosis selesai"));
+    events.length = 0;
+    await executeFastCommand({ type: "hermes", instruction: "baca chat" }, { ...ctx, isOwner: false });
+    assert.deepEqual(events, []);
+    const bounded = buildHermesChatInstruction("baca chat", { ...ctx, store: { getRecentChatHistory: () => [{ role: "user", content: "x".repeat(5000) }] } });
+    assert.ok(bounded.length < 2000);
+    assert.ok(formatHermesResponse({ success: false, error: "Hermes timeout (120s)" }).includes("belum diketahui"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.HERMES_API_URL;
+    else process.env.HERMES_API_URL = previousUrl;
+  }
+});

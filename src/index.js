@@ -519,6 +519,7 @@ async function handleIncomingMessage(msg) {
         isOwner: isOwnerUser,
         senderNumber: msg.senderNumber,
         senderName: person?.name || "",
+        notify: (text) => sendText(msg.from, text),
         quoted: msg.quoted
       });
       if (cmdReply) {

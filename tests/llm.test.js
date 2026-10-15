@@ -2241,3 +2241,34 @@ Okay, so addTodo has run, but I'm getting an empty string or some kind of succes
 
 
 
+
+for (const outcome of ["results", "empty", "error"]) {
+  test(`LLM Engine: search fallback preserves outcome ${outcome} without claiming completion`, async () => {
+    const originalFetch = globalThis.fetch;
+    const previousKey = process.env.TAVILY_API_KEY;
+    process.env.TAVILY_API_KEY = "test-only";
+    let modelCalls = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("tavily.com")) {
+        return { ok: outcome !== "error", status: 503, text: async () => "unavailable",
+          json: async () => ({ results: outcome === "results" ? [{ title: "Beasiswa Primajasa", url: "https://example.org/beasiswa", content: "Informasi pendaftaran SD" }] : [] }) };
+      }
+      modelCalls++;
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: modelCalls === 1
+        ? [{ functionCall: { name: "searchWeb", args: { query: "beasiswa primajasa SD" } } }]
+        : [{ text: "" }] } }] }) };
+    };
+    try {
+      const reply = await processChat({ execute: async (fn) => fn("test-key") }, "Cari tau soal beasiswa primajasa untuk anak sd", { chatId: "search-test" });
+      assert.ok(!reply.includes("Beres"), reply);
+      if (outcome === "results") {
+        assert.ok(reply.includes("https://example.org/beasiswa"), reply);
+        assert.ok(reply.includes("Informasi pendaftaran SD"), reply);
+      } else assert.ok(reply.includes(outcome === "error" ? "gagal" : "belum menemukan"), reply);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.TAVILY_API_KEY;
+      else process.env.TAVILY_API_KEY = previousKey;
+    }
+  });
+}
