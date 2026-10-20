@@ -17,7 +17,7 @@ export function startProgress(emit, getContext) {
   if (typeof emit !== "function") return async () => {};
   let stopped = false;
   let pending = Promise.resolve();
-  const timers = [8000, 30000].map((delay, index) => setTimeout(() => {
+  const timers = [45000, 90000].map((delay, index) => setTimeout(() => {
     pending = pending.then(async () => {
       if (stopped) return;
       try {

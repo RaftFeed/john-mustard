@@ -3,19 +3,22 @@ import assert from "node:assert/strict";
 import { startProgress, formatProgress } from "../src/llm/progress.js";
 import { processChat } from "../src/llm/engine.js";
 
-test("Progress: waits eight seconds, reports current work and caps at two messages", async (t) => {
+test("Progress: waits 45 seconds, reports current work and caps at two messages", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const sent = [];
   const context = { speakerName: "Rafid" };
   const stop = startProgress(async (text) => sent.push(text), () => context);
-  t.mock.timers.tick(7999);
+  t.mock.timers.tick(44999);
   await Promise.resolve();
   assert.deepEqual(sent, []);
   t.mock.timers.tick(1);
   await Promise.resolve();
   assert.deepEqual(sent, ["Bentar, Lord, lagi diproses."]);
   context.tool = "listTodos";
-  t.mock.timers.tick(22000);
+  t.mock.timers.tick(44999);
+  await new Promise(setImmediate);
+  assert.equal(sent.length, 1);
+  t.mock.timers.tick(1);
   await new Promise(setImmediate);
   assert.equal(sent[1], "Lagi cek tugasnya, Lord.");
   t.mock.timers.tick(120000);
@@ -27,8 +30,9 @@ test("Progress: finishing early cancels pending notifications", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const sent = [];
   const stop = startProgress(async (text) => sent.push(text), () => ({}));
+  t.mock.timers.tick(44999);
   await stop();
-  t.mock.timers.tick(60000);
+  t.mock.timers.tick(120000);
   await Promise.resolve();
   assert.deepEqual(sent, []);
 });
@@ -42,7 +46,7 @@ test("Progress: failed sends are isolated and cleanup drains in-flight delivery"
     await new Promise((resolve) => { release = resolve; });
     throw new Error("WhatsApp unavailable");
   }, () => ({}));
-  t.mock.timers.tick(8000);
+  t.mock.timers.tick(45000);
   await Promise.resolve();
   let finished = false;
   const stopping = stop().then(() => { finished = true; });
@@ -79,7 +83,7 @@ for (const fails of [false, true]) {
     });
     // Attach rejection handling before unblocking the provider.
     const checked = fails ? assert.rejects(result, /provider failed/) : result;
-    t.mock.timers.tick(8000);
+    t.mock.timers.tick(45000);
     await new Promise(setImmediate);
     assert.equal(sent.length, 1);
     release();
