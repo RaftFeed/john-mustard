@@ -1,3 +1,4 @@
+import { startProgress } from "./progress.js";
 import { MUTATION_TOOLS } from "./guards.js";
 const THOUGHT_OPENER_REGEX = /^(?:Analyzing\b|Thinking Process|Chain of Thought|My Initial Approach|Understanding the User|Okay,\s*(?:here'?s|let'?s|let\s*me|i(?:'ll|\s+need|\s+should|\s+will|\s+can|\s+think|\s+see|\s+have|'m)|break\s*down|so\s+\w+\s+has run)|Interpretation|Breakdown|Examining|Investigating|Process(?:ing)?:|Wait\b|Hmm+\b|Let\s*me\b|Let'?s\b|Aha!?\b|Look at\b|Looking at\b|Now I\b|I (?:need|should|will|can|think|see|have)\b|The tool\b|The response\b|So the\b|Alright\b|First,\s|Debugging\b|Troubleshooting\b|Diagnostic\b|User (?:wants|asked|is asking)\b|The user\b|Checking (?:the|vault|database|notes)\b|Here'?s (?:the|a) summary\b|Assuming I'm\b|As an? (?:expert|developer)\b|Expert developer\b)/i;
 
@@ -152,7 +153,7 @@ export function injectMailboxSteering(mailbox, contents) {
   return true;
 }
 
-export async function processChat(rotator, userText, { store, chatId, senderNumber = "", senderName = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
+export async function processChat(rotator, userText, { store, chatId, senderNumber = "", senderName = "", onProgress = null, onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
   const isGroupChat = String(chatId).endsWith("@g.us");
 
   if (userText && typeof userText === "string") {
@@ -392,6 +393,12 @@ ${isBotQuoted
 
   const finalSystemPrompt = systemPrompt + sessionPriorityDirective + activeSpeakerContext + groupContext + coupleContext + skillsContext + whitelistContext + greetingInstruction + quotedContext;
 
+  let progressTool = "";
+  const stopProgress = startProgress(onProgress, () => ({
+    speakerName: speaker?.name || "", customTone: customTone || "",
+    isGroup: isGroupChat, tool: progressTool
+  }));
+  try {
   const userParts = [];
   if (audio) {
     const base64Data = Buffer.isBuffer(audio.buffer)
@@ -551,6 +558,7 @@ ${isBotQuoted
       ...(toolConfig ? { toolConfig } : {})
     };
 
+    progressTool = "";
     const responseData = await generateContent(rotator, payload, activeCascade);
     currentCandidate = responseData.candidates?.[0];
     if (!currentCandidate?.content) break;
@@ -677,6 +685,7 @@ ${isBotQuoted
       } else {
         try {
           if (isMutation) totalMutations++;
+          progressTool = name;
           resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText, preResolvedIndexes });
           if (resultObj.stagedMedia) {
             if (stagedMedia?.tempPath && stagedMedia.tempPath !== resultObj.stagedMedia.tempPath) {
@@ -686,6 +695,8 @@ ${isBotQuoted
           }
         } catch (toolErr) {
           resultObj = { toolResult: { error: toolErr.message } };
+        } finally {
+          progressTool = "";
         }
       }
 
@@ -914,6 +925,7 @@ ${isBotQuoted
   }
 
   if (stagedMedia) {
+    await stopProgress();
     try {
       let mediaCaption = finalReply;
       if (!mediaCaption || mediaCaption === "[NO_REPLY]") {
@@ -937,4 +949,7 @@ ${isBotQuoted
   }
 
   return finalReply;
+  } finally {
+    await stopProgress();
+  }
 }
