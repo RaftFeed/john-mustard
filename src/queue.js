@@ -112,6 +112,34 @@ export function createDebounceQueue(handler, delayMs = 1000) {
   return enqueueFn;
 }
 
+// ponytail: sliding window in-memory rate limiter, stdlib Map + Date.now
+export class RateLimiter {
+  constructor(limit = 15, windowMs = 60_000) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.senders = new Map();
+  }
+
+  isRateLimited(senderId) {
+    if (!senderId) return false;
+    const now = Date.now();
+    const timestamps = (this.senders.get(senderId) || []).filter((t) => now - t < this.windowMs);
+    if (timestamps.length >= this.limit) {
+      this.senders.set(senderId, timestamps);
+      return true;
+    }
+    timestamps.push(now);
+    this.senders.set(senderId, timestamps);
+    return false;
+  }
+
+  reset(senderId) {
+    if (senderId) this.senders.delete(senderId);
+    else this.senders.clear();
+  }
+}
+
+
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/queue.js")) {
   const processed = [];
   const midTurnReceived = [];

@@ -4,7 +4,8 @@ import { createServer } from "./server.js";
 import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
-import { processChat } from "./llm.js";
+import { processChat, redactSecrets } from "./llm.js";
+import { RateLimiter } from "./queue.js";
 import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid, registerLidMapping, resolveWhitelistRecipient, setWahaStore } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
 import { parseFastCommand, executeFastCommand } from "./commands.js";
@@ -32,6 +33,7 @@ try {
 } catch {}
 
 const rotator = new KeyRotator(keys.length > 0 ? keys : ["dummy_key"], { store });
+const rateLimiter = new RateLimiter(Number(process.env.RATE_LIMIT_MAX || 15), 60_000);
 
 // Jalankan runner pengingat (cek tiap 15 detik)
 startScheduler(store, { rotator });
@@ -130,6 +132,15 @@ async function handleIncomingMessage(msg) {
     if (msg.hasMedia && msg.mediaUrl) {
       // Voice note / Audio -> Proses langsung dengan LLM
       if (msg.mimetype && msg.mimetype.startsWith("audio/")) {
+        const senderKey = msg.senderNumber || msg.from;
+        if (rateLimiter.isRateLimited(senderKey)) {
+          const waitMsg = isGroup
+            ? "Waduh, santai dulu ya! Chat kamu terlalu ngebut (dibatasi 15 pesan/menit). Tunggu sebentar ya!"
+            : "Woles Lord, santai dulu ya! Chat lu terlalu ngebut (dibatasi 15 pesan/menit). Tunggu sebentar ya!";
+          await sendText(msg.from, waitMsg);
+          return;
+        }
+
         console.log(`>> Memproses audio: ${msg.filename} (${msg.mimetype})`);
         const buffer = await downloadMedia(msg.mediaUrl);
         const audioTrajectory = [];
@@ -542,6 +553,15 @@ async function handleIncomingMessage(msg) {
       return;
     }
 
+    const senderKey = msg.senderNumber || msg.from;
+    if (rateLimiter.isRateLimited(senderKey)) {
+      const waitMsg = isGroup
+        ? "Waduh, santai dulu ya! Chat kamu terlalu ngebut (dibatasi 15 pesan/menit). Tunggu sebentar ya!"
+        : "Woles Lord, santai dulu ya! Chat lu terlalu ngebut (dibatasi 15 pesan/menit). Tunggu sebentar ya!";
+      await sendText(msg.from, waitMsg);
+      return;
+    }
+
     const textTrajectory = [];
     const reply = await processChat(rotator, msg.body, {
       store,
@@ -557,8 +577,8 @@ async function handleIncomingMessage(msg) {
     if (reply && reply.trim() !== "[NO_REPLY]" && !reply.trim().startsWith("[NO_REPLY]")) {
       await sendText(msg.from, reply);
       console.log(`>> Sent reply to ${msg.from}: ${reply.slice(0, 80).replace(/\n/g, " ")}...`);
-      store.saveChatMessage(msg.from, "user", `${senderLabel}${msg.body}`);
-      store.saveChatMessage(msg.from, "model", reply);
+      store.saveChatMessage(msg.from, "user", redactSecrets(`${senderLabel}${msg.body}`));
+      store.saveChatMessage(msg.from, "model", redactSecrets(reply));
 
       // Voyager pattern: autonomous background crystallization (zero added latency)
       queueMicrotask(() => {

@@ -120,7 +120,9 @@ import {
   isFollowUpReminderIntent,
   isQuotedEventReminder,
   isAmbiguousEventReply,
-  isVagueCommandWithoutTarget
+  isVagueCommandWithoutTarget,
+  isPromptInjection,
+  redactSecrets
 } from "./guards.js";
 import {
   stripHallucinatedToolChips,
@@ -151,6 +153,17 @@ export function injectMailboxSteering(mailbox, contents) {
 }
 
 export async function processChat(rotator, userText, { store, chatId, senderNumber = "", senderName = "", onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
+  const isGroupChat = String(chatId).endsWith("@g.us");
+
+  if (userText && typeof userText === "string") {
+    userText = redactSecrets(userText);
+    if (isPromptInjection(userText)) {
+      return isGroupChat
+        ? "Waduh, perintah itu melanggar guardrail keamanan sistem (prompt injection terdeteksi). Aku gak bisa proses perintah ini ya!"
+        : "Woles Lord, perintah itu melanggar guardrail keamanan sistem (prompt injection terdeteksi). Aku gak bisa proses perintah ini ya!";
+    }
+  }
+
   const now = new Date();
   let basePrompt = "";
   const promptPaths = [path.resolve("config/system-prompt.md"), path.resolve("system-prompt.md")];
@@ -168,7 +181,6 @@ export async function processChat(rotator, userText, { store, chatId, senderNumb
   const timeStr = `${now.toISOString()} (${now.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB)`;
   const systemPrompt = basePrompt.replace("{{CURRENT_TIME}}", timeStr);
 
-  const isGroupChat = String(chatId).endsWith("@g.us");
   const customSkills = store?.getSkills ? store.getSkills() : [];
   const skillsContext = customSkills.length > 0
     ? `\n\nCUSTOM SKILLS TERDAFTAR (Panggil tool loadSkill untuk memuat SOP lengkap jika relevan):\n` +
@@ -525,6 +537,8 @@ ${isBotQuoted
       : null;
   };
   const MAX_STEPS = isActionIntent(userText) && !userText.includes("?") ? 3 : 5;
+  const MAX_MUTATIONS_PER_TURN = 5;
+  let totalMutations = 0;
   let turns = 0;
 
   const activeCascade = cascade || selectModelCascade(userText, { media, audio });
@@ -641,7 +655,14 @@ ${isBotQuoted
         (args.newEventAtIso || args.newRemindAtIso) &&
         !hasExplicitRescheduleIntent(userText);
 
-      if (isAmbiguousScheduleStatement(userText) && ((name === "updateTodo" && args.deadlineIso) || (name === "updateReminder" && args.remindAtIso))) {
+      const isMutation = MUTATION_TOOLS.has(name);
+      if (isMutation && totalMutations >= MAX_MUTATIONS_PER_TURN) {
+        resultObj = {
+          toolResult: {
+            error: `SYSTEM GUARDRAIL: Batas mutasi per turn tercapai (maksimal ${MAX_MUTATIONS_PER_TURN} mutasi per pesan). Eksekusi tool ${name} dibatalkan demi keamanan sistem. Rangkum tindakan yang sudah berhasil dan laporkan ke pengguna.`
+          }
+        };
+      } else if (isAmbiguousScheduleStatement(userText) && ((name === "updateTodo" && args.deadlineIso) || (name === "updateReminder" && args.remindAtIso))) {
         resultObj = {
           toolResult: {
             error: "DILARANG mengarang jam baru saat pengguna hanya memberi kabar waktu tanpa menyebutkan jam pengganti. Tanyakan konfirmasi terlebih dahulu: Mau diundur ke jam berapa jadwalnya?"
@@ -655,6 +676,7 @@ ${isBotQuoted
         };
       } else {
         try {
+          if (isMutation) totalMutations++;
           resultObj = await executeTool(name, args, { store, chatId, senderNumber, rotator, userText, preResolvedIndexes });
           if (resultObj.stagedMedia) {
             if (stagedMedia?.tempPath && stagedMedia.tempPath !== resultObj.stagedMedia.tempPath) {

@@ -33,7 +33,9 @@ export {
   isFollowUpReminderIntent,
   isQuotedEventReminder,
   isAmbiguousEventReply,
-  isVagueCommandWithoutTarget
+  isVagueCommandWithoutTarget,
+  isPromptInjection,
+  redactSecrets
 } from "./llm/guards.js";
 
 export {

@@ -430,3 +430,30 @@ export function isAmbiguousEventReply(text = "", quoted = null) {
   return /(?:jam|pukul|\b\d{1,2}[.:]\d{2}\b|nanti\s+malem|nanti\s+sore|besok|nanti\s+aja|entar\s+aja)/i.test(text || "");
 }
 
+// Prompt injection & system prompt exfiltration guardrail patterns
+const INJECTION_PATTERNS = [
+  /(?:ignore|disregard|forget|override)\s+(?:all\s+)?(?:previous|prior|above|system)\s+(?:instructions|prompts?|rules?|commands?)/i,
+  /(?:abaikan|lupakan|batalkan)\s+(?:semua\s+)?(?:instruksi|perintah|aturan|prompt)\s+(?:sebelumnya|awal|terdahulu|sistem)/i,
+  /(?:you\s+are\s+now|kamu\s+sekarang|mulai\s+sekarang\s+kamu)\s+(?:in\s+developer\s+mode|unrestricted|tanpa\s+aturan|tanpa\s+batasan|jailbreak|dan\s+mode)/i,
+  /(?:tampilkan|bocorkan|print|output|tuliskan|spill)\s+(?:seluruh\s+|the\s+|all\s+|entire\s+)*(?:system\s*prompt|instruksi\s*(?:rahasia|internal|sistem)|prompt\s*awal)/i,
+  /\b(?:dan\s+jailbreak|dan\s+mode|jailbreak\s+mode)\b/i,
+  /(?:system\s*integrity\s*fault|system\s*override)/i
+];
+
+export function isPromptInjection(text = "") {
+  if (!text || typeof text !== "string") return false;
+  return INJECTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+// ponytail: native regex secret scrubber, stdlib only
+export function redactSecrets(text = "") {
+  if (!text || typeof text !== "string") return text;
+  return text
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]")
+    .replace(/\bAIza[0-9A-Za-z\-_]{30,45}\b/g, "[REDACTED_API_KEY]")
+    .replace(/\bsk-(?:proj-)?[a-zA-Z0-9_\-]{20,}\b/g, "[REDACTED_API_KEY]")
+    .replace(/\bBearer\s+[a-zA-Z0-9_\-\.]{25,}\b/g, "Bearer [REDACTED_TOKEN]")
+    .replace(/\b(?:\d{4}[ -]?){3}\d{4}\b/g, "[REDACTED_CARD_NUMBER]");
+}
+
+
