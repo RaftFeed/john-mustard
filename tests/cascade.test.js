@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateContent, clearModelCooldowns, FAST_CASCADE, OPENCODE_POOL } from "../src/llm/cascade.js";
+import { generateContent, clearModelCooldowns, FAST_CASCADE, OPENCODE_POOL, chatFailureMessage } from "../src/llm/cascade.js";
 import { KeyRotator } from "../src/rotator.js";
 
 const rotator = { execute: (fn) => fn("test-key") };
@@ -8,6 +8,104 @@ const payload = { contents: [{ role: "user", parts: [{ text: "Tes" }] }] };
 const nativeReply = { candidates: [{ content: { parts: [{ text: "OK" }] } }] };
 const openAIReply = { choices: [{ message: { content: "OK" }, finish_reason: "stop" }] };
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
+
+test("Cascade: upstream IP block skips the provider pool without killing gateway keys", async (t) => {
+  setup(t);
+  const keys = new KeyRotator(["gateway-key"]);
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    calls.push(url);
+    return url.includes("generateContent") ? response(nativeReply) : response({ error: { type: "FreeTierError", message: "abusive traffic from current network" } }, 403);
+  });
+  await generateContent(keys, payload, [...OPENCODE_POOL, "ag/healthy"]);
+  await generateContent(keys, payload, [...OPENCODE_POOL, "ag/healthy"]);
+  assert.equal(calls.length, 3);
+  assert.equal(keys.deadKeys.size, 0);
+});
+
+test("Cascade: forwarded Antigravity rejection preserves gateway key and next model", async (t) => {
+  setup(t);
+  const keys = new KeyRotator(["gateway-key"]);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => ++calls === 1
+    ? response({ error: { message: "[antigravity/test] [403]: HTTP 403" } }, 403)
+    : response(nativeReply));
+  await generateContent(keys, payload, ["ag/blocked", "ag/healthy"]);
+  assert.equal(calls, 2);
+  assert.equal(keys.deadKeys.size, 0);
+});
+
+test("Cascade: genuine gateway authentication failure still blacklists its key", async (t) => {
+  setup(t);
+  const keys = new KeyRotator(["invalid-key"]);
+  t.mock.method(globalThis, "fetch", async () => response({ error: "Invalid API key" }, 401));
+  await assert.rejects(generateContent(keys, payload, ["ag/test"]));
+  assert.equal(keys.deadKeys.size, 1);
+});
+
+test("Engine: successive model calls share the original turn deadline", async (t) => {
+  setup(t);
+  const { processChat } = await import("../src/llm/engine.js");
+  const { Storage } = await import("../src/db.js");
+  const store = new Storage(":memory:");
+  let now = Date.now();
+  let calls = 0;
+  const timeouts = [];
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(AbortSignal, "timeout", (ms) => { timeouts.push(ms); return new AbortController().signal; });
+  t.mock.method(globalThis, "fetch", async () => {
+    if (++calls === 1) {
+      now += 70000;
+      return response({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "listTodos", args: {} } }] } }] });
+    }
+    return response(nativeReply);
+  });
+  await processChat(rotator, "lihat daftar tugas", { store, chatId: "test", cascade: ["ag/test"] });
+  assert.equal(calls, 2);
+  assert.deepEqual(timeouts, [25000, 20000]);
+  store.db.close();
+});
+
+test("Cascade: shared turn deadline limits later cascades", async (t) => {
+  setup(t);
+  let now = 1000;
+  const timeouts = [];
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(AbortSignal, "timeout", (ms) => { timeouts.push(ms); return new AbortController().signal; });
+  t.mock.method(globalThis, "fetch", async () => { now += 20000; return response(nativeReply); });
+  const deadline = 31000;
+  await generateContent(rotator, payload, ["a"], { deadline });
+  await generateContent(rotator, payload, ["a"], { deadline });
+  await assert.rejects(generateContent(rotator, payload, ["a"], { deadline }));
+  assert.deepEqual(timeouts, [25000, 10000]);
+});
+
+test("Cascade: respects Retry-After before trying a rate-limited model again", async (t) => {
+  setup(t);
+  let now = Date.now();
+  let limitedCalls = 0;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("limited") && ++limitedCalls === 1) {
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "120" } });
+    }
+    return response(nativeReply);
+  });
+  await generateContent(rotator, payload, ["limited", "healthy"]);
+  now += 61000;
+  await generateContent(rotator, payload, ["limited", "healthy"]);
+  assert.equal(limitedCalls, 1);
+  now += 61000;
+  await generateContent(rotator, payload, ["limited", "healthy"]);
+  assert.equal(limitedCalls, 2);
+});
+
+test("Cascade: user failure messages distinguish quota, timeout, unavailable and unknown errors", () => {
+  assert.match(chatFailureMessage({ status: 429 }), /Kuota/);
+  assert.match(chatFailureMessage({ name: "TimeoutError" }), /terlalu lama/);
+  assert.match(chatFailureMessage({ status: 403 }), /tidak tersedia/);
+  assert.match(chatFailureMessage(new Error("unexpected")), /gagal proses/);
+});
 
 function setup(t) {
   clearModelCooldowns();

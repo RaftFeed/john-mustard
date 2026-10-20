@@ -5,6 +5,7 @@ import { KeyRotator } from "./rotator.js";
 import { Storage, logInteraction, normalizePhone, formatBacklogList, OWNER_PHONE, isOwner } from "./db.js";
 import { startScheduler } from "./scheduler.js";
 import { processChat, redactSecrets } from "./llm.js";
+import { chatFailureMessage } from "./llm/cascade.js";
 import { RateLimiter } from "./queue.js";
 import { sendText, sendFile, downloadMedia, fetchQuotedMediaUrl, startTyping, stopTyping, fetchBotNumber, getBotLid, registerLidMapping, resolveWhitelistRecipient, setWahaStore } from "./waha.js";
 import { ingestVaultFile } from "./vault.js";
@@ -611,14 +612,13 @@ async function handleIncomingMessage(msg) {
     });
   } catch (err) {
     console.error("Gagal proses chat:", err.message);
-    await sendText(msg.from, "[!] Waduh, gagal proses nih. Coba lagi bentar ya.");
-
     logInteraction(store.db, {
       prompt: msg.body || "[No Body]",
       tools: toolsCalled,
       status: "error",
       error: err.message
     });
+    await sendText(msg.from, chatFailureMessage(err));
   } finally {
     clearInterval(typingTimer);
     stopTyping(msg.from);

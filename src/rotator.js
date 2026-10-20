@@ -149,6 +149,10 @@ export class KeyRotator {
         const msg = err.message || "";
         const status = err.status || 0;
 
+        // A gateway can forward an upstream account/IP rejection. Its client key
+        // remains valid; rotating or blacklisting it cannot repair that provider.
+        if (err.upstream && (status === 401 || status === 403)) throw err;
+
         // Error fatal payload / model tidak ada - jangan rotasi key agar tidak memicu deteksi spam di key lain
         const isFatalPayload =
           status === 400 ||
@@ -206,7 +210,7 @@ export class KeyRotator {
         }
 
         if (isAuthError) {
-          console.warn(`[KeyRotator] Key ${key.slice(0, 15)}... mati/ditolak (${status || "auth error"}). Blacklist permanen.`);
+          console.warn(`[KeyRotator] Gateway key ditolak (${status || "auth error"}); dinonaktifkan selama 7 hari.`);
           this.markDead(key);
           continue;
         }

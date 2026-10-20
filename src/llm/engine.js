@@ -154,6 +154,7 @@ export function injectMailboxSteering(mailbox, contents) {
 }
 
 export async function processChat(rotator, userText, { store, chatId, senderNumber = "", senderName = "", onProgress = null, onToolCall, onTrajectory = null, audio = null, media = null, mailbox = null, cascade = null, quoted = null } = {}) {
+  const deadline = Date.now() + 90000;
   const isGroupChat = String(chatId).endsWith("@g.us");
 
   if (userText && typeof userText === "string") {
@@ -559,7 +560,17 @@ ${isBotQuoted
     };
 
     progressTool = "";
-    const responseData = await generateContent(rotator, payload, activeCascade);
+    let responseData;
+    try {
+      responseData = await generateContent(rotator, payload, activeCascade, { deadline });
+    } catch (err) {
+      // Preserve verified tool results if the final model call is unavailable.
+      if (successfulMutations.length > 0 && lastFormattedList) {
+        currentCandidate = null;
+        break;
+      }
+      throw err;
+    }
     currentCandidate = responseData.candidates?.[0];
     if (!currentCandidate?.content) break;
 
