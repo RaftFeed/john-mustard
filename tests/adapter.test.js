@@ -58,6 +58,8 @@ test("Adapter: geminiPayloadToOpenAI translates system, user, tools, and tool re
   assert.strictEqual(openAIPayload.messages[3].name, "deleteTodo");
   assert.strictEqual(openAIPayload.messages[3].content, JSON.stringify({ success: true }));
   assert.strictEqual(openAIPayload.tools.length, 1);
+  assert.equal(openAIPayload.tools[0].function.parameters.type, "object");
+  assert.equal(openAIPayload.tools[0].function.parameters.properties.todoId.type, "number");
   assert.strictEqual(openAIPayload.tools[0].function.name, "deleteTodo");
 });
 

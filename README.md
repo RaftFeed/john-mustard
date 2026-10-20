@@ -116,7 +116,7 @@ john-mustard/
 ### 1. Agent Core (`src/llm.js`, `src/rotator.js`)
 - **ReAct Multi-Turn Engine**: Orchestrates iterative tool selection, parameter extraction, and execution up to 5 steps per turn.
 - **Multi-Key Rotator**: Distributes requests across a pool of Gemini API keys with round-robin load balancing and temporary backoff on HTTP 429 rate limits.
-- **Two-Model Cascade**: Attempts requests using the primary high-speed model (`gemini-3.5-flash-lite`) and automatically degrades to the fallback model (`gemini-3-flash-preview`) upon failure.
+- **Model fallback**: Text requests try Gemini 3.8 Flash High, then StepFun Step 3.7 Flash Free through Nous Portal, then the OpenCode Free pool. Nous uses the official Hermes subscription proxy (`NOUS_PROXY_URL`, including `/v1`), which manages OAuth refresh; it is skipped until configured. Keep the proxy bound to a private Docker bridge, since it has no client authentication. `STEP_MODEL` selects the exact free Nous model ID prefixed with `nous/`; verify that ID and free entitlement in the authenticated catalog before enabling. `GEMINI_MODELS`, when set, overrides the whole order. Audio and inline media stay on Gemini until fallback compatibility is verified. Cooling models are skipped, each request attempt has at most 25 seconds, and a cascade has at most 90 seconds.
 - **Anti-Hallucination Guardrail**: Intercepts unexecuted claims of data mutations (e.g., claiming a task was added without executing `addTodo`) and forces correct tool dispatch.
 - **Transparent Footnote Badges**: Appends executed tool signatures to final responses (e.g., `↳ searchWeb  ↳ executePython`).
 

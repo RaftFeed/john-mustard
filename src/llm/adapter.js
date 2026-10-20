@@ -1,5 +1,13 @@
 import http from "node:http";
 
+function normalizeSchema(value) {
+  if (Array.isArray(value)) return value.map(normalizeSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+    key, key === "type" && typeof child === "string" ? child.toLowerCase() : normalizeSchema(child)
+  ]));
+}
+
 function geminiPayloadToOpenAI(model, payload) {
   const messages = [];
 
@@ -97,7 +105,7 @@ function geminiPayloadToOpenAI(model, payload) {
         function: {
           name: fn.name,
           description: fn.description || "",
-          parameters: fn.parameters || { type: "object", properties: {} }
+          parameters: normalizeSchema(fn.parameters || { type: "object", properties: {} })
         }
       }));
     }

@@ -1,24 +1,25 @@
+import { geminiPayloadToOpenAI, openAIToGeminiResponse } from "./adapter.js";
+import { KeyRotator } from "../rotator.js";
+
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "ag/gemini-3.8-flash-high";
 const PRO_MODEL = process.env.GEMINI_PRO_MODEL || "ag/gemini-3.8-flash-high";
 
-export const FAST_CASCADE = [
-  DEFAULT_MODEL,
-  "ag/gemini-3.8-flash",
-  "ag/gemini-3.7-flash-high",
-  "ag/gemini-3.6-flash-high"
+export const OPENCODE_POOL = [
+  "oc/deepseek-v4.1-flash-free",
+  "oc/glm-5.3-flash-free",
+  "oc/mimo-v2.6-flash-free",
+  "oc/minimax-m3.1-flash-free",
+  "oc/nemotron-3.5-lightning-free",
+  "oc/nemotron-3-ultra-free",
+  "oc/beam-free",
+  "oc/longcat-2.5-preview-free",
+  "oc/big-pickle"
 ];
-
-export const SMART_CASCADE = [
-  PRO_MODEL,
-  "ag/gemini-3.8-flash",
-  "ag/gemini-3.7-flash-high"
-];
-
-export const AUDIO_CASCADE = [
-  "ag/gemini-3.8-flash-high",
-  "ag/gemini-3.8-flash",
-  "ag/gemini-3.7-flash-high"
-];
+const TEXT_FALLBACKS = [process.env.STEP_MODEL || "nous/stepfun/step-3.7-flash:free", ...OPENCODE_POOL];
+export const FAST_CASCADE = [DEFAULT_MODEL, ...TEXT_FALLBACKS];
+export const SMART_CASCADE = [PRO_MODEL, ...TEXT_FALLBACKS];
+// Audio remains on its native provider; text-only fallbacks must not receive audio as an image.
+export const AUDIO_CASCADE = [DEFAULT_MODEL];
 
 export const DEFAULT_CASCADE = FAST_CASCADE;
 
@@ -85,72 +86,89 @@ export function getActiveModels(baseModels = DEFAULT_CASCADE, store = null) {
 }
 
 const NINEROUTER_BASE_URL = () => (process.env.NINEROUTER_URL || "http://localhost:20128").replace(/\/+$/, "");
+const fallbackRotators = new WeakMap();
 
-async function callGemini(rotator, model, payload) {
-  return rotator.execute(async (key) => {
-    const baseUrl = NINEROUTER_BASE_URL();
-    const url = `${baseUrl}/v1beta/models/${model}:generateContent`;
+function executeModelRequest(rotator, model, request) {
+  // Nous OAuth refresh belongs to the official Hermes proxy, not gateway API keys.
+  if (model.startsWith("nous/")) return request("");
+  if (!model.startsWith("oc/") || !Array.isArray(rotator.keys)) return rotator.execute(request);
+  // Upstream model limits must not cool the gateway key for unrelated providers
+  // or for another free model. Keep key rotation within each fallback model.
+  let scopes = fallbackRotators.get(rotator);
+  if (!scopes) fallbackRotators.set(rotator, scopes = new Map());
+  if (!scopes.has(model)) scopes.set(model, new KeyRotator(rotator.keys, rotator.cooldownMs));
+  return scopes.get(model).execute(request);
+}
+
+async function callModel(rotator, model, payload, deadline) {
+  return executeModelRequest(rotator, model, async (key) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Batas waktu cascade AI tercapai.");
+    const isNous = model.startsWith("nous/");
+    const native = !model.includes("/") || model.startsWith("ag/");
+    const baseUrl = isNous
+      ? (process.env.NOUS_PROXY_URL || "").replace(/\/+$/, "")
+      : NINEROUTER_BASE_URL();
+    if (!baseUrl) throw new Error("Nous Portal proxy belum dikonfigurasi.");
+    const upstreamModel = isNous ? model.slice(5) : model;
+    const url = native ? `${baseUrl}/v1beta/models/${model}:generateContent` : `${baseUrl}${isNous ? "" : "/v1"}/chat/completions`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${key}`,
-        "x-goog-api-key": key
+        "Authorization": `Bearer ${isNous ? "hermes-proxy" : key}`,
+        ...(!isNous ? { "x-goog-api-key": key } : {})
       },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(25000)
+      body: JSON.stringify(native ? payload : geminiPayloadToOpenAI(upstreamModel, payload)),
+      signal: AbortSignal.timeout(Math.min(25000, remaining))
     });
     if (!res.ok) {
       const err = new Error(await res.text());
       err.status = res.status;
       throw err;
     }
-    return res.json();
+    const data = await res.json();
+    if (!native && !data.choices?.length) {
+      const err = new Error("Provider mengembalikan respons tanpa pilihan jawaban.");
+      err.status = 502;
+      throw err;
+    }
+    return native ? data : openAIToGeminiResponse(data, model);
   });
 }
 
 export async function generateContent(rotator, payload, baseCascade = null) {
-  const models = getActiveModels(baseCascade || DEFAULT_CASCADE);
+  const models = [...new Set(getActiveModels(baseCascade || DEFAULT_CASCADE))];
+  const deadline = Date.now() + 90000;
+  const hasMedia = payload.contents?.some((c) => c.parts?.some((p) => p.inlineData));
   let lastErr = null;
 
   for (const model of models) {
+    if ((modelCooldowns.get(model) || 0) > Date.now()) continue;
+    if (hasMedia && (model.startsWith("nous/") || model.startsWith("oc/"))) continue;
+    if (model.startsWith("nous/") && !process.env.NOUS_PROXY_URL) continue;
+    if (Date.now() >= deadline) break;
     try {
-      return await callGemini(rotator, model, payload);
+      try {
+        return await callModel(rotator, model, payload, deadline);
+      } catch (err) {
+        // Only a rejected tool mode warrants ANY -> AUTO. Network/capacity failures
+        // must advance to the next provider rather than replay the entire cascade.
+        if (err.status !== 400 || payload.toolConfig?.functionCallingConfig?.mode !== "ANY" ||
+            !/tool.?choice|function.?calling|tool.?config|mode.*(?:ANY|required)/i.test(err.message)) throw err;
+        const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
+        return await callModel(rotator, model, autoPayload, deadline);
+      }
     } catch (err) {
       lastErr = err;
-      const msg = err.message || "";
-      const is503 = err.status === 503 || msg.includes("503") || msg.includes("UNAVAILABLE");
-      const isTimeout = msg.includes("timeout") || msg.includes("aborted");
-      const is404 = err.status === 404 || msg.includes("404") || msg.includes("NOT_FOUND");
-      const is429 = err.status === 429 || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
-
-      if (is404) {
-        markModelUnavailable(model, 24 * 60 * 60 * 1000);
-        console.warn(`[LLM] Model ${model} NOT FOUND (404). Demoted 24 jam.`);
-      } else if (is503 || isTimeout) {
-        markModelUnavailable(model, 15_000);
-        console.warn(`[LLM] Model ${model} gagal (${err.message}). Demoted 15s. Mencoba model berikutnya...`);
-      } else if (is429) {
-        markModelUnavailable(model, 60_000);
-        console.warn(`[LLM] Model ${model} kena quota/rate-limit (429). Demoted 60s. Mencoba model berikutnya...`);
-      } else {
-        console.warn(`[LLM] Model ${model} gagal (${err.message}). Mencoba model berikutnya...`);
-      }
+      const is404 = err.status === 404;
+      const cooldown = is404 ? 86400000 : err.status === 429 ? 60000 : 15000;
+      markModelUnavailable(model, cooldown);
+      // Do not log arbitrary provider bodies: they can contain request data.
+      console.warn(`[LLM] Model ${model} gagal (${err.status || err.name || "error"}); cooldown ${cooldown / 1000}s. Mencoba fallback berikutnya.`);
     }
   }
-
-  if (payload.toolConfig?.functionCallingConfig?.mode === "ANY") {
-    console.warn(`[LLM] Mode ANY gagal pada semua model. Mencoba fallback ke mode AUTO...`);
-    const autoPayload = { ...payload, toolConfig: { functionCallingConfig: { mode: "AUTO" } } };
-    const autoModels = getActiveModels(baseCascade || DEFAULT_CASCADE);
-    for (const model of autoModels) {
-      try {
-        return await callGemini(rotator, model, autoPayload);
-      } catch {}
-    }
-  }
-
-  throw lastErr || new Error("Semua model AI gagal merespons.");
+  throw lastErr || new Error("Semua model AI sedang tidak tersedia atau dalam cooldown.");
 }
 
 export async function getEmbedding(rotator, text) {
