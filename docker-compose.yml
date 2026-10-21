@@ -22,7 +22,7 @@ services:
       - bot-net
 
   9router:
-    image: decolua/9router:latest
+    image: decolua/9router:0.5.104
     container_name: john-mustard-9router
     restart: unless-stopped
     ports:
@@ -31,7 +31,8 @@ services:
       - DATA_DIR=/app/data
     volumes:
       - ./9router-data:/app/data
-      - ./9router-data/route.js:/app/.next/server/app/api/v1beta/models/[...path]/route.js:ro
+      # Built from 0.5.104: preserve tool_calls in native Gemini responses.
+      - ./config/9router-route-0.5.104.cjs:/app/.next/server/app/api/v1beta/models/[...path]/route.js:ro
     networks:
       - bot-net
 
