@@ -38,3 +38,11 @@ test("SSRF: isSafeUrl resolves DNS and rejects private destinations", async () =
   assert.strictEqual(await isSafeUrl("http://127.0.0.1:8080"), false);
   assert.strictEqual(await isSafeUrl("https://en.wikipedia.org/wiki/Node.js"), true);
 });
+
+test("SSRF: public hostnames starting with fc/fd are not blocked as IPv6 ULA", async () => {
+  const { isSafeUrlSync } = await import("../src/llm/guards.js");
+  assert.strictEqual(isSafeUrlSync("https://fda.gov/guidance"), true);
+  assert.strictEqual(isSafeUrlSync("https://www.fcc.gov/"), true);
+  assert.strictEqual(isSafeUrlSync("http://[fc00::1]/"), false);
+  assert.strictEqual(isSafeUrlSync("http://[fd12:3456::1]/"), false);
+});

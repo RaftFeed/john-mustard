@@ -10,6 +10,23 @@ const seenMessages = new Map();
 const DEDUP_TTL_MS = 60_000;
 const mcpSessions = new Map();
 
+// Endpoint internal (tick scheduler, MCP yang menjalankan tool sebagai owner) wajib bearer token.
+// Jika BOT_API_TOKEN belum diset, akses ditolak (fail closed).
+function isAuthorized(req) {
+  const expected = process.env.BOT_API_TOKEN || "";
+  if (!expected) return false;
+  const header = req.headers.authorization || "";
+  const given = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function rejectUnauthorized(res) {
+  res.writeHead(401, { "Content-Type": "application/json" });
+  return res.end(JSON.stringify({ error: "unauthorized" }));
+}
+
 function isDuplicate(messageId) {
   if (!messageId) return false;
   const now = Date.now();
@@ -71,6 +88,7 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
 
     // External Scheduler Container (Supercronic) Trigger
     if (req.method === "POST" && pathname === "/api/scheduler/tick") {
+      if (!isAuthorized(req)) return rejectUnauthorized(res);
       try {
         const result = await tickScheduler(store, { rotator });
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -83,6 +101,7 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
 
     // FastMCP SSE Transport Endpoint
     if (req.method === "GET" && pathname === "/mcp/sse") {
+      if (!isAuthorized(req)) return rejectUnauthorized(res);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -99,6 +118,7 @@ export function createServer(handler, { store = null, rotator = null } = {}) {
 
     // FastMCP Message Handler (JSON-RPC 2.0)
     if (req.method === "POST" && pathname === "/mcp/message") {
+      if (!isAuthorized(req)) return rejectUnauthorized(res);
       let data = "";
       for await (const chunk of req) data += chunk;
 
@@ -194,6 +214,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/server.js")) {
       getPendingReminders: () => [],
       markReminderDone: () => {}
     };
+    process.env.BOT_API_TOKEN = "selftest-token";
+    const auth = { Authorization: "Bearer selftest-token" };
     const server = createServer(() => {}, { store: storeMock });
     await new Promise((resolve) => server.listen(0, resolve));
     const port = server.address().port;
@@ -205,8 +227,18 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/server.js")) {
     const hData = await hRes.json();
     assert.strictEqual(hData.status, "healthy");
 
+    // 1b. Endpoint internal menolak request tanpa token
+    const noAuthTick = await fetch(`${base}/api/scheduler/tick`, { method: "POST" });
+    assert.strictEqual(noAuthTick.status, 401);
+    const noAuthMcp = await fetch(`${base}/mcp/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
+    });
+    assert.strictEqual(noAuthMcp.status, 401);
+
     // 2. Scheduler tick
-    const tickRes = await fetch(`${base}/api/scheduler/tick`, { method: "POST" });
+    const tickRes = await fetch(`${base}/api/scheduler/tick`, { method: "POST", headers: auth });
     assert.strictEqual(tickRes.status, 200);
     const tickData = await tickRes.json();
     assert.strictEqual(tickData.ticked, true);
@@ -214,7 +246,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/server.js")) {
     // 3. FastMCP initialization
     const initRes = await fetch(`${base}/mcp/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...auth },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -229,7 +261,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/server.js")) {
     // 4. FastMCP Tools list
     const toolsRes = await fetch(`${base}/mcp/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...auth },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,

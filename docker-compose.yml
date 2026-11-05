@@ -44,8 +44,8 @@ services:
     # On the VPS, Hermes runs on the same host so no tunnel is needed.
     profiles: ["local"]
     environment:
-      - SSH_HOST=${HERMES_SSH_HOST:-168.110.213.231}
-      - SSH_USER=${HERMES_SSH_USER:-ubuntu}
+      - SSH_HOST=${HERMES_SSH_HOST:?Set HERMES_SSH_HOST di .env}
+      - SSH_USER=${HERMES_SSH_USER:?Set HERMES_SSH_USER di .env}
       - SSH_KEY_PATH=/key/ssh-key-2026-08-26.key
       - LOCAL_PORT=8642
       - REMOTE_HOST=127.0.0.1
@@ -68,7 +68,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "4500:4500"
+      # Hanya loopback host. WAHA menjangkau bot lewat network bot-net, tanpa port publik.
+      - "127.0.0.1:4500:4500"
     environment:
       - PORT=4500
       - WAHA_URL=http://waha:3000
@@ -99,8 +100,7 @@ services:
     restart: unless-stopped
     mem_limit: 768m
     cpus: 1.0
-    volumes:
-      - ./vault:/app/vault
+    # Tanpa mount vault: runner hanya menerima data_base64 dari bot, sehingga ACL file_permissions tetap berlaku.
     networks:
       - bot-net
 
@@ -108,6 +108,8 @@ services:
     build: ./scheduler
     container_name: john-mustard-scheduler
     restart: unless-stopped
+    environment:
+      - BOT_API_TOKEN=${BOT_API_TOKEN:?Set BOT_API_TOKEN di .env}
     depends_on:
       - bot
     networks:

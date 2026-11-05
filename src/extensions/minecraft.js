@@ -13,7 +13,10 @@ export function isEnabled() {
   return Boolean(process.env.MC_HOST || process.env.MINECRAFT_HOST) || isTestEnvironment();
 }
 
-export async function getMinecraftStatus(host = process.env.MC_HOST || "168.110.213.231") {
+export async function getMinecraftStatus(host = process.env.MC_HOST || process.env.MINECRAFT_HOST || "") {
+  if (!host) {
+    return { online: false, host, message: "Host Minecraft belum diset (MC_HOST)." };
+  }
   try {
     const [javaRes, bedrockRes] = await Promise.allSettled([
       fetch(`https://api.mcstatus.io/v2/status/java/${host}:25565`, {

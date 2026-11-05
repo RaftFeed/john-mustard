@@ -1,6 +1,7 @@
 # Agent Guidelines
 
 Read `AI_RULES.md` and `FEATURES.md` before making any changes.
+Read `PROJECT_CONTEXT.md` for the latest verified checkpoint.
 
 - Zero npm dependencies (Node.js 22 built-ins only, ADR 001).
 - Fast commands `#` go to `src/commands.js` (no LLM).

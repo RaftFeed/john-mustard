@@ -104,19 +104,12 @@ def process_pdf():
         return jsonify({"status": "error", "error": "Parameter 'files' harus berupa array file."}), 400
 
     def get_file_bytes(f_entry):
-        if isinstance(f_entry, dict):
-            if "data_base64" in f_entry and f_entry["data_base64"]:
-                return base64.b64decode(f_entry["data_base64"])
-            if "filepath" in f_entry and f_entry["filepath"] and os.path.exists(f_entry["filepath"]):
-                with open(f_entry["filepath"], "rb") as fh:
-                    return fh.read()
-        elif isinstance(f_entry, str):
-            # Assume base64 string or file path
-            if os.path.exists(f_entry):
-                with open(f_entry, "rb") as fh:
-                    return fh.read()
+        # Runner tidak membaca path disk: vault hanya dibuka oleh bot (ACL file_permissions).
+        if isinstance(f_entry, dict) and f_entry.get("data_base64"):
+            return base64.b64decode(f_entry["data_base64"])
+        if isinstance(f_entry, str):
             return base64.b64decode(f_entry)
-        raise ValueError(f"Tidak dapat membaca konten file: {f_entry}")
+        raise ValueError("Konten file wajib dikirim sebagai data_base64.")
 
     try:
         # 1. MERGE
@@ -305,18 +298,10 @@ def convert_document():
     ext = os.path.splitext(filename)[1].lower()
 
     b = None
-    if isinstance(f_entry, dict):
-        if "data_base64" in f_entry and f_entry["data_base64"]:
-            b = base64.b64decode(f_entry["data_base64"])
-        elif "filepath" in f_entry and os.path.exists(f_entry["filepath"]):
-            with open(f_entry["filepath"], "rb") as fh:
-                b = fh.read()
+    if isinstance(f_entry, dict) and f_entry.get("data_base64"):
+        b = base64.b64decode(f_entry["data_base64"])
     elif isinstance(f_entry, str):
-        if os.path.exists(f_entry):
-            with open(f_entry, "rb") as fh:
-                b = fh.read()
-        else:
-            b = base64.b64decode(f_entry)
+        b = base64.b64decode(f_entry)
 
     if not b:
         return jsonify({"status": "error", "error": "Konten file tidak ditemukan."}), 400
@@ -546,18 +531,10 @@ def ocr_document():
     ext = os.path.splitext(filename)[1].lower()
 
     b = None
-    if isinstance(f_entry, dict):
-        if "data_base64" in f_entry and f_entry["data_base64"]:
-            b = base64.b64decode(f_entry["data_base64"])
-        elif "filepath" in f_entry and os.path.exists(f_entry["filepath"]):
-            with open(f_entry["filepath"], "rb") as fh:
-                b = fh.read()
+    if isinstance(f_entry, dict) and f_entry.get("data_base64"):
+        b = base64.b64decode(f_entry["data_base64"])
     elif isinstance(f_entry, str):
-        if os.path.exists(f_entry):
-            with open(f_entry, "rb") as fh:
-                b = fh.read()
-        else:
-            b = base64.b64decode(f_entry)
+        b = base64.b64decode(f_entry)
 
     if not b:
         return jsonify({"status": "error", "error": "Konten file tidak ditemukan."}), 400

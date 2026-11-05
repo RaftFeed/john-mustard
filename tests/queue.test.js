@@ -73,3 +73,28 @@ test("ChatQueue: fast commands bypass mid-turn mailbox and execute as separate s
   assert.strictEqual(processed[1], "1 apus");
 });
 
+
+test("Queue: a photo sent within the debounce window of a text is not dropped", async () => {
+  const { createDebounceQueue } = await import("../src/queue.js");
+  const handled = [];
+  const queue = createDebounceQueue(async (m) => {
+    handled.push({ body: m.body, hasMedia: Boolean(m.hasMedia), id: m.id });
+  }, 200);
+  queue({ from: "g1", senderNumber: "u1", body: "tolong simpan ini", id: "t1" });
+  setTimeout(() => queue({ from: "g1", senderNumber: "u1", body: "", hasMedia: true, id: "m1" }), 50);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.strictEqual(handled.length, 1);
+  assert.strictEqual(handled[0].hasMedia, true);
+  assert.strictEqual(handled[0].body, "tolong simpan ini");
+});
+
+test("Queue: different senders retain separate identities and media payloads", async () => {
+  const handled = [];
+  const queue = createDebounceQueue(async (msg) => handled.push(msg), 40);
+  queue({ from: "group", senderNumber: "alice", body: "hello", id: "text" });
+  queue({ from: "group", senderNumber: "bob", hasMedia: true, mediaUrl: "photo-url", id: "photo" });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepStrictEqual(handled.map((m) => [m.senderNumber, m.id, m.mediaUrl]), [
+    ["alice", "text", undefined], ["bob", "photo", "photo-url"]
+  ]);
+});

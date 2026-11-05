@@ -68,11 +68,22 @@ export class ChatQueue {
 
     chat.running = true;
 
-    // Ambil dan gabungkan seluruh batch debounce
-    const batch = [...chat.queue];
-    chat.queue = [];
+    // Ambil satu turn dari antrean: hanya pesan dari pengirim yang sama, dan berhenti di media pertama
+    // supaya setiap file mendapat turn sendiri dan identitas pengirim tidak tertukar di grup.
+    const senderOf = (m) => m.senderNumber || m.from;
+    const turnSender = senderOf(chat.queue[0]);
+    let take = 0;
+    for (const m of chat.queue) {
+      if (senderOf(m) !== turnSender) break;
+      take++;
+      if (m.hasMedia) break;
+    }
+    const batch = chat.queue.slice(0, take);
+    chat.queue = chat.queue.slice(take);
 
-    const firstMsg = { ...batch[0] };
+    // Media harus menjadi dasar turn, bukan pesan teks yang kebetulan di depan batch.
+    const base = batch.find((m) => m.hasMedia) || batch[0];
+    const firstMsg = { ...base };
     const combinedTexts = batch.map((m) => m.body).filter(Boolean);
     firstMsg.body = combinedTexts.join("\n");
     firstMsg.id = batch[batch.length - 1].id;

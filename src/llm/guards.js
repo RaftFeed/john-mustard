@@ -1,4 +1,5 @@
 import dns from "node:dns/promises";
+import net from "node:net";
 import { formatRowsToMarkdown, parseHtmlTableToMarkdown, parseCsvToMarkdown } from "./formatters.js";
 
 const BLOCKED_HOSTNAMES = new Set([
@@ -16,14 +17,9 @@ export function isPrivateIp(ip) {
   if (clean.startsWith("::ffff:")) {
     clean = clean.slice(7);
   }
-  if (
-    clean === "::1" ||
-    clean === "::" ||
-    clean.toLowerCase().startsWith("fc") ||
-    clean.toLowerCase().startsWith("fd") ||
-    clean.toLowerCase().startsWith("fe80")
-  ) {
-    return true;
+  if (net.isIP(clean) === 6) {
+    const low = clean.toLowerCase();
+    return low === "::1" || low === "::" || low.startsWith("fc") || low.startsWith("fd") || low.startsWith("fe80");
   }
   const parts = clean.split(".").map((p) => parseInt(p, 10));
   if (parts.length === 4 && parts.every((p) => !isNaN(p) && p >= 0 && p <= 255)) {
@@ -42,7 +38,7 @@ export function isSafeUrlSync(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    const host = parsed.hostname.toLowerCase();
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     if (BLOCKED_HOSTNAMES.has(host) || host.endsWith(".local") || host.endsWith(".internal")) return false;
     if (!host.includes(".")) return false;
     if (isPrivateIp(host)) return false;
@@ -56,7 +52,7 @@ export async function isSafeUrl(rawUrl) {
   if (!isSafeUrlSync(rawUrl)) return false;
   try {
     const parsed = new URL(rawUrl);
-    const host = parsed.hostname.toLowerCase();
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     const records = await dns.lookup(host, { all: true });
     if (!records || records.length === 0) return false;
     for (const rec of records) {
@@ -66,6 +62,23 @@ export async function isSafeUrl(rawUrl) {
   } catch {
     return false;
   }
+}
+
+const MAX_REDIRECTS = 5;
+
+// Setiap hop redirect dicek ulang dengan isSafeUrl, supaya URL publik tidak bisa berbelok ke alamat internal.
+async function guardedFetch(rawUrl, options = {}) {
+  let current = rawUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!(await isSafeUrl(current))) {
+      throw new Error("URL tidak aman atau mengarah ke alamat lokal/privat (SSRF Protection).");
+    }
+    const res = await fetch(current, { ...options, redirect: "manual" });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) return res;
+    current = new URL(location, current).href;
+  }
+  throw new Error("Terlalu banyak redirect saat mengambil URL.");
 }
 
 export async function fetchUrlContent(rawUrl) {
@@ -96,7 +109,7 @@ export async function fetchUrlContent(rawUrl) {
 
     if (pubId) {
       const indexUrl = `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml`;
-      const res = await fetch(indexUrl, { headers, signal: AbortSignal.timeout(12000) });
+      const res = await guardedFetch(indexUrl, { headers, signal: AbortSignal.timeout(12000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat Google Sheet publik.`);
       const indexHtml = await res.text();
 
@@ -117,7 +130,7 @@ export async function fetchUrlContent(rawUrl) {
           }
 
           try {
-            const tabRes = await fetch(pageUrl, { headers, signal: AbortSignal.timeout(10000) });
+            const tabRes = await guardedFetch(pageUrl, { headers, signal: AbortSignal.timeout(10000) });
             if (tabRes.ok) {
               const tabHtml = await tabRes.text();
               const md = parseHtmlTableToMarkdown(tabHtml);
@@ -134,7 +147,7 @@ export async function fetchUrlContent(rawUrl) {
           ? `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml/sheet?headers=false&gid=${gid}`
           : `https://docs.google.com/spreadsheets/d/e/${pubId}/pubhtml/sheet?headers=false`;
         try {
-          const sheetRes = await fetch(directUrl, { headers, signal: AbortSignal.timeout(10000) });
+          const sheetRes = await guardedFetch(directUrl, { headers, signal: AbortSignal.timeout(10000) });
           if (sheetRes.ok) {
             const sheetHtml = await sheetRes.text();
             const md = parseHtmlTableToMarkdown(sheetHtml);
@@ -156,7 +169,7 @@ export async function fetchUrlContent(rawUrl) {
     if (docId) {
       const gidParam = gid ? `&gid=${gid}` : "";
       const csvUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv${gidParam}`;
-      const res = await fetch(csvUrl, { headers, signal: AbortSignal.timeout(12000) });
+      const res = await guardedFetch(csvUrl, { headers, signal: AbortSignal.timeout(12000) });
 
       if (res.url.includes("accounts.google.com/ServiceLogin")) {
         throw new Error("Dokumen Google Sheet ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
@@ -177,7 +190,7 @@ export async function fetchUrlContent(rawUrl) {
     const docId = docMatch ? docMatch[1] : null;
     if (docId) {
       const txtUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
-      const res = await fetch(txtUrl, { headers, signal: AbortSignal.timeout(12000) });
+      const res = await guardedFetch(txtUrl, { headers, signal: AbortSignal.timeout(12000) });
       if (res.url.includes("accounts.google.com/ServiceLogin")) {
         throw new Error("Google Doc ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
       }
@@ -193,7 +206,7 @@ export async function fetchUrlContent(rawUrl) {
     const docId = docMatch ? docMatch[1] : null;
     if (docId) {
       const pdfUrl = `https://docs.google.com/presentation/d/${docId}/export/pdf`;
-      const res = await fetch(pdfUrl, { headers, signal: AbortSignal.timeout(15000) });
+      const res = await guardedFetch(pdfUrl, { headers, signal: AbortSignal.timeout(15000) });
       if (res.url.includes("accounts.google.com/ServiceLogin")) {
         throw new Error("Google Slide ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
       }
@@ -227,7 +240,7 @@ export async function fetchUrlContent(rawUrl) {
     const fileId = fileMatch ? fileMatch[1] : null;
     if (fileId) {
       const dlUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-      const res = await fetch(dlUrl, { headers, redirect: "follow", signal: AbortSignal.timeout(20000) });
+      const res = await guardedFetch(dlUrl, { headers, redirect: "follow", signal: AbortSignal.timeout(20000) });
       if (res.url.includes("accounts.google.com/ServiceLogin")) {
         throw new Error("File Google Drive ini masih berstatus privat. Tolong ubah akses sharing menjadi 'Siapa saja yang memiliki link' (Viewer).");
       }
@@ -265,7 +278,7 @@ export async function fetchUrlContent(rawUrl) {
   }
 
   // 6. Generic Web Page Scraper
-  const res = await fetch(rawUrl, {
+  const res = await guardedFetch(rawUrl, {
     headers,
     signal: AbortSignal.timeout(10000)
   });

@@ -1,6 +1,41 @@
 import test from "node:test";
 import assert from "node:assert";
-import { tickScheduler, getActiveTimersCount, clearActiveTimers } from "../src/scheduler.js";
+import { tickScheduler, getActiveTimersCount, clearActiveTimers, scheduleNearHorizonReminder } from "../src/scheduler.js";
+
+test("Scheduler: moving a near-horizon reminder re-arms the timer at the new time", async () => {
+  const sent = [];
+  const sender = async (chatId, text) => { sent.push(text); };
+  const reminder = { id: 701, chat_id: "user_move", message: "Pindahan pengingat", remind_at: Date.now() + 5000, status: "pending", task_type: "reminder" };
+  const store = {
+    claimReminder: () => true,
+    markReminderDone: (id) => { if (id === 701) reminder.status = "sent"; },
+    getReminderById: (id) => (id === 701 ? reminder : null)
+  };
+
+  // Moved earlier: old timer (5s) must not be the one that fires; new time is ~150ms.
+  scheduleNearHorizonReminder(store, reminder, { textSender: sender });
+  reminder.remind_at = Date.now() + 150;
+  scheduleNearHorizonReminder(store, reminder, { textSender: sender });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(reminder.status, "sent");
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(getActiveTimersCount(), 0);
+
+  // Moved later within the horizon: must not fire at the old 100ms mark.
+  reminder.status = "pending";
+  reminder.remind_at = Date.now() + 100;
+  scheduleNearHorizonReminder(store, reminder, { textSender: sender });
+  reminder.remind_at = Date.now() + 400;
+  scheduleNearHorizonReminder(store, reminder, { textSender: sender });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.strictEqual(reminder.status, "pending");
+  assert.strictEqual(sent.length, 1);
+  await new Promise((r) => setTimeout(r, 400));
+  assert.strictEqual(reminder.status, "sent");
+  assert.strictEqual(sent.length, 2);
+
+  clearActiveTimers();
+});
 
 test("Scheduler: tickScheduler handles overdue reminders, near-horizon scheduling, and overdue todos", async () => {
   const sentMessages = [];

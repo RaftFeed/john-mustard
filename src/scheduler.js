@@ -4,12 +4,14 @@ import { isSimilarReminder, formatRemindersList, formatTodoList } from "./db.js"
 
 export const NEAR_HORIZON_MS = 10 * 60 * 1000; // 10 menit
 const activeTimers = new Map(); // id -> NodeJS.Timeout
+const scheduledFor = new Map(); // id -> remind_at saat timer dipasang
 
 export function getActiveTimersCount() {
   return activeTimers.size;
 }
 
 export function cancelActiveTimer(id) {
+  scheduledFor.delete(id);
   if (activeTimers.has(id)) {
     clearTimeout(activeTimers.get(id));
     activeTimers.delete(id);
@@ -23,6 +25,7 @@ export function clearActiveTimers() {
     clearTimeout(timer);
   }
   activeTimers.clear();
+  scheduledFor.clear();
 }
 
 // ponytail: native setTimeout for sub-second precision on near-horizon items (<= 10m)
@@ -169,7 +172,11 @@ export async function executeSingleReminder(store, item, { rotator = null, textS
 
 export function scheduleNearHorizonReminder(store, reminder, { rotator = null, textSender = sendText } = {}) {
   if (!reminder || !reminder.id || typeof reminder.remind_at !== "number") return false;
-  if (activeTimers.has(reminder.id)) return false;
+  if (activeTimers.has(reminder.id)) {
+    if (scheduledFor.get(reminder.id) === reminder.remind_at) return false;
+    // Jadwal berubah sejak timer dipasang (misal dipindah lewat updateReminder): batalkan timer lama.
+    cancelActiveTimer(reminder.id);
+  }
 
   const now = Date.now();
   const delayMs = reminder.remind_at - now;
@@ -180,10 +187,19 @@ export function scheduleNearHorizonReminder(store, reminder, { rotator = null, t
   const runDelay = Math.max(0, delayMs);
   const timer = setTimeout(async () => {
     activeTimers.delete(reminder.id);
-    await executeSingleReminder(store, reminder, { rotator, textSender });
+    scheduledFor.delete(reminder.id);
+    // Baca ulang row: waktu/pesan bisa berubah sejak timer dipasang (updateReminder tidak membatalkan timer).
+    const fresh = typeof store.getReminderById === "function" ? store.getReminderById(reminder.id) : reminder;
+    if (!fresh || fresh.status !== "pending") return;
+    if (fresh.remind_at > Date.now()) {
+      scheduleNearHorizonReminder(store, fresh, { rotator, textSender });
+      return;
+    }
+    await executeSingleReminder(store, fresh, { rotator, textSender });
   }, runDelay);
 
   activeTimers.set(reminder.id, timer);
+  scheduledFor.set(reminder.id, reminder.remind_at);
   return true;
 }
 
